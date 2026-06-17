@@ -1,0 +1,30 @@
+name: ogc2026
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - jupyterlab=4.4.1
+  - notebook=7.4.1
+  - ipympl=0.9.7
+  - matplotlib=3.10.1
+  - pandas=2.2.3
+  - networkx=3.4.2
+  - scipy=1.15.2
+  - scikit-learn=1.6.1
+  - numba=0.61.0
+  - cython=3.0.10
+  - openjdk=17
+  - dotnet-runtime=8
+  - pyqt6=6.11.0
+  - pip:
+    - jsbeautifier
+    - ortools==9.15.6755
+    - gurobipy==13.0.2
+    - xpress==9.8.1
+    - gymnasium==1.2.3
+    - torch==2.11.0
+    - torchvision==0.26.0
+    - tensorflow==2.21.0
+    - keras==3.14.0    
+    - shapely>=2.1.0

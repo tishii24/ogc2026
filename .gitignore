@@ -1,0 +1,9 @@
+/target
+/solutions
+/log
+__pycache__
+
+*.pdf
+*.json
+
+train
