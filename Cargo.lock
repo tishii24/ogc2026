@@ -271,6 +271,7 @@ version = "0.1.0"
 dependencies = [
  "ahc-library",
  "geo",
+ "rayon",
  "serde",
  "serde_json",
 ]

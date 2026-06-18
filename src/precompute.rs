@@ -1,5 +1,8 @@
+#![allow(dead_code)]
+
 use crate::*;
-use geo::{Area, BooleanOps, Coord, LineString, Polygon};
+use geo::{Coord, LineString, Polygon};
+use rayon::prelude::*;
 use std::{collections::HashMap, sync::Arc};
 
 const AREA_EPS: f64 = 1e-10;
@@ -136,33 +139,34 @@ impl CollisionPrecompute {
         let mut block_pair_index = vec![None; n * n];
         let mut block_pairs = Vec::new();
 
+        let mut tasks = Vec::new();
         for i in 0..n {
-            eprintln!("block {i}");
             for j in (i + 1)..n {
-                if !windows_overlap(windows[i], windows[j]) {
-                    continue;
+                if windows_overlap(windows[i], windows[j]) {
+                    tasks.push((i, j));
                 }
-
-                let mut layer_pair_cache = LayerPairGridCache::default();
-
-                let ij = block_pairs.len();
-                block_pairs.push(build_directed_block_pair(
-                    &geoms,
-                    i,
-                    j,
-                    &mut layer_pair_cache,
-                ));
-                block_pair_index[i * n + j] = Some(ij);
-
-                let ji = block_pairs.len();
-                block_pairs.push(build_directed_block_pair(
-                    &geoms,
-                    j,
-                    i,
-                    &mut layer_pair_cache,
-                ));
-                block_pair_index[j * n + i] = Some(ji);
             }
+        }
+        eprintln!("building {} collision block pairs", tasks.len());
+
+        let built_pairs: Vec<_> = tasks
+            .par_iter()
+            .map(|&(i, j)| {
+                let mut layer_pair_cache = LayerPairGridCache::default();
+                let ij = build_directed_block_pair(&geoms, i, j, &mut layer_pair_cache);
+                let ji = build_directed_block_pair(&geoms, j, i, &mut layer_pair_cache);
+                (i, j, ij, ji)
+            })
+            .collect();
+
+        for (i, j, ij_collision, ji_collision) in built_pairs {
+            let ij = block_pairs.len();
+            block_pairs.push(ij_collision);
+            block_pair_index[i * n + j] = Some(ij);
+
+            let ji = block_pairs.len();
+            block_pairs.push(ji_collision);
+            block_pair_index[j * n + i] = Some(ji);
         }
 
         Self {
@@ -712,11 +716,6 @@ fn build_directed_block_pair(
     }
 }
 
-fn build_crane_grid(moving: &ShapeGeom, fixed: &ShapeGeom, range: DeltaRange) -> CollisionGrid {
-    let mut layer_pair_cache = LayerPairGridCache::default();
-    build_crane_grid_with_cache(moving, fixed, range, &mut layer_pair_cache)
-}
-
 fn build_crane_grid_with_cache(
     moving: &ShapeGeom,
     fixed: &ShapeGeom,
@@ -1046,27 +1045,28 @@ fn bbox_may_overlap(a: BBox, b: BBox, dx: i64, dy: i64) -> bool {
         && b_min_y < a.max_y - AREA_EPS
 }
 
-fn translate_polygon(poly: &Polygon<f64>, dx: i64, dy: i64) -> Polygon<f64> {
-    let dx = dx as f64;
-    let dy = dy as f64;
-    let exterior: Vec<Coord<f64>> = poly
-        .exterior()
-        .points()
-        .map(|p| Coord {
-            x: p.x() + dx,
-            y: p.y() + dy,
-        })
-        .collect();
-    Polygon::new(LineString::from(exterior), vec![])
-}
-
-fn polygons_overlap_area_positive(a: &Polygon<f64>, b: &Polygon<f64>) -> bool {
-    a.intersection(b).unsigned_area() > AREA_EPS
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use geo::{Area, BooleanOps};
+
+    fn translate_polygon(poly: &Polygon<f64>, dx: i64, dy: i64) -> Polygon<f64> {
+        let dx = dx as f64;
+        let dy = dy as f64;
+        let exterior: Vec<Coord<f64>> = poly
+            .exterior()
+            .points()
+            .map(|p| Coord {
+                x: p.x() + dx,
+                y: p.y() + dy,
+            })
+            .collect();
+        Polygon::new(LineString::from(exterior), vec![])
+    }
+
+    fn polygons_overlap_area_positive(a: &Polygon<f64>, b: &Polygon<f64>) -> bool {
+        a.intersection(b).unsigned_area() > AREA_EPS
+    }
 
     fn rect(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<[f64; 2]> {
         vec![
@@ -1108,6 +1108,11 @@ mod tests {
         .into_iter()
         .next()
         .unwrap()
+    }
+
+    fn build_crane_grid(moving: &ShapeGeom, fixed: &ShapeGeom, range: DeltaRange) -> CollisionGrid {
+        let mut layer_pair_cache = LayerPairGridCache::default();
+        build_crane_grid_with_cache(moving, fixed, range, &mut layer_pair_cache)
     }
 
     #[test]
