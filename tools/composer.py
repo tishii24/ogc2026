@@ -40,7 +40,6 @@ def algorithm(prob_info, timelimit=60):
         completed = subprocess.run(
             [str(solver), str(input_path), str(timelimit)],
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             text=True,
             timeout=float(timelimit) + 5.0,
             cwd=str(root),

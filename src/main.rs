@@ -1,3 +1,4 @@
+mod precompute;
 mod solver;
 
 use std::collections::BTreeMap;
@@ -5,6 +6,7 @@ use std::env;
 use std::fs;
 use std::process;
 
+use ahc_library::utils::time;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -68,6 +70,7 @@ struct Placement {
 }
 
 fn main() {
+    time::start_clock(1.);
     if let Err(err) = run() {
         eprintln!("error: {err}");
         process::exit(1);
