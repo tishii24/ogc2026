@@ -3,7 +3,6 @@
 use crate::*;
 use geo::{Coord, LineString, Polygon};
 use rayon::prelude::*;
-use std::{collections::HashMap, sync::Arc};
 
 const AREA_EPS: f64 = 1e-10;
 const MAX_CONVEX_VERTS: usize = 10;
@@ -61,13 +60,8 @@ struct ConvexPolygon {
     len: usize,
 }
 
-type LayerKey = Arc<[(u64, u64)]>;
-
-type LayerPairKey = (LayerKey, LayerKey);
-
 #[derive(Clone, Debug)]
 struct PolyLayer {
-    key: LayerKey,
     polygon: Polygon<f64>,
     parts: Vec<ConvexPart>,
     bbox: BBox,
@@ -103,11 +97,6 @@ struct CollisionGridBuilder {
     min_dy: i64,
     max_dy: i64,
     columns: Vec<Vec<(i64, i64)>>,
-}
-
-#[derive(Default)]
-struct LayerPairGridCache {
-    grids: HashMap<LayerPairKey, CollisionGrid>,
 }
 
 #[derive(Clone, Debug)]
@@ -152,9 +141,7 @@ impl CollisionPrecompute {
         let built_pairs: Vec<_> = tasks
             .par_iter()
             .map(|&(i, j)| {
-                let mut layer_pair_cache = LayerPairGridCache::default();
-                let ij = build_directed_block_pair(&geoms, i, j, &mut layer_pair_cache);
-                let ji = build_directed_block_pair(&geoms, j, i, &mut layer_pair_cache);
+                let (ij, ji) = build_bidirectional_block_pair(&geoms, i, j);
                 (i, j, ij, ji)
             })
             .collect();
@@ -245,26 +232,6 @@ impl CollisionGrid {
                 }
             })
             .is_ok()
-    }
-}
-
-impl LayerPairGridCache {
-    fn add_layer_pair(&mut self, builder: &mut CollisionGridBuilder, a: &PolyLayer, b: &PolyLayer) {
-        let key = (a.key.clone(), b.key.clone());
-        if let Some(grid) = self.grids.get(&key) {
-            builder.add_grid(grid);
-            return;
-        }
-
-        let reversed_key = (b.key.clone(), a.key.clone());
-        if let Some(grid) = self.grids.get(&reversed_key) {
-            builder.add_reversed_grid(grid);
-            return;
-        }
-
-        let grid = build_layer_pair_grid(a, b);
-        builder.add_grid(&grid);
-        self.grids.insert(key, grid);
     }
 }
 
@@ -388,7 +355,6 @@ fn build_shape_geom(orientation: &Orientation) -> ShapeGeom {
             }
         }
 
-        let key = canonical_layer_key(layer);
         let polygon = Polygon::new(LineString::from(coords), vec![]);
         let points: Vec<Point> = layer.iter().map(|&[x, y]| Point { x, y }).collect();
         let parts = build_convex_parts(&points);
@@ -403,7 +369,6 @@ fn build_shape_geom(orientation: &Orientation) -> ShapeGeom {
             None => bbox,
         });
         layers.push(PolyLayer {
-            key,
             polygon,
             parts,
             bbox,
@@ -417,61 +382,6 @@ fn build_shape_geom(orientation: &Orientation) -> ShapeGeom {
         max_y: 0.0,
     });
     ShapeGeom { layers, bbox }
-}
-
-fn canonical_layer_key(layer: &[[f64; 2]]) -> LayerKey {
-    let points: Vec<(u64, u64)> = layer
-        .iter()
-        .map(|&[x, y]| (float_key(x), float_key(y)))
-        .collect();
-    if points.is_empty() {
-        return Arc::from(Vec::new().into_boxed_slice());
-    }
-
-    let mut best = best_cyclic_rotation(&points);
-    let mut reversed = points.clone();
-    reversed.reverse();
-    let reversed_best = best_cyclic_rotation(&reversed);
-    if reversed_best < best {
-        best = reversed_best;
-    }
-
-    Arc::from(best.into_boxed_slice())
-}
-
-fn best_cyclic_rotation(points: &[(u64, u64)]) -> Vec<(u64, u64)> {
-    let len = points.len();
-    let mut best: Vec<(u64, u64)> = (0..len).map(|i| points[i]).collect();
-
-    for start in 1..len {
-        let mut better = false;
-        for offset in 0..len {
-            let cand = points[(start + offset) % len];
-            let cur = best[offset];
-            if cand < cur {
-                better = true;
-                break;
-            }
-            if cand > cur {
-                break;
-            }
-        }
-        if better {
-            for offset in 0..len {
-                best[offset] = points[(start + offset) % len];
-            }
-        }
-    }
-
-    best
-}
-
-fn float_key(x: f64) -> u64 {
-    if x == 0.0 {
-        0.0f64.to_bits()
-    } else {
-        x.to_bits()
-    }
 }
 
 fn build_convex_parts(points: &[Point]) -> Vec<ConvexPart> {
@@ -685,52 +595,81 @@ fn windows_overlap(a: (i64, i64), b: (i64, i64)) -> bool {
     a.0 <= b.1 && b.0 <= a.1
 }
 
-fn build_directed_block_pair(
+fn build_bidirectional_block_pair(
     geoms: &[Vec<ShapeGeom>],
-    moving_block: usize,
-    fixed_block: usize,
-    layer_pair_cache: &mut LayerPairGridCache,
-) -> BlockPairCollision {
-    let moving_orients = geoms[moving_block].len();
-    let fixed_orients = geoms[fixed_block].len();
-    let mut orient_pair_index = vec![None; moving_orients * fixed_orients];
-    let mut orient_pairs = Vec::new();
+    a_block: usize,
+    b_block: usize,
+) -> (BlockPairCollision, BlockPairCollision) {
+    let a_orients = geoms[a_block].len();
+    let b_orients = geoms[b_block].len();
+    let mut ab_orient_pair_index = vec![None; a_orients * b_orients];
+    let mut ba_orient_pair_index = vec![None; b_orients * a_orients];
+    let mut ab_orient_pairs = Vec::new();
+    let mut ba_orient_pairs = Vec::new();
 
-    for moving_orient in 0..moving_orients {
-        for fixed_orient in 0..fixed_orients {
-            let moving = &geoms[moving_block][moving_orient];
-            let fixed = &geoms[fixed_block][fixed_orient];
-            let range = delta_range(moving.bbox, fixed.bbox);
-            let crane = build_crane_grid_with_cache(moving, fixed, range, layer_pair_cache);
+    for a_orient in 0..a_orients {
+        for b_orient in 0..b_orients {
+            let a = &geoms[a_block][a_orient];
+            let b = &geoms[b_block][b_orient];
+            let (ab_crane, ba_crane) = build_crane_grids_both_directions(a, b);
 
-            let idx = orient_pairs.len();
-            orient_pair_index[moving_orient * fixed_orients + fixed_orient] = Some(idx);
-            orient_pairs.push(OrientPairCollision { crane });
+            let ab_idx = ab_orient_pairs.len();
+            ab_orient_pair_index[a_orient * b_orients + b_orient] = Some(ab_idx);
+            ab_orient_pairs.push(OrientPairCollision { crane: ab_crane });
+
+            let ba_idx = ba_orient_pairs.len();
+            ba_orient_pair_index[b_orient * a_orients + a_orient] = Some(ba_idx);
+            ba_orient_pairs.push(OrientPairCollision { crane: ba_crane });
         }
     }
 
-    BlockPairCollision {
-        fixed_orients,
-        orient_pair_index,
-        orient_pairs,
-    }
+    (
+        BlockPairCollision {
+            fixed_orients: b_orients,
+            orient_pair_index: ab_orient_pair_index,
+            orient_pairs: ab_orient_pairs,
+        },
+        BlockPairCollision {
+            fixed_orients: a_orients,
+            orient_pair_index: ba_orient_pair_index,
+            orient_pairs: ba_orient_pairs,
+        },
+    )
 }
 
-fn build_crane_grid_with_cache(
-    moving: &ShapeGeom,
-    fixed: &ShapeGeom,
-    range: DeltaRange,
-    layer_pair_cache: &mut LayerPairGridCache,
-) -> CollisionGrid {
+fn build_crane_grid(moving: &ShapeGeom, fixed: &ShapeGeom, range: DeltaRange) -> CollisionGrid {
     let mut builder = CollisionGridBuilder::new(range);
 
     for k in 0..moving.layers.len() {
         for j in k..fixed.layers.len() {
-            layer_pair_cache.add_layer_pair(&mut builder, &moving.layers[k], &fixed.layers[j]);
+            let grid = build_layer_pair_grid(&moving.layers[k], &fixed.layers[j]);
+            builder.add_grid(&grid);
         }
     }
 
     builder.finish()
+}
+
+fn build_crane_grids_both_directions(
+    a: &ShapeGeom,
+    b: &ShapeGeom,
+) -> (CollisionGrid, CollisionGrid) {
+    let mut ab_builder = CollisionGridBuilder::new(delta_range(a.bbox, b.bbox));
+    let mut ba_builder = CollisionGridBuilder::new(delta_range(b.bbox, a.bbox));
+
+    for ka in 0..a.layers.len() {
+        for lb in 0..b.layers.len() {
+            let grid = build_layer_pair_grid(&a.layers[ka], &b.layers[lb]);
+            if lb >= ka {
+                ab_builder.add_grid(&grid);
+            }
+            if ka >= lb {
+                ba_builder.add_reversed_grid(&grid);
+            }
+        }
+    }
+
+    (ab_builder.finish(), ba_builder.finish())
 }
 
 fn build_layer_pair_grid(a: &PolyLayer, b: &PolyLayer) -> CollisionGrid {
@@ -1108,11 +1047,6 @@ mod tests {
         .into_iter()
         .next()
         .unwrap()
-    }
-
-    fn build_crane_grid(moving: &ShapeGeom, fixed: &ShapeGeom, range: DeltaRange) -> CollisionGrid {
-        let mut layer_pair_cache = LayerPairGridCache::default();
-        build_crane_grid_with_cache(moving, fixed, range, &mut layer_pair_cache)
     }
 
     #[test]
@@ -1600,6 +1534,72 @@ mod tests {
                         "prob1 sample {case_id} mismatch at dx={dx}, dy={dy}"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn collision_precompute_crane_matches_geo_for_prob1_embedded_samples() {
+        for (case_id, moving_layers, fixed_layers) in prob1_sample_orientation_pairs() {
+            let moving = build_shape_geom(&Orientation {
+                layers: moving_layers.clone(),
+            });
+            let fixed = build_shape_geom(&Orientation {
+                layers: fixed_layers.clone(),
+            });
+            let problem = problem(
+                vec![Bay {
+                    width: 1000,
+                    height: 1000,
+                }],
+                vec![
+                    test_block(0, 10, moving_layers),
+                    test_block(0, 10, fixed_layers),
+                ],
+            );
+            let pre = CollisionPrecompute::build(&problem, 0);
+
+            assert_precompute_matches_geo(&pre, case_id, &moving, &fixed, 0, 1, "forward");
+            assert_precompute_matches_geo(&pre, case_id, &fixed, &moving, 1, 0, "reverse");
+        }
+    }
+
+    fn assert_precompute_matches_geo(
+        pre: &CollisionPrecompute,
+        case_id: usize,
+        moving: &ShapeGeom,
+        fixed: &ShapeGeom,
+        moving_block_id: usize,
+        fixed_block_id: usize,
+        label: &str,
+    ) {
+        let range = delta_range(moving.bbox, fixed.bbox);
+        for dx in range.min_dx..=range.max_dx {
+            for dy in range.min_dy..=range.max_dy {
+                let exact = crane_collision_direct_geo(moving, fixed, dx, dy);
+                let expected = if exact {
+                    CollisionResult::Hit
+                } else {
+                    CollisionResult::Clear
+                };
+                assert_eq!(
+                    pre.crane(
+                        BlockPlacement {
+                            block_id: moving_block_id,
+                            orient_idx: 0,
+                            x: 0,
+                            y: 0,
+                        },
+                        BlockPlacement {
+                            block_id: fixed_block_id,
+                            orient_idx: 0,
+                            x: dx,
+                            y: dy,
+                        },
+                    ),
+                    expected,
+                    "prob1 sample {case_id} {label} mismatch at dx={dx}, dy={dy}"
+                );
             }
         }
     }
