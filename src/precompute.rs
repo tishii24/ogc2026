@@ -1,6 +1,5 @@
-#![allow(dead_code)]
-
 use crate::*;
+#[cfg(test)]
 use geo::{Coord, LineString, Polygon};
 use rayon::prelude::*;
 
@@ -49,9 +48,6 @@ struct Point {
 struct ConvexPart {
     points: [Point; MAX_CONVEX_VERTS],
     len: usize,
-    bbox: BBox,
-    axes: [Point; MAX_CONVEX_VERTS],
-    proj: [(f64, f64); MAX_CONVEX_VERTS],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -62,6 +58,7 @@ struct ConvexPolygon {
 
 #[derive(Clone, Debug)]
 struct PolyLayer {
+    #[cfg(test)]
     polygon: Polygon<f64>,
     parts: Vec<ConvexPart>,
     bbox: BBox,
@@ -112,7 +109,6 @@ struct BlockPairCollision {
 }
 
 pub struct CollisionPrecompute {
-    _geoms: Vec<Vec<ShapeGeom>>,
     fit_ranges: Vec<Vec<Vec<Option<FitRange>>>>,
     block_pair_index: Vec<Option<usize>>,
     block_pairs: Vec<BlockPairCollision>,
@@ -157,7 +153,6 @@ impl CollisionPrecompute {
         }
 
         Self {
-            _geoms: geoms,
             fit_ranges,
             block_pair_index,
             block_pairs,
@@ -190,17 +185,6 @@ impl CollisionPrecompute {
         } else {
             CollisionResult::Clear
         }
-    }
-
-    pub fn fits_in_bay(&self, bay_id: usize, placement: BlockPlacement) -> bool {
-        let Some(range) = self.fit_range(bay_id, placement.block_id, placement.orient_idx) else {
-            return false;
-        };
-
-        range.min_x <= placement.x
-            && placement.x <= range.max_x
-            && range.min_y <= placement.y
-            && placement.y <= range.max_y
     }
 
     pub fn fit_range(&self, bay_id: usize, block_id: usize, orient_idx: usize) -> Option<FitRange> {
@@ -347,21 +331,24 @@ fn build_shape_geom(orientation: &Orientation) -> ShapeGeom {
     let mut all_bbox: Option<BBox> = None;
 
     for layer in &orientation.layers {
-        let mut coords: Vec<Coord<f64>> = layer.iter().map(|&[x, y]| Coord { x, y }).collect();
-
-        if coords.first() != coords.last() {
-            if let Some(first) = coords.first().copied() {
-                coords.push(first);
+        #[cfg(test)]
+        let polygon = {
+            let mut coords: Vec<Coord<f64>> = layer.iter().map(|&[x, y]| Coord { x, y }).collect();
+            if coords.first() != coords.last() {
+                if let Some(first) = coords.first().copied() {
+                    coords.push(first);
+                }
             }
-        }
+            Polygon::new(LineString::from(coords), vec![])
+        };
 
-        let polygon = Polygon::new(LineString::from(coords), vec![]);
         let points: Vec<Point> = layer.iter().map(|&[x, y]| Point { x, y }).collect();
         let parts = build_convex_parts(&points);
         assert!(
             !parts.is_empty(),
-            "failed to build convex parts for layer with {} vertices",
-            points.len()
+            "failed to build convex parts for layer with {} vertices, points={:?}",
+            points.len(),
+            points
         );
         let bbox = bbox_of_points(layer);
         all_bbox = Some(match all_bbox {
@@ -369,6 +356,7 @@ fn build_shape_geom(orientation: &Orientation) -> ShapeGeom {
             None => bbox,
         });
         layers.push(PolyLayer {
+            #[cfg(test)]
             polygon,
             parts,
             bbox,
@@ -431,6 +419,10 @@ fn triangulate_polygon(points: &[Point]) -> Vec<[Point; 3]> {
 
     let mut triangles = Vec::with_capacity(points.len() - 2);
     while idx.len() > 3 {
+        if polygon_area_abs_by_indices(points, &idx) <= AREA_EPS {
+            return triangles;
+        }
+
         let m = idx.len();
         let mut ear_pos = None;
 
@@ -455,7 +447,7 @@ fn triangulate_polygon(points: &[Point]) -> Vec<[Point; 3]> {
                 }
             }
 
-            if !contains_other {
+            if !contains_other && diagonal_clear(points, &idx, i0, i2) {
                 ear_pos = Some(pos);
                 triangles.push(tri);
                 break;
@@ -463,6 +455,9 @@ fn triangulate_polygon(points: &[Point]) -> Vec<[Point; 3]> {
         }
 
         let Some(pos) = ear_pos else {
+            if polygon_area_abs_by_indices(points, &idx) <= AREA_EPS {
+                return triangles;
+            }
             return Vec::new();
         };
         idx.remove(pos);
@@ -470,10 +465,69 @@ fn triangulate_polygon(points: &[Point]) -> Vec<[Point; 3]> {
 
     let tri = [points[idx[0]], points[idx[1]], points[idx[2]]];
     if cross(tri[0], tri[1], tri[2]) <= AREA_EPS {
+        if polygon_area_abs_by_indices(points, &idx) <= AREA_EPS {
+            return triangles;
+        }
         return Vec::new();
     }
     triangles.push(tri);
     triangles
+}
+
+fn polygon_area_abs_by_indices(points: &[Point], idx: &[usize]) -> f64 {
+    let mut area = 0.0;
+    for i in 0..idx.len() {
+        let a = points[idx[i]];
+        let b = points[idx[(i + 1) % idx.len()]];
+        area += a.x * b.y - b.x * a.y;
+    }
+    (area * 0.5).abs()
+}
+
+fn diagonal_clear(points: &[Point], idx: &[usize], a_idx: usize, b_idx: usize) -> bool {
+    let a = points[a_idx];
+    let b = points[b_idx];
+    for i in 0..idx.len() {
+        let c_idx = idx[i];
+        let d_idx = idx[(i + 1) % idx.len()];
+        if c_idx == a_idx || c_idx == b_idx || d_idx == a_idx || d_idx == b_idx {
+            continue;
+        }
+        if segments_intersect(a, b, points[c_idx], points[d_idx]) {
+            return false;
+        }
+    }
+    true
+}
+
+fn segments_intersect(a: Point, b: Point, c: Point, d: Point) -> bool {
+    let ab_c = cross(a, b, c);
+    let ab_d = cross(a, b, d);
+    let cd_a = cross(c, d, a);
+    let cd_b = cross(c, d, b);
+
+    if ab_c.abs() <= AREA_EPS && point_on_segment(c, a, b) {
+        return true;
+    }
+    if ab_d.abs() <= AREA_EPS && point_on_segment(d, a, b) {
+        return true;
+    }
+    if cd_a.abs() <= AREA_EPS && point_on_segment(a, c, d) {
+        return true;
+    }
+    if cd_b.abs() <= AREA_EPS && point_on_segment(b, c, d) {
+        return true;
+    }
+
+    ((ab_c > AREA_EPS && ab_d < -AREA_EPS) || (ab_c < -AREA_EPS && ab_d > AREA_EPS))
+        && ((cd_a > AREA_EPS && cd_b < -AREA_EPS) || (cd_a < -AREA_EPS && cd_b > AREA_EPS))
+}
+
+fn point_on_segment(p: Point, a: Point, b: Point) -> bool {
+    a.x.min(b.x) - AREA_EPS <= p.x
+        && p.x <= a.x.max(b.x) + AREA_EPS
+        && a.y.min(b.y) - AREA_EPS <= p.y
+        && p.y <= a.y.max(b.y) + AREA_EPS
 }
 
 fn make_convex_part(points: &[Point]) -> ConvexPart {
@@ -488,19 +542,9 @@ fn make_convex_part(points: &[Point]) -> ConvexPart {
         }
     }
 
-    let mut axes = [Point { x: 0.0, y: 0.0 }; MAX_CONVEX_VERTS];
-    let mut proj = [(0.0, 0.0); MAX_CONVEX_VERTS];
-    for i in 0..len {
-        axes[i] = edge_normal(part_points[i], part_points[(i + 1) % len]);
-        proj[i] = project_point_slice(&part_points[..len], axes[i]);
-    }
-
     ConvexPart {
         points: part_points,
         len,
-        bbox: bbox_of_point_slice(&part_points[..len]),
-        axes,
-        proj,
     }
 }
 
@@ -524,6 +568,7 @@ fn point_in_triangle_strict(p: Point, t: [Point; 3]) -> bool {
         && cross(t[2], t[0], p) > AREA_EPS
 }
 
+#[cfg(test)]
 fn bbox_of_point_slice(points: &[Point]) -> BBox {
     let mut bbox = BBox {
         min_x: f64::INFINITY,
@@ -635,19 +680,6 @@ fn build_bidirectional_block_pair(
             orient_pairs: ba_orient_pairs,
         },
     )
-}
-
-fn build_crane_grid(moving: &ShapeGeom, fixed: &ShapeGeom, range: DeltaRange) -> CollisionGrid {
-    let mut builder = CollisionGridBuilder::new(range);
-
-    for k in 0..moving.layers.len() {
-        for j in k..fixed.layers.len() {
-            let grid = build_layer_pair_grid(&moving.layers[k], &fixed.layers[j]);
-            builder.add_grid(&grid);
-        }
-    }
-
-    builder.finish()
 }
 
 fn build_crane_grids_both_directions(
@@ -781,65 +813,6 @@ fn rotated_edge(points: &[Point], len: usize, start: usize, offset: usize) -> Po
     }
 }
 
-fn convex_hull(mut points: [Point; MAX_MINKOWSKI_POINTS], len: usize) -> ConvexPolygon {
-    points[..len].sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
-
-    let mut unique = [Point { x: 0.0, y: 0.0 }; MAX_MINKOWSKI_POINTS];
-    let mut unique_len = 0;
-    for &p in &points[..len] {
-        if unique_len == 0
-            || (p.x - unique[unique_len - 1].x).abs() > AREA_EPS
-            || (p.y - unique[unique_len - 1].y).abs() > AREA_EPS
-        {
-            unique[unique_len] = p;
-            unique_len += 1;
-        }
-    }
-
-    if unique_len <= 1 {
-        return ConvexPolygon {
-            points: unique,
-            len: unique_len,
-        };
-    }
-
-    let mut lower = [Point { x: 0.0, y: 0.0 }; MAX_MINKOWSKI_POINTS];
-    let mut lower_len = 0;
-    for &p in &unique[..unique_len] {
-        while lower_len >= 2 && cross(lower[lower_len - 2], lower[lower_len - 1], p) <= AREA_EPS {
-            lower_len -= 1;
-        }
-        lower[lower_len] = p;
-        lower_len += 1;
-    }
-
-    let mut upper = [Point { x: 0.0, y: 0.0 }; MAX_MINKOWSKI_POINTS];
-    let mut upper_len = 0;
-    for &p in unique[..unique_len].iter().rev() {
-        while upper_len >= 2 && cross(upper[upper_len - 2], upper[upper_len - 1], p) <= AREA_EPS {
-            upper_len -= 1;
-        }
-        upper[upper_len] = p;
-        upper_len += 1;
-    }
-
-    let mut hull = [Point { x: 0.0, y: 0.0 }; MAX_MINKOWSKI_POINTS];
-    let mut hull_len = 0;
-    for &p in &lower[..lower_len - 1] {
-        hull[hull_len] = p;
-        hull_len += 1;
-    }
-    for &p in &upper[..upper_len - 1] {
-        hull[hull_len] = p;
-        hull_len += 1;
-    }
-
-    ConvexPolygon {
-        points: hull,
-        len: hull_len,
-    }
-}
-
 fn vertical_slice_strict(poly: &ConvexPolygon, dx: i64) -> Option<(i64, i64)> {
     let x = dx as f64;
     let mut low = f64::NEG_INFINITY;
@@ -877,111 +850,6 @@ fn delta_range(moving: BBox, fixed: BBox) -> DeltaRange {
         min_dy: (moving.min_y - fixed.max_y).floor() as i64 - 1,
         max_dy: (moving.max_y - fixed.min_y).ceil() as i64 + 1,
     }
-}
-
-fn crane_collision_direct(moving: &ShapeGeom, fixed: &ShapeGeom, dx: i64, dy: i64) -> bool {
-    for k in 0..moving.layers.len() {
-        for j in k..fixed.layers.len() {
-            let a = &moving.layers[k];
-            let b = &fixed.layers[j];
-
-            if !bbox_may_overlap(a.bbox, b.bbox, dx, dy) {
-                continue;
-            }
-
-            if convex_parts_overlap_any(a, b, dx, dy) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn convex_parts_overlap_any(a: &PolyLayer, b: &PolyLayer, dx: i64, dy: i64) -> bool {
-    let dx_f = dx as f64;
-    let dy_f = dy as f64;
-
-    for &pa in &a.parts {
-        for &pb in &b.parts {
-            if !bbox_may_overlap(pa.bbox, pb.bbox, dx, dy) {
-                continue;
-            }
-            if convex_parts_overlap_area_positive(pa, pb, dx_f, dy_f) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn convex_parts_overlap_area_positive(a: ConvexPart, b: ConvexPart, dx: f64, dy: f64) -> bool {
-    for i in 0..a.len {
-        let axis = a.axes[i];
-        if axis.x.abs() <= AREA_EPS && axis.y.abs() <= AREA_EPS {
-            continue;
-        }
-        let (amin, amax) = a.proj[i];
-        let (bmin, bmax) = project_convex_part(b, axis, dx, dy);
-        if amax <= bmin + AREA_EPS || bmax <= amin + AREA_EPS {
-            return false;
-        }
-    }
-
-    for i in 0..b.len {
-        let axis = b.axes[i];
-        if axis.x.abs() <= AREA_EPS && axis.y.abs() <= AREA_EPS {
-            continue;
-        }
-        let shift = dx * axis.x + dy * axis.y;
-        let (bmin, bmax) = (b.proj[i].0 + shift, b.proj[i].1 + shift);
-        let (amin, amax) = project_convex_part(a, axis, 0.0, 0.0);
-        if amax <= bmin + AREA_EPS || bmax <= amin + AREA_EPS {
-            return false;
-        }
-    }
-
-    true
-}
-
-fn edge_normal(a: Point, b: Point) -> Point {
-    let ex = b.x - a.x;
-    let ey = b.y - a.y;
-    Point { x: -ey, y: ex }
-}
-
-fn project_convex_part(part: ConvexPart, axis: Point, dx: f64, dy: f64) -> (f64, f64) {
-    let (min, max) = project_point_slice(&part.points[..part.len], axis);
-    let shift = dx * axis.x + dy * axis.y;
-    (min + shift, max + shift)
-}
-
-fn project_point_slice(points: &[Point], axis: Point) -> (f64, f64) {
-    let mut min = f64::INFINITY;
-    let mut max = f64::NEG_INFINITY;
-    for &p in points {
-        let v = project_point(p, axis, 0.0, 0.0);
-        min = min.min(v);
-        max = max.max(v);
-    }
-    (min, max)
-}
-
-fn project_point(p: Point, axis: Point, dx: f64, dy: f64) -> f64 {
-    (p.x + dx) * axis.x + (p.y + dy) * axis.y
-}
-
-fn bbox_may_overlap(a: BBox, b: BBox, dx: i64, dy: i64) -> bool {
-    let dx = dx as f64;
-    let dy = dy as f64;
-    let b_min_x = b.min_x + dx;
-    let b_max_x = b.max_x + dx;
-    let b_min_y = b.min_y + dy;
-    let b_max_y = b.max_y + dy;
-
-    a.min_x < b_max_x - AREA_EPS
-        && b_min_x < a.max_x - AREA_EPS
-        && a.min_y < b_max_y - AREA_EPS
-        && b_min_y < a.max_y - AREA_EPS
 }
 
 #[cfg(test)]
@@ -1049,6 +917,112 @@ mod tests {
         .unwrap()
     }
 
+    fn build_crane_grid(moving: &ShapeGeom, fixed: &ShapeGeom, range: DeltaRange) -> CollisionGrid {
+        let mut builder = CollisionGridBuilder::new(range);
+
+        for k in 0..moving.layers.len() {
+            for j in k..fixed.layers.len() {
+                let grid = build_layer_pair_grid(&moving.layers[k], &fixed.layers[j]);
+                builder.add_grid(&grid);
+            }
+        }
+
+        builder.finish()
+    }
+
+    fn convex_parts_overlap_any(a: &PolyLayer, b: &PolyLayer, dx: i64, dy: i64) -> bool {
+        let dx_f = dx as f64;
+        let dy_f = dy as f64;
+
+        for &pa in &a.parts {
+            for &pb in &b.parts {
+                if !bbox_may_overlap(
+                    bbox_of_point_slice(&pa.points[..pa.len]),
+                    bbox_of_point_slice(&pb.points[..pb.len]),
+                    dx,
+                    dy,
+                ) {
+                    continue;
+                }
+                if convex_parts_overlap_area_positive(pa, pb, dx_f, dy_f) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn convex_parts_overlap_area_positive(a: ConvexPart, b: ConvexPart, dx: f64, dy: f64) -> bool {
+        for i in 0..a.len {
+            let axis = edge_normal(a.points[i], a.points[(i + 1) % a.len]);
+            if axis.x.abs() <= AREA_EPS && axis.y.abs() <= AREA_EPS {
+                continue;
+            }
+            let (amin, amax) = project_point_slice(&a.points[..a.len], axis);
+            let (bmin, bmax) = project_convex_part(b, axis, dx, dy);
+            if amax <= bmin + AREA_EPS || bmax <= amin + AREA_EPS {
+                return false;
+            }
+        }
+
+        for i in 0..b.len {
+            let axis = edge_normal(b.points[i], b.points[(i + 1) % b.len]);
+            if axis.x.abs() <= AREA_EPS && axis.y.abs() <= AREA_EPS {
+                continue;
+            }
+            let shift = dx * axis.x + dy * axis.y;
+            let (bmin0, bmax0) = project_point_slice(&b.points[..b.len], axis);
+            let (bmin, bmax) = (bmin0 + shift, bmax0 + shift);
+            let (amin, amax) = project_point_slice(&a.points[..a.len], axis);
+            if amax <= bmin + AREA_EPS || bmax <= amin + AREA_EPS {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn edge_normal(a: Point, b: Point) -> Point {
+        let ex = b.x - a.x;
+        let ey = b.y - a.y;
+        Point { x: -ey, y: ex }
+    }
+
+    fn project_convex_part(part: ConvexPart, axis: Point, dx: f64, dy: f64) -> (f64, f64) {
+        let (min, max) = project_point_slice(&part.points[..part.len], axis);
+        let shift = dx * axis.x + dy * axis.y;
+        (min + shift, max + shift)
+    }
+
+    fn project_point_slice(points: &[Point], axis: Point) -> (f64, f64) {
+        let mut min = f64::INFINITY;
+        let mut max = f64::NEG_INFINITY;
+        for &p in points {
+            let v = project_point(p, axis, 0.0, 0.0);
+            min = min.min(v);
+            max = max.max(v);
+        }
+        (min, max)
+    }
+
+    fn project_point(p: Point, axis: Point, dx: f64, dy: f64) -> f64 {
+        (p.x + dx) * axis.x + (p.y + dy) * axis.y
+    }
+
+    fn bbox_may_overlap(a: BBox, b: BBox, dx: i64, dy: i64) -> bool {
+        let dx = dx as f64;
+        let dy = dy as f64;
+        let b_min_x = b.min_x + dx;
+        let b_max_x = b.max_x + dx;
+        let b_min_y = b.min_y + dy;
+        let b_max_y = b.max_y + dy;
+
+        a.min_x < b_max_x - AREA_EPS
+            && b_min_x < a.max_x - AREA_EPS
+            && a.min_y < b_max_y - AREA_EPS
+            && b_min_y < a.max_y - AREA_EPS
+    }
+
     #[test]
     fn triangulation_sat_matches_geo_for_sample_offsets() {
         let a = single_layer_geom(vec![
@@ -1085,6 +1059,44 @@ mod tests {
         assert!(!convex_parts_overlap_any(&a, &b, 2, 0));
         assert!(!convex_parts_overlap_any(&a, &b, 2, 2));
         assert!(convex_parts_overlap_any(&a, &b, 1, 0));
+    }
+
+    #[test]
+    fn triangulation_accepts_degenerate_remainder_cases() {
+        let cases = [
+            vec![
+                [0.0, 0.0],
+                [5.8138, 0.0],
+                [11.6276, 5.0638],
+                [11.6276, 0.0],
+                [12.1797, 0.0],
+                [5.4132, -4.7149],
+            ],
+            vec![
+                [0.0, 0.0],
+                [-0.9711, 0.0],
+                [-2.9132, 0.0],
+                [-2.9132, 3.169],
+                [-2.9132, 6.338],
+                [-0.9711, 3.169],
+                [0.0, 3.169],
+            ],
+            vec![
+                [0.0, 0.0],
+                [3.7083, 0.0],
+                [3.7083, 3.2128],
+                [7.4166, 3.2128],
+                [11.1249, 3.2128],
+                [7.4166, 0.0],
+                [7.4166, -0.1289],
+                [3.0559, -2.6476],
+            ],
+        ];
+
+        for layer in cases {
+            let geom = single_layer_geom(layer);
+            assert!(!geom.parts.is_empty());
+        }
     }
 
     #[test]
@@ -1641,12 +1653,6 @@ mod tests {
                 max_y: 4,
             })
         );
-        assert!(pre.fits_in_bay(0, placement(0, 1, 1)));
-        assert!(pre.fits_in_bay(0, placement(0, 7, 4)));
-        assert!(!pre.fits_in_bay(0, placement(0, 0, 1)));
-        assert!(!pre.fits_in_bay(0, placement(0, 8, 4)));
-        assert!(!pre.fits_in_bay(0, placement(0, 1, 0)));
-        assert!(!pre.fits_in_bay(0, placement(0, 7, 5)));
     }
 
     #[test]
@@ -1661,7 +1667,6 @@ mod tests {
         let pre = CollisionPrecompute::build(&problem, 0);
 
         assert_eq!(pre.fit_range(0, 0, 0), None);
-        assert!(!pre.fits_in_bay(0, placement(0, 0, 0)));
     }
 
     #[test]
