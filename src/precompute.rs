@@ -630,18 +630,80 @@ fn rasterize_convex_pair(builder: &mut CollisionGridBuilder, a: ConvexPart, b: C
 }
 
 fn minkowski_difference_hull(a: ConvexPart, b: ConvexPart) -> ConvexPolygon {
+    let mut neg_b = [Point { x: 0.0, y: 0.0 }; MAX_CONVEX_VERTS];
+    for (dst, src) in neg_b.iter_mut().zip(b.points.iter()).take(b.len) {
+        *dst = Point {
+            x: -src.x,
+            y: -src.y,
+        };
+    }
+
+    let start_a = lowest_leftmost_index(&a.points, a.len);
+    let start_b = lowest_leftmost_index(&neg_b, b.len);
     let mut points = [Point { x: 0.0, y: 0.0 }; MAX_MINKOWSKI_POINTS];
-    let mut len = 0;
-    for i in 0..a.len {
-        for j in 0..b.len {
-            points[len] = Point {
-                x: a.points[i].x - b.points[j].x,
-                y: a.points[i].y - b.points[j].y,
-            };
+    let mut len = 1;
+    let mut cur = Point {
+        x: a.points[start_a].x + neg_b[start_b].x,
+        y: a.points[start_a].y + neg_b[start_b].y,
+    };
+    points[0] = cur;
+
+    let mut ia = 0;
+    let mut ib = 0;
+    while ia < a.len || ib < b.len {
+        let take_a = if ib == b.len {
+            true
+        } else if ia == a.len {
+            false
+        } else {
+            let ea = rotated_edge(&a.points, a.len, start_a, ia);
+            let eb = rotated_edge(&neg_b, b.len, start_b, ib);
+            ea.x * eb.y - ea.y * eb.x >= 0.0
+        };
+
+        let edge = if take_a {
+            let edge = rotated_edge(&a.points, a.len, start_a, ia);
+            ia += 1;
+            edge
+        } else {
+            let edge = rotated_edge(&neg_b, b.len, start_b, ib);
+            ib += 1;
+            edge
+        };
+
+        cur.x += edge.x;
+        cur.y += edge.y;
+        if ia < a.len || ib < b.len {
+            points[len] = cur;
             len += 1;
         }
     }
-    convex_hull(points, len)
+
+    ConvexPolygon { points, len }
+}
+
+fn lowest_leftmost_index(points: &[Point], len: usize) -> usize {
+    let mut best = 0;
+    for i in 1..len {
+        if points[i]
+            .y
+            .total_cmp(&points[best].y)
+            .then(points[i].x.total_cmp(&points[best].x))
+            .is_lt()
+        {
+            best = i;
+        }
+    }
+    best
+}
+
+fn rotated_edge(points: &[Point], len: usize, start: usize, offset: usize) -> Point {
+    let i = (start + offset) % len;
+    let j = (start + offset + 1) % len;
+    Point {
+        x: points[j].x - points[i].x,
+        y: points[j].y - points[i].y,
+    }
 }
 
 fn convex_hull(mut points: [Point; MAX_MINKOWSKI_POINTS], len: usize) -> ConvexPolygon {
