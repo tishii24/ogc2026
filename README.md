@@ -30,6 +30,23 @@ python tools/runner.py $VERSION --cases train/*.json --timelimit 60
 python tools/stats.py
 ```
 
+## ジャッジ環境の再現
+
+```
+VERSION=linux-check
+python tools/composer.py $VERSION --platform linux
+docker run --rm \
+  --platform linux/amd64 \
+  --network=none \
+  --cpus=4 \
+  --memory=16g \
+  --memory-swap=16g \
+  -v "$(pwd)":/work \
+  -w /work \
+  ogc2026-judge \
+  python tools/runner.py $VERSION --cases train/*.json --timelimit 60
+```
+
 ## 可視化
 
 ```bash

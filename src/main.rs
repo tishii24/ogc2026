@@ -1,5 +1,6 @@
 mod precompute;
 mod solver;
+mod util;
 
 use std::collections::BTreeMap;
 use std::env;
