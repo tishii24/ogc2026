@@ -11,7 +11,6 @@ const MAX_MINKOWSKI_POINTS: usize = MAX_CONVEX_VERTS * MAX_CONVEX_VERTS;
 pub enum CollisionResult {
     Hit,
     Clear,
-    NotPrecomputed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,20 +115,17 @@ pub struct CollisionPrecompute {
 }
 
 impl CollisionPrecompute {
-    pub fn build(problem: &Problem, c: i64) -> Self {
+    pub fn build(problem: &Problem) -> Self {
         let n = problem.blocks.len();
         let geoms = build_all_geoms(problem);
         let fit_ranges = build_all_fit_ranges(problem, &geoms);
-        let windows: Vec<(i64, i64)> = problem.blocks.iter().map(|b| time_window(b, c)).collect();
         let mut block_pair_index = vec![None; n * n];
         let mut block_pairs = Vec::new();
 
         let mut tasks = Vec::new();
         for i in 0..n {
             for j in (i + 1)..n {
-                if windows_overlap(windows[i], windows[j]) {
-                    tasks.push((i, j));
-                }
+                tasks.push((i, j));
             }
         }
         eprintln!("building {} collision block pairs", tasks.len());
@@ -165,16 +161,13 @@ impl CollisionPrecompute {
             return CollisionResult::Clear;
         }
 
-        let Some(pair_idx) = self.block_pair_index[moving.block_id * self.n + fixed.block_id]
-        else {
-            return CollisionResult::NotPrecomputed;
-        };
+        let pair_idx = self.block_pair_index[moving.block_id * self.n + fixed.block_id]
+            .expect("collision block pair should be precomputed");
 
         let pair = &self.block_pairs[pair_idx];
         let key = moving.orient_idx * pair.fixed_orients + fixed.orient_idx;
-        let Some(orient_pair_idx) = pair.orient_pair_index[key] else {
-            return CollisionResult::NotPrecomputed;
-        };
+        let orient_pair_idx =
+            pair.orient_pair_index[key].expect("collision orientation pair should be precomputed");
 
         let orient_pair = &pair.orient_pairs[orient_pair_idx];
         let dx = fixed.x - moving.x;
@@ -630,14 +623,6 @@ fn build_fit_range(bay: &Bay, bbox: BBox) -> Option<FitRange> {
     } else {
         None
     }
-}
-
-fn time_window(block: &Block, c: i64) -> (i64, i64) {
-    ((block.release_time - c).max(0), block.due_date + c)
-}
-
-fn windows_overlap(a: (i64, i64), b: (i64, i64)) -> bool {
-    a.0 <= b.1 && b.0 <= a.1
 }
 
 fn build_bidirectional_block_pair(
@@ -1569,7 +1554,7 @@ mod tests {
                     test_block(0, 10, fixed_layers),
                 ],
             );
-            let pre = CollisionPrecompute::build(&problem, 0);
+            let pre = CollisionPrecompute::build(&problem);
 
             assert_precompute_matches_geo(&pre, case_id, &moving, &fixed, 0, 1, "forward");
             assert_precompute_matches_geo(&pre, case_id, &fixed, &moving, 1, 0, "reverse");
@@ -1642,7 +1627,7 @@ mod tests {
             }],
             vec![test_block(0, 10, vec![rect(-0.2, -0.7, 2.3, 3.1)])],
         );
-        let pre = CollisionPrecompute::build(&problem, 0);
+        let pre = CollisionPrecompute::build(&problem);
 
         assert_eq!(
             pre.fit_range(0, 0, 0),
@@ -1664,7 +1649,7 @@ mod tests {
             }],
             vec![test_block(0, 10, vec![rect(0.0, 0.0, 4.0, 1.0)])],
         );
-        let pre = CollisionPrecompute::build(&problem, 0);
+        let pre = CollisionPrecompute::build(&problem);
 
         assert_eq!(pre.fit_range(0, 0, 0), None);
     }
@@ -1681,7 +1666,7 @@ mod tests {
                 test_block(0, 10, vec![rect(0.0, 0.0, 2.0, 2.0)]),
             ],
         );
-        let pre = CollisionPrecompute::build(&problem, 0);
+        let pre = CollisionPrecompute::build(&problem);
 
         assert_eq!(
             pre.crane(placement(0, 0, 0), placement(1, 2, 0)),
@@ -1709,7 +1694,7 @@ mod tests {
                 ),
             ],
         );
-        let pre = CollisionPrecompute::build(&problem, 0);
+        let pre = CollisionPrecompute::build(&problem);
 
         assert_eq!(
             pre.crane(placement(0, 0, 0), placement(1, 0, 0)),
@@ -1733,7 +1718,7 @@ mod tests {
                 test_block(0, 10, vec![rect(0.0, 0.0, 2.0, 2.0)]),
             ],
         );
-        let pre = CollisionPrecompute::build(&problem, 0);
+        let pre = CollisionPrecompute::build(&problem);
 
         assert_eq!(
             pre.crane(placement(0, 0, 0), placement(1, 4, 0)),
@@ -1742,50 +1727,6 @@ mod tests {
         assert_eq!(
             pre.crane(placement(0, 0, 0), placement(1, -4, 0)),
             CollisionResult::Clear
-        );
-    }
-
-    #[test]
-    fn crane_returns_not_precomputed_for_disjoint_time_windows() {
-        let problem = problem(
-            vec![Bay {
-                width: 10,
-                height: 10,
-            }],
-            vec![
-                test_block(0, 10, vec![rect(0.0, 0.0, 2.0, 2.0)]),
-                test_block(20, 30, vec![rect(0.0, 0.0, 2.0, 2.0)]),
-            ],
-        );
-        let pre = CollisionPrecompute::build(&problem, 0);
-
-        assert_eq!(
-            pre.crane(placement(0, 0, 0), placement(1, 0, 0)),
-            CollisionResult::NotPrecomputed
-        );
-        assert_eq!(
-            pre.crane(placement(1, 0, 0), placement(0, 0, 0)),
-            CollisionResult::NotPrecomputed
-        );
-    }
-
-    #[test]
-    fn touching_time_windows_are_precomputed() {
-        let problem = problem(
-            vec![Bay {
-                width: 10,
-                height: 10,
-            }],
-            vec![
-                test_block(0, 10, vec![rect(0.0, 0.0, 2.0, 2.0)]),
-                test_block(10, 20, vec![rect(0.0, 0.0, 2.0, 2.0)]),
-            ],
-        );
-        let pre = CollisionPrecompute::build(&problem, 0);
-
-        assert_eq!(
-            pre.crane(placement(0, 0, 0), placement(1, 0, 0)),
-            CollisionResult::Hit
         );
     }
 }
