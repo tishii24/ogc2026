@@ -30,23 +30,6 @@ python tools/runner.py $VERSION --cases train/*.json --timelimit 60
 python tools/stats.py
 ```
 
-## ジャッジ環境の再現
-
-```
-VERSION=linux-check
-python tools/composer.py $VERSION --platform linux
-docker run --rm \
-  --platform linux/amd64 \
-  --network=none \
-  --cpus=4 \
-  --memory=16g \
-  --memory-swap=16g \
-  -v "$(pwd)":/work \
-  -w /work \
-  ogc2026-judge \
-  python tools/runner.py $VERSION --cases train/*.json --timelimit 60
-```
-
 ## 可視化
 
 ```bash
@@ -64,4 +47,21 @@ cd solutions/submit-v001
 zip -r ../../submission-v001.zip .
 
 zipinfo ../../submission-v001.zip
+```
+
+## Docker で Linux 向け提出物を作る
+
+ジャッジ環境に近い Ubuntu 24.04 / x86_64 環境で `solver` をビルドする。
+
+```bash
+docker build --platform linux/amd64 -t ogc2026-judge .
+
+VERSION=submit-v001
+
+docker run --rm \
+  --platform linux/amd64 \
+  -v /Users/tatsuyaishii/dev/heuristics-contests/ogc2026:/work/ogc2026 \
+  -w /work/ogc2026 \
+  ogc2026-judge \
+  python3.12 tools/composer.py $VERSION --platform linux
 ```

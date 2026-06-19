@@ -1,4 +1,4 @@
-mod time {
+pub mod time {
     use std::time::Instant;
 
     static mut START: Option<Instant> = None;

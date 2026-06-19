@@ -1,0 +1,6 @@
+target/
+log/
+solutions/
+.git/
+.DS_Store
+*.zip

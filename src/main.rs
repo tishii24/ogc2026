@@ -7,9 +7,10 @@ use std::env;
 use std::fs;
 use std::process;
 
-use ahc_library::utils::time;
 use serde::Deserialize;
 use serde::Serialize;
+
+use crate::util::time;
 
 #[derive(Debug, Deserialize)]
 struct Problem {
