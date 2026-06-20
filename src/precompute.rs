@@ -874,13 +874,18 @@ mod tests {
             release_time,
             due_date,
             processing_time: 1,
+            workload: 1,
             bay_preferences: vec![1],
             shape: vec![Orientation { layers }],
         }
     }
 
     fn problem(bays: Vec<Bay>, blocks: Vec<Block>) -> Problem {
-        Problem { bays, blocks }
+        Problem {
+            bays,
+            blocks,
+            weights: Weights::default(),
+        }
     }
 
     fn placement(block_id: usize, x: i64, y: i64) -> BlockPlacement {

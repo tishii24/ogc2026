@@ -16,6 +16,32 @@ use crate::util::time;
 struct Problem {
     bays: Vec<Bay>,
     blocks: Vec<Block>,
+    #[serde(default)]
+    weights: Weights,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy)]
+struct Weights {
+    #[serde(default = "default_weight")]
+    w1: f64,
+    #[serde(default = "default_weight")]
+    w2: f64,
+    #[serde(default = "default_weight")]
+    w3: f64,
+}
+
+impl Default for Weights {
+    fn default() -> Self {
+        Self {
+            w1: 1.0,
+            w2: 1.0,
+            w3: 1.0,
+        }
+    }
+}
+
+fn default_weight() -> f64 {
+    1.0
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,6 +55,8 @@ struct Block {
     release_time: i64,
     due_date: i64,
     processing_time: i64,
+    #[serde(default)]
+    workload: i64,
     bay_preferences: Vec<i64>,
     shape: Vec<Orientation>,
 }
