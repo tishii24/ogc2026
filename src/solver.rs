@@ -285,34 +285,22 @@ fn find_insert_position<R: Random>(
             None => &pre.bay_order_by_pref[original.block_id],
         };
 
-        let mut directions = [0usize, 1, 2, 3];
-        rng.shuffle(&mut directions);
-
         for &entry_time in &times {
             for &bay_id in bay_order {
-                for &direction in &directions {
-                    let mut orient_order: Vec<usize> =
-                        (0..problem.blocks[original.block_id].shape.len()).collect();
-                    rng.shuffle(&mut orient_order);
-                    for orient_idx in orient_order {
-                        let Some(range) =
-                            pre.collision
-                                .fit_range(bay_id, original.block_id, orient_idx)
-                        else {
-                            continue;
-                        };
-                        let x_len = (range.max_x - range.min_x + 1) as usize;
-                        let y_len = (range.max_y - range.min_y + 1) as usize;
-                        let x_asc = direction == 0 || direction == 2;
-                        let y_asc = direction == 0 || direction == 1;
+                for &orient_idx in &pre.orientation_order_by_bbox[original.block_id] {
+                    let Some(range) =
+                        pre.collision
+                            .fit_range(bay_id, original.block_id, orient_idx)
+                    else {
+                        continue;
+                    };
+                    let x_len = (range.max_x - range.min_x + 1) as usize;
+                    let y_len = (range.max_y - range.min_y + 1) as usize;
+                    for left in [true, false] {
                         for yi in 0..y_len {
-                            let y = if y_asc {
-                                range.min_y + yi as i64
-                            } else {
-                                range.max_y - yi as i64
-                            };
+                            let y = range.min_y + yi as i64;
                             for xi in 0..x_len {
-                                let x = if x_asc {
+                                let x = if left {
                                     range.min_x + xi as i64
                                 } else {
                                     range.max_x - xi as i64

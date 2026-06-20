@@ -6,6 +6,25 @@ pub struct Precompute {
     pub bay_load_scale: Vec<f64>,
     pub pref_penalty: Vec<Vec<i64>>,
     pub bay_order_by_pref: Vec<Vec<usize>>,
+    pub orientation_order_by_bbox: Vec<Vec<usize>>,
+}
+
+fn orientation_bbox_area(orientation: &Orientation) -> f64 {
+    let mut min_x = f64::INFINITY;
+    let mut min_y = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
+
+    for layer in &orientation.layers {
+        for &[x, y] in layer {
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x);
+            max_y = max_y.max(y);
+        }
+    }
+
+    (max_x - min_x) * (max_y - min_y)
 }
 
 impl Precompute {
@@ -55,11 +74,26 @@ impl Precompute {
             })
             .collect();
 
+        let orientation_order_by_bbox = problem
+            .blocks
+            .iter()
+            .map(|block| {
+                let mut order: Vec<usize> = (0..block.shape.len()).collect();
+                order.sort_by(|&a, &b| {
+                    orientation_bbox_area(&block.shape[a])
+                        .total_cmp(&orientation_bbox_area(&block.shape[b]))
+                        .then(a.cmp(&b))
+                });
+                order
+            })
+            .collect();
+
         Self {
             collision,
             bay_load_scale,
             pref_penalty,
             bay_order_by_pref,
+            orientation_order_by_bbox,
         }
     }
 }
