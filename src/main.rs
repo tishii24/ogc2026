@@ -1,104 +1,14 @@
-mod collision;
-mod precompute;
-mod solver;
-mod util;
-
-use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io::{self, Read};
 use std::process;
 
-use serde::Deserialize;
-use serde::Serialize;
-
-use crate::util::time;
-
-#[derive(Debug, Deserialize)]
-struct Problem {
-    bays: Vec<Bay>,
-    blocks: Vec<Block>,
-    #[serde(default)]
-    weights: Weights,
-}
-
-#[derive(Debug, Deserialize, Clone, Copy)]
-struct Weights {
-    #[serde(default = "default_weight")]
-    w1: f64,
-    #[serde(default = "default_weight")]
-    w2: f64,
-    #[serde(default = "default_weight")]
-    w3: f64,
-}
-
-impl Default for Weights {
-    fn default() -> Self {
-        Self {
-            w1: 1.0,
-            w2: 1.0,
-            w3: 1.0,
-        }
-    }
-}
-
-fn default_weight() -> f64 {
-    1.0
-}
-
-#[derive(Debug, Deserialize)]
-struct Bay {
-    width: i64,
-    height: i64,
-}
-
-#[derive(Debug, Deserialize)]
-struct Block {
-    release_time: i64,
-    due_date: i64,
-    processing_time: i64,
-    #[serde(default)]
-    workload: i64,
-    bay_preferences: Vec<i64>,
-    shape: Vec<Orientation>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Orientation {
-    layers: Vec<Vec<[f64; 2]>>,
-}
-
-#[derive(Debug, Serialize)]
-struct Solution {
-    operations: BTreeMap<i64, Vec<Operation>>,
-}
-
-#[derive(Debug, Serialize)]
-struct Operation {
-    #[serde(rename = "type")]
-    op_type: &'static str,
-    block_id: usize,
-    bay_id: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    x: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    y: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    orient_idx: Option<usize>,
-}
+use ogc2026::{Problem, solver, util::time};
 
 #[derive(Debug)]
 struct Args {
     input_path: String,
     timelimit: f64,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Placement {
-    bay_id: usize,
-    orient_idx: usize,
-    x: i64,
-    y: i64,
 }
 
 fn main() {

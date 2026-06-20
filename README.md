@@ -60,3 +60,9 @@ docker run --rm \
 (cd "solutions/$VERSION" && zip -r "../../$VERSION.zip" .)
 zipinfo "$VERSION.zip"
 ```
+
+## 緩和ソルバー
+
+```bash
+cargo run --bin relaxed_score -- --timelimit 0 train
+```
