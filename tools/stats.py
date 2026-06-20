@@ -246,7 +246,7 @@ def print_score_matrix(rows: list[dict[str, str]]) -> None:
         for row in rows
     }
 
-    headers = ["version", "timelimit"] + [case_label(case) for case in cases]
+    headers = ["version", "tl"] + [case_label(case) for case in cases]
     table_rows = []
     for version, timelimit in row_keys:
         assert timelimit is not None

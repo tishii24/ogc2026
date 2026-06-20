@@ -11,8 +11,17 @@ use std::collections::BTreeMap;
 const LOCAL_SEARCH_TIME_RATIO: f64 = 0.95;
 const START_TEMP: f64 = 1e4;
 const END_TEMP: f64 = 1.0;
+const RNG_SEED: u64 = 1;
+const MIN_REMOVED_BLOCKS: usize = 2;
+const MAX_REMOVED_BLOCKS_EXCLUSIVE: usize = 10;
+const REMOVE_POOL_FACTOR: usize = 8;
+const REMOVE_TARDINESS_WEIGHT: i64 = 10_000;
+const REMOVE_PREF_PENALTY_WEIGHT: i64 = 100;
+const REMOVE_HEAVY_BAY_WEIGHT: i64 = 0;
+const MAX_ENUMERATED_BAY_ASSIGNMENTS: usize = 10_000;
 const MAX_BAY_ASSIGNMENTS: usize = 32;
 const MAX_TIME_CANDIDATES: usize = 48;
+const LATE_TIME_EXTRA_MARGIN: i64 = 30;
 
 #[derive(Clone, Copy, Debug)]
 struct ScheduledBlock {
@@ -36,7 +45,7 @@ pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
     let pre = Precompute::build(problem);
     eprintln!("elapsed: {:.4}", time::elapsed_seconds());
 
-    let mut rng = RandPcg64Mcg::new(1);
+    let mut rng = RandPcg64Mcg::new(RNG_SEED);
     let mut current = build_initial_schedule(problem, &pre, &mut rng)?;
     let mut current_score = score_schedule(problem, &pre, &current);
     let mut best = current.clone();
@@ -51,7 +60,9 @@ pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
         iter += 1;
         let progress = (time::elapsed_seconds() / deadline).clamp(0.0, 1.0);
         let temp = START_TEMP * (END_TEMP / START_TEMP).powf(progress);
-        let k = rng.gen_range(2, 10).min(problem.blocks.len());
+        let k = rng
+            .gen_range(MIN_REMOVED_BLOCKS, MAX_REMOVED_BLOCKS_EXCLUSIVE)
+            .min(problem.blocks.len());
         let removed = choose_removed_blocks(problem, &pre, &current, k, &mut rng);
         if removed.is_empty() {
             break;
@@ -184,6 +195,58 @@ fn enumerate_bay_assignments(
     base: &[ScheduledBlock],
     removed: &[ScheduledBlock],
 ) -> Vec<BayAssignment> {
+    fn dfs(
+        problem: &Problem,
+        pre: &Precompute,
+        removed: &[ScheduledBlock],
+        base_loads: &[f64],
+        pos: usize,
+        cur: &mut Vec<usize>,
+        out: &mut Vec<BayAssignment>,
+    ) {
+        fn has_fit_position(
+            problem: &Problem,
+            pre: &Precompute,
+            block_id: usize,
+            bay_id: usize,
+        ) -> bool {
+            (0..problem.blocks[block_id].shape.len()).any(|orient_idx| {
+                pre.collision
+                    .fit_range(bay_id, block_id, orient_idx)
+                    .is_some()
+            })
+        }
+
+        if out.len() > MAX_ENUMERATED_BAY_ASSIGNMENTS {
+            return;
+        }
+        if pos == removed.len() {
+            let mut loads = base_loads.to_vec();
+            let mut obj3 = 0.0;
+            for (s, &bay_id) in removed.iter().zip(cur.iter()) {
+                loads[bay_id] += problem.blocks[s.block_id].workload as f64;
+                obj3 += pre.pref_penalty[s.block_id][bay_id] as f64;
+            }
+            let cost =
+                problem.weights.w2 * normalized_imbalance(pre, &loads) + problem.weights.w3 * obj3;
+            out.push(BayAssignment {
+                cost,
+                bays: cur.clone(),
+            });
+            return;
+        }
+
+        let block_id = removed[pos].block_id;
+        for &bay_id in &pre.bay_order_by_pref[block_id] {
+            if !has_fit_position(problem, pre, block_id, bay_id) {
+                continue;
+            }
+            cur.push(bay_id);
+            dfs(problem, pre, removed, base_loads, pos + 1, cur, out);
+            cur.pop();
+        }
+    }
+
     let mut base_loads = vec![0.0; problem.bays.len()];
     for s in base {
         base_loads[s.bay_id] += problem.blocks[s.block_id].workload as f64;
@@ -191,7 +254,7 @@ fn enumerate_bay_assignments(
 
     let mut candidates = Vec::new();
     let mut cur = Vec::with_capacity(removed.len());
-    enumerate_bay_assignments_dfs(
+    dfs(
         problem,
         pre,
         removed,
@@ -201,45 +264,6 @@ fn enumerate_bay_assignments(
         &mut candidates,
     );
     candidates
-}
-
-fn enumerate_bay_assignments_dfs(
-    problem: &Problem,
-    pre: &Precompute,
-    removed: &[ScheduledBlock],
-    base_loads: &[f64],
-    pos: usize,
-    cur: &mut Vec<usize>,
-    out: &mut Vec<BayAssignment>,
-) {
-    if out.len() > 10_000 {
-        return;
-    }
-    if pos == removed.len() {
-        let mut loads = base_loads.to_vec();
-        let mut obj3 = 0.0;
-        for (s, &bay_id) in removed.iter().zip(cur.iter()) {
-            loads[bay_id] += problem.blocks[s.block_id].workload as f64;
-            obj3 += pre.pref_penalty[s.block_id][bay_id] as f64;
-        }
-        let cost =
-            problem.weights.w2 * normalized_imbalance(pre, &loads) + problem.weights.w3 * obj3;
-        out.push(BayAssignment {
-            cost,
-            bays: cur.clone(),
-        });
-        return;
-    }
-
-    let block_id = removed[pos].block_id;
-    for &bay_id in &pre.bay_order_by_pref[block_id] {
-        if !has_fit_position(problem, pre, block_id, bay_id) {
-            continue;
-        }
-        cur.push(bay_id);
-        enumerate_bay_assignments_dfs(problem, pre, removed, base_loads, pos + 1, cur, out);
-        cur.pop();
-    }
 }
 
 fn find_insert_position<R: Random>(
@@ -353,7 +377,7 @@ fn time_candidates<R: Random>(
             .max(original.entry_time)
             .max(lo)
             + p
-            + 30;
+            + LATE_TIME_EXTRA_MARGIN;
         (lo, hi)
     };
 
@@ -415,10 +439,10 @@ fn choose_removed_blocks<R: Random>(
         let block = &problem.blocks[s.block_id];
         let tardiness = (s.exit_time - block.due_date).max(0);
         let pref_penalty = pre.pref_penalty[s.block_id][s.bay_id];
-        badness[s.block_id] = tardiness * 10_000
-            + pref_penalty * 100
+        badness[s.block_id] = tardiness * REMOVE_TARDINESS_WEIGHT
+            + pref_penalty * REMOVE_PREF_PENALTY_WEIGHT
             + if Some(s.bay_id) == heavy_bay {
-                1_000
+                REMOVE_HEAVY_BAY_WEIGHT
             } else {
                 0
             };
@@ -426,7 +450,7 @@ fn choose_removed_blocks<R: Random>(
 
     rng.shuffle(&mut ids);
     ids.sort_by_key(|&block_id| Reverse(badness[block_id]));
-    let pool_len = (k * 8).min(ids.len()).max(k);
+    let pool_len = (k * REMOVE_POOL_FACTOR).min(ids.len()).max(k);
     ids.truncate(pool_len);
     rng.shuffle(&mut ids);
     ids.truncate(k);
@@ -480,15 +504,22 @@ fn normalized_imbalance(pre: &Precompute, loads: &[f64]) -> f64 {
     (max_value - min_value).floor()
 }
 
-fn has_fit_position(problem: &Problem, pre: &Precompute, block_id: usize, bay_id: usize) -> bool {
-    (0..problem.blocks[block_id].shape.len()).any(|orient_idx| {
-        pre.collision
-            .fit_range(bay_id, block_id, orient_idx)
-            .is_some()
-    })
-}
-
 fn can_insert(pre: &Precompute, new_block: ScheduledBlock, schedule: &[ScheduledBlock]) -> bool {
+    fn interval_overlaps(a0: i64, a1: i64, b0: i64, b1: i64) -> bool {
+        a0 < b1 && b0 < a1
+    }
+
+    fn placements_clear(pre: &Precompute, new_place: BlockPlacement, old: ScheduledBlock) -> bool {
+        let old_place = BlockPlacement {
+            block_id: old.block_id,
+            orient_idx: old.orient_idx,
+            x: old.x,
+            y: old.y,
+        };
+        pre.collision.crane(new_place, old_place) == CollisionResult::Clear
+            && pre.collision.crane(old_place, new_place) == CollisionResult::Clear
+    }
+
     let new_place = BlockPlacement {
         block_id: new_block.block_id,
         orient_idx: new_block.orient_idx,
@@ -510,21 +541,6 @@ fn can_insert(pre: &Precompute, new_block: ScheduledBlock, schedule: &[Scheduled
         }
     }
     true
-}
-
-fn placements_clear(pre: &Precompute, new_place: BlockPlacement, old: ScheduledBlock) -> bool {
-    let old_place = BlockPlacement {
-        block_id: old.block_id,
-        orient_idx: old.orient_idx,
-        x: old.x,
-        y: old.y,
-    };
-    pre.collision.crane(new_place, old_place) == CollisionResult::Clear
-        && pre.collision.crane(old_place, new_place) == CollisionResult::Clear
-}
-
-fn interval_overlaps(a0: i64, a1: i64, b0: i64, b1: i64) -> bool {
-    a0 < b1 && b0 < a1
 }
 
 fn schedule_to_solution(schedule: &[ScheduledBlock]) -> Solution {
