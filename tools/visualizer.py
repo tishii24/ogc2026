@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Visualize a runner output directory as a bay-wise Gantt chart."""
+"""Create an interactive HTML viewer from runner output directories."""
 
 from __future__ import annotations
 
 import argparse
-import html
 import json
+import math
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,10 +14,12 @@ from typing import Any
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Create gantt.svg from log/{version}/{timelimit}/{testcase}.",
+        description="Create viewer.html from log/{version}/{timelimit}/{testcase}.",
     )
     parser.add_argument("run_dir", help="Run result directory, e.g. log/v1/60/prob_1")
-    parser.add_argument("--out", help="Output SVG path. default: {run_dir}/gantt.svg")
+    parser.add_argument(
+        "--out", help="Output HTML path. default: {run_dir}/viewer.html"
+    )
     return parser.parse_args()
 
 
@@ -36,6 +39,12 @@ def resolve_case_path(root: Path, case: str) -> Path:
     return path
 
 
+def natural_key(path: Path) -> list[Any]:
+    return [
+        int(part) if part.isdigit() else part for part in re.split(r"(\d+)", str(path))
+    ]
+
+
 def build_assignments(solution: dict[str, Any]) -> list[dict[str, Any]]:
     assignments: dict[int, dict[str, Any]] = {}
     operations = solution.get("operations", {})
@@ -50,9 +59,9 @@ def build_assignments(solution: dict[str, Any]) -> list[dict[str, Any]]:
                     {
                         "entry": t,
                         "bay_id": int(op["bay_id"]),
-                        "x": op.get("x"),
-                        "y": op.get("y"),
-                        "orient_idx": op.get("orient_idx"),
+                        "x": int(op.get("x") or 0),
+                        "y": int(op.get("y") or 0),
+                        "orient_idx": int(op.get("orient_idx") or 0),
                     }
                 )
             elif op["type"] == "EXIT":
@@ -73,165 +82,623 @@ def build_assignments(solution: dict[str, Any]) -> list[dict[str, Any]]:
     return complete
 
 
-def block_metrics(
-    prob_info: dict[str, Any], assignment: dict[str, Any]
+def enrich_assignments(
+    prob_info: dict[str, Any], assignments: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    enriched = []
+    for assignment in assignments:
+        block_id = int(assignment["block_id"])
+        block = prob_info["blocks"][block_id]
+        bay_id = int(assignment["bay_id"])
+        entry = int(assignment["entry"])
+        exit_time = int(assignment["exit"])
+        due = int(block.get("due_date", 0))
+        release = int(block.get("release_time", 0))
+        processing = int(block.get("processing_time", 0))
+        prefs = [int(v) for v in block.get("bay_preferences", [])]
+        assigned_pref = prefs[bay_id] if 0 <= bay_id < len(prefs) else 0
+        max_pref = max(prefs, default=assigned_pref)
+        best_bays = [bay for bay, pref in enumerate(prefs) if pref == max_pref]
+        stay = exit_time - entry
+        enriched.append(
+            {
+                **assignment,
+                "release": release,
+                "due": due,
+                "processing": processing,
+                "workload": int(block.get("workload", 0)),
+                "tardiness": max(0, exit_time - due),
+                "waiting": max(0, entry - release),
+                "stay": stay,
+                "extra_stay": max(0, stay - processing),
+                "bay_preferences": prefs,
+                "assigned_pref": assigned_pref,
+                "max_pref": max_pref,
+                "best_bays": best_bays,
+                "preference_penalty": max_pref - assigned_pref,
+            }
+        )
+    return enriched
+
+
+def compute_obj2_detail(
+    prob_info: dict[str, Any], assignments: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    block = prob_info["blocks"][assignment["block_id"]]
-    due = int(block["due_date"])
-    release = int(block["release_time"])
-    processing = int(block["processing_time"])
-    entry = int(assignment["entry"])
-    exit_time = int(assignment["exit"])
-    tardiness = max(0, exit_time - due)
-    waiting = max(0, entry - release)
-    stay = exit_time - entry
-    extra_stay = max(0, stay - processing)
+    bays = prob_info.get("bays", [])
+    n_bays = len(bays)
+    loads = [0.0] * n_bays
+    for assignment in assignments:
+        bay_id = int(assignment["bay_id"])
+        if 0 <= bay_id < n_bays:
+            loads[bay_id] += float(assignment.get("workload", 0))
+
+    areas = [float(bay.get("width", 0)) * float(bay.get("height", 0)) for bay in bays]
+    avg_area = sum(areas) / n_bays if n_bays else 0.0
+    normalized = [
+        loads[i] * avg_area / areas[i] if areas[i] > 0 else 0.0 for i in range(n_bays)
+    ]
+    if n_bays >= 2:
+        min_value = min(normalized)
+        max_value = max(normalized)
+        value = math.floor(max_value - min_value)
+        min_bay = normalized.index(min_value)
+        max_bay = normalized.index(max_value)
+    else:
+        min_value = max_value = 0.0
+        value = 0
+        min_bay = max_bay = 0 if n_bays else None
+
+    per_bay = []
+    for bay_id in range(n_bays):
+        area = areas[bay_id]
+        u = avg_area / area if area > 0 else 0.0
+        per_bay.append(
+            {
+                "bay_id": bay_id,
+                "load": loads[bay_id],
+                "area": area,
+                "u": u,
+                "normalized": normalized[bay_id],
+                "is_min": bay_id == min_bay,
+                "is_max": bay_id == max_bay,
+            }
+        )
+
     return {
-        "due": due,
-        "release": release,
-        "processing": processing,
-        "tardiness": tardiness,
-        "waiting": waiting,
-        "stay": stay,
-        "extra_stay": extra_stay,
+        "value": value,
+        "min": min_value,
+        "max": max_value,
+        "per_bay": per_bay,
     }
 
 
-def tardiness_color(tardiness: int) -> str:
-    if tardiness == 0:
-        return "#86efac"
-    if tardiness <= 10:
-        return "#fde68a"
-    if tardiness <= 50:
-        return "#fb923c"
-    return "#f87171"
+def is_case_run_dir(path: Path) -> bool:
+    return (path / "meta.json").is_file() and (path / "solution.json").is_file()
 
 
-def svg_text(
-    x: float, y: float, text: str, size: int = 12, anchor: str = "start"
-) -> str:
-    return (
-        f'<text x="{x:.1f}" y="{y:.1f}" font-size="{size}" '
-        f'font-family="Menlo, Consolas, monospace" text-anchor="{anchor}" '
-        f'fill="#111827">{html.escape(text)}</text>'
-    )
-
-
-def render_svg(
-    prob_info: dict[str, Any],
-    assignments: list[dict[str, Any]],
-    meta: dict[str, Any],
-    result: dict[str, Any] | None,
-) -> str:
-    n_bays = len(prob_info.get("bays", []))
-    max_exit = max((int(a["exit"]) for a in assignments), default=1)
-    max_time = max(1, max_exit)
-
-    left = 90
-    right = 40
-    top = 74
-    row_h = 34
-    chart_w = 1200
-    footer_top = top + n_bays * row_h + 58
-    footer_h = 260
-    width = left + chart_w + right
-    height = footer_top + footer_h
-    bar_h = 22
-
-    def x_of(t: float) -> float:
-        return left + t / max_time * chart_w
-
-    elements: list[str] = []
-    elements.append(
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
-        f'viewBox="0 0 {width} {height}">'
-    )
-    elements.append('<rect width="100%" height="100%" fill="#ffffff"/>')
-
-    testcase = str(meta.get("testcase", ""))
-    version = str(meta.get("version", ""))
-    timelimit = meta.get("timelimit", "")
-    title = f"version={version} testcase={testcase} timelimit={timelimit}"
-    elements.append(svg_text(20, 26, title, size=16))
-
-    if result:
-        objective = result.get("objective")
-        obj1 = result.get("obj1")
-        obj2 = result.get("obj2")
-        obj3 = result.get("obj3")
-        feasible = result.get("feasible")
-        summary = f"feasible={feasible} objective={objective} obj1={obj1} obj2={obj2} obj3={obj3}"
-        elements.append(svg_text(20, 50, summary, size=13))
-
-    tick_count = 10
-    for i in range(tick_count + 1):
-        t = max_time * i / tick_count
-        x = x_of(t)
-        elements.append(
-            f'<line x1="{x:.1f}" y1="{top - 12}" x2="{x:.1f}" y2="{top + n_bays * row_h}" '
-            f'stroke="#e5e7eb" stroke-width="1"/>'
-        )
-        elements.append(
-            svg_text(x, top + n_bays * row_h + 20, f"{t:.0f}", size=11, anchor="middle")
-        )
-
-    by_bay: dict[int, list[dict[str, Any]]] = {bay_id: [] for bay_id in range(n_bays)}
-    for assignment in assignments:
-        by_bay.setdefault(int(assignment["bay_id"]), []).append(assignment)
-
-    for bay_id in range(n_bays):
-        y = top + bay_id * row_h
-        elements.append(svg_text(18, y + 18, f"Bay {bay_id}", size=13))
-        elements.append(
-            f'<line x1="{left}" y1="{y + row_h - 5}" x2="{left + chart_w}" y2="{y + row_h - 5}" '
-            f'stroke="#f3f4f6" stroke-width="1"/>'
-        )
-        for assignment in by_bay.get(bay_id, []):
-            metrics = block_metrics(prob_info, assignment)
-            entry = int(assignment["entry"])
-            exit_time = int(assignment["exit"])
-            x = x_of(entry)
-            w = max(1.0, x_of(exit_time) - x)
-            fill = tardiness_color(metrics["tardiness"])
-            label = f"B{assignment['block_id']}"
-            if metrics["tardiness"] > 0:
-                label += f" +{metrics['tardiness']}"
-            tooltip = (
-                f"block={assignment['block_id']} bay={bay_id} "
-                f"entry={entry} exit={exit_time} due={metrics['due']} "
-                f"tardiness={metrics['tardiness']}"
-            )
-            elements.append(
-                f'<rect x="{x:.1f}" y="{y + 5:.1f}" width="{w:.1f}" height="{bar_h}" '
-                f'rx="4" fill="{fill}" stroke="#374151" stroke-width="0.8">'
-                f"<title>{html.escape(tooltip)}</title></rect>"
-            )
-            if w >= 22:
-                elements.append(svg_text(x + 4, y + 20, label, size=11))
-
-    metrics_rows = []
-    for assignment in assignments:
-        metrics = block_metrics(prob_info, assignment)
-        if metrics["tardiness"] > 0:
-            metrics_rows.append((metrics["tardiness"], assignment, metrics))
-    metrics_rows.sort(key=lambda item: (-item[0], item[1]["exit"], item[1]["block_id"]))
-
-    elements.append(svg_text(20, footer_top, "Tardiness top 10", size=15))
-    if not metrics_rows:
-        elements.append(svg_text(20, footer_top + 24, "none", size=12))
+def collect_run_dirs(path: Path) -> list[Path]:
+    candidates = []
+    if is_case_run_dir(path):
+        search_dir = path.parent
+        selected = path.resolve()
     else:
-        for rank, (tardiness, assignment, metrics) in enumerate(
-            metrics_rows[:10], start=1
-        ):
-            text = (
-                f"{rank:2}. B{assignment['block_id']} bay={assignment['bay_id']} "
-                f"release={metrics['release']} due={metrics['due']} "
-                f"entry={assignment['entry']} exit={assignment['exit']} tardiness={tardiness}"
-            )
-            elements.append(svg_text(20, footer_top + 24 + rank * 20, text, size=12))
+        search_dir = path
+        selected = None
 
-    elements.append("</svg>")
-    return "\n".join(elements) + "\n"
+    if search_dir.is_dir():
+        for child in search_dir.iterdir():
+            if child.is_dir() and is_case_run_dir(child):
+                candidates.append(child)
+
+    if not candidates and is_case_run_dir(path):
+        candidates = [path]
+
+    candidates = sorted(
+        {candidate.resolve() for candidate in candidates}, key=natural_key
+    )
+    if selected is not None and selected not in candidates:
+        candidates.append(selected)
+        candidates.sort(key=natural_key)
+    return candidates
+
+
+def load_view_case(root: Path, run_dir: Path) -> dict[str, Any]:
+    meta_path = run_dir / "meta.json"
+    solution_path = run_dir / "solution.json"
+    result_path = run_dir / "result.json"
+    if not meta_path.is_file():
+        raise FileNotFoundError(f"{meta_path} not found")
+    if not solution_path.is_file():
+        raise FileNotFoundError(f"{solution_path} not found")
+
+    meta = load_json(meta_path)
+    solution = load_json(solution_path)
+    result = load_json(result_path) if result_path.is_file() else None
+
+    case = meta.get("case")
+    if not isinstance(case, str) or not case:
+        raise ValueError(f"{meta_path} does not contain a valid case")
+    case_path = resolve_case_path(root, case)
+    if not case_path.is_file():
+        raise FileNotFoundError(f"case file not found: {case_path}")
+    prob_info = load_json(case_path)
+
+    assignments = enrich_assignments(prob_info, build_assignments(solution))
+    t_min = min((int(a["entry"]) for a in assignments), default=0)
+    t_max = max((int(a["exit"]) for a in assignments), default=max(t_min, 1))
+    name = str(meta.get("testcase") or prob_info.get("name") or run_dir.name)
+
+    return {
+        "name": name,
+        "run_dir": str(run_dir.relative_to(root))
+        if run_dir.is_relative_to(root)
+        else str(run_dir),
+        "meta": meta,
+        "result": result,
+        "bays": prob_info.get("bays", []),
+        "blocks": prob_info.get("blocks", []),
+        "assignments": assignments,
+        "obj2": compute_obj2_detail(prob_info, assignments),
+        "t_min": t_min,
+        "t_max": max(t_min, t_max),
+    }
+
+
+def render_html(viewer_data: dict[str, Any]) -> str:
+    data_json = json.dumps(viewer_data, ensure_ascii=False, separators=(",", ":"))
+    data_json = data_json.replace("</", "<\\/")
+    return HTML_TEMPLATE.replace("__VIEWER_DATA__", data_json)
+
+
+HTML_TEMPLATE = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OGC 2026 Viewer</title>
+<style>
+  :root { color-scheme: light; }
+  body {
+    margin: 0;
+    padding: 16px;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #f8fafc;
+    color: #111827;
+  }
+  .panel {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+  .topbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+  }
+  label { font-size: 13px; color: #374151; }
+  select, button, input[type="range"] { font: inherit; }
+  button {
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  button:hover { background: #eef2ff; }
+  #summary, #timeLabel, #blockInfo { font-family: Menlo, Consolas, monospace; font-size: 13px; }
+  #timeSlider { min-width: 320px; flex: 1; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: #374151; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; }
+  .swatch { width: 18px; height: 12px; border: 1px solid #64748b; border-radius: 2px; display: inline-block; }
+  #bays { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 12px; }
+  .bay-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
+  .bay-title { font-weight: 600; font-size: 14px; margin-bottom: 6px; display: flex; justify-content: space-between; }
+  canvas { width: 100%; display: block; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 6px; }
+  .obj2-row { display: grid; grid-template-columns: 72px 1fr 330px; gap: 8px; align-items: center; margin: 6px 0; font-size: 13px; }
+  .bar-bg { background: #e5e7eb; height: 18px; border-radius: 4px; overflow: hidden; }
+  .bar { height: 100%; background: #94a3b8; }
+  .bar.max { background: #fb7185; }
+  .bar.min { background: #60a5fa; }
+  .muted { color: #6b7280; }
+</style>
+</head>
+<body>
+  <div class="panel">
+    <div class="topbar">
+      <label>Case <select id="caseSelect"></select></label>
+      <button id="playButton">Play</button>
+      <label>Speed
+        <select id="speedSelect">
+          <option value="1">1x</option>
+          <option value="2">2x</option>
+          <option value="5" selected>5x</option>
+          <option value="10">10x</option>
+          <option value="20">20x</option>
+        </select>
+      </label>
+      <span id="timeLabel"></span>
+    </div>
+    <div class="topbar" style="margin-top: 10px;">
+      <input id="timeSlider" type="range" min="0" max="1" step="1" value="0">
+    </div>
+    <div id="summary" style="margin-top: 10px;"></div>
+    <div class="legend" style="margin-top: 10px;">
+      <span class="chip"><span class="swatch" style="background:#d1fae5"></span>P=0</span>
+      <span class="chip"><span class="swatch" style="background:#fef3c7"></span>P≤10</span>
+      <span class="chip"><span class="swatch" style="background:#fcd34d"></span>P≤30</span>
+      <span class="chip"><span class="swatch" style="background:#fb923c"></span>P≤60</span>
+      <span class="chip"><span class="swatch" style="background:#f87171"></span>P&gt;60</span>
+      <span class="chip"><span class="swatch" style="background:#fff;border:3px solid #dc2626"></span>tardiness &gt; 0</span>
+    </div>
+  </div>
+
+  <div id="bays"></div>
+
+  <div class="panel">
+    <h3 style="margin: 0 0 8px 0; font-size: 16px;">Obj2: normalized workload imbalance</h3>
+    <div id="obj2"></div>
+  </div>
+
+  <div class="panel">
+    <h3 style="margin: 0 0 8px 0; font-size: 16px;">Block info</h3>
+    <div id="blockInfo" class="muted">Hover a block.</div>
+  </div>
+
+<script id="viewer-data" type="application/json">__VIEWER_DATA__</script>
+<script>
+'use strict';
+
+const viewerData = JSON.parse(document.getElementById('viewer-data').textContent);
+const caseSelect = document.getElementById('caseSelect');
+const playButton = document.getElementById('playButton');
+const speedSelect = document.getElementById('speedSelect');
+const timeSlider = document.getElementById('timeSlider');
+const timeLabel = document.getElementById('timeLabel');
+const summary = document.getElementById('summary');
+const baysRoot = document.getElementById('bays');
+const obj2Root = document.getElementById('obj2');
+const blockInfo = document.getElementById('blockInfo');
+
+let currentCaseIndex = viewerData.initial_case_index || 0;
+let currentTime = 0;
+let currentTimeFloat = 0;
+let playing = false;
+let lastFrameTime = null;
+let canvases = [];
+const BASE_TIME_PER_SEC = 5;
+
+function currentCase() {
+  return viewerData.cases[currentCaseIndex];
+}
+
+function formatNumber(value, digits = 3) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
+  const num = Number(value);
+  return Number.isInteger(num) ? String(num) : num.toFixed(digits);
+}
+
+function penaltyColor(p) {
+  if (p <= 0) return '#d1fae5';
+  if (p <= 10) return '#fef3c7';
+  if (p <= 30) return '#fcd34d';
+  if (p <= 60) return '#fb923c';
+  return '#f87171';
+}
+
+function hexToRgba(hex, alpha) {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function setupCaseSelect() {
+  caseSelect.innerHTML = '';
+  viewerData.cases.forEach((caseData, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    const result = caseData.result || {};
+    const obj = result.objective !== undefined && result.objective !== null ? ` obj=${result.objective}` : '';
+    option.textContent = `${caseData.name}${obj}`;
+    caseSelect.appendChild(option);
+  });
+  caseSelect.value = String(currentCaseIndex);
+}
+
+function setCase(index) {
+  currentCaseIndex = index;
+  const data = currentCase();
+  currentTime = data.t_min;
+  currentTimeFloat = data.t_min;
+  timeSlider.min = String(data.t_min);
+  timeSlider.max = String(data.t_max);
+  timeSlider.value = String(currentTime);
+  renderBays();
+  renderObj2();
+  updateSummary();
+  drawAll();
+}
+
+function updateSummary() {
+  const data = currentCase();
+  const meta = data.meta || {};
+  const result = data.result || {};
+  const parts = [
+    `version=${meta.version ?? '-'}`,
+    `timelimit=${meta.timelimit ?? '-'}`,
+    `case=${data.name}`,
+    `feasible=${result.feasible ?? meta.feasible ?? '-'}`,
+    `objective=${result.objective ?? meta.objective ?? '-'}`,
+    `obj1=${result.obj1 ?? '-'}`,
+    `obj2=${result.obj2 ?? data.obj2.value}`,
+    `obj3=${result.obj3 ?? '-'}`,
+    `run=${data.run_dir}`,
+  ];
+  summary.textContent = parts.join('  ');
+  timeLabel.textContent = `t=${currentTime} / ${data.t_max}`;
+}
+
+function renderBays() {
+  const data = currentCase();
+  baysRoot.innerHTML = '';
+  canvases = [];
+  data.bays.forEach((bay, bayId) => {
+    const card = document.createElement('div');
+    card.className = 'bay-card';
+
+    const title = document.createElement('div');
+    title.className = 'bay-title';
+    title.innerHTML = `<span>Bay ${bayId}</span><span class="muted">${bay.width} × ${bay.height}</span>`;
+    card.appendChild(title);
+
+    const canvas = document.createElement('canvas');
+    canvas.dataset.bayId = String(bayId);
+    const aspect = Number(bay.height || 1) / Math.max(1, Number(bay.width || 1));
+    const cssHeight = Math.max(180, Math.min(420, Math.round(520 * aspect + 70)));
+    canvas.style.height = `${cssHeight}px`;
+    canvas.addEventListener('mousemove', onCanvasMouseMove);
+    canvas.addEventListener('mouseleave', () => {
+      blockInfo.textContent = 'Hover a block.';
+      blockInfo.classList.add('muted');
+    });
+    card.appendChild(canvas);
+    baysRoot.appendChild(card);
+    canvases.push(canvas);
+  });
+}
+
+function renderObj2() {
+  const data = currentCase();
+  const obj2 = data.obj2 || { value: 0, per_bay: [] };
+  const maxNorm = Math.max(1, ...obj2.per_bay.map(row => Number(row.normalized || 0)));
+  obj2Root.innerHTML = `<div style="margin-bottom:8px;font-family:Menlo,Consolas,monospace;">obj2=${obj2.value}  max-min=${formatNumber((obj2.max || 0) - (obj2.min || 0))}</div>`;
+  obj2.per_bay.forEach(row => {
+    const line = document.createElement('div');
+    line.className = 'obj2-row';
+    const width = Math.max(1, Number(row.normalized || 0) / maxNorm * 100);
+    const cls = row.is_max ? 'bar max' : row.is_min ? 'bar min' : 'bar';
+    const tag = row.is_max ? ' max' : row.is_min ? ' min' : '';
+    line.innerHTML = `
+      <div>Bay ${row.bay_id}</div>
+      <div class="bar-bg"><div class="${cls}" style="width:${width.toFixed(2)}%"></div></div>
+      <div class="muted">load=${formatNumber(row.load)} u=${formatNumber(row.u)} norm=${formatNumber(row.normalized)}${tag}</div>
+    `;
+    obj2Root.appendChild(line);
+  });
+}
+
+function resizeCanvas(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.floor(rect.width * dpr));
+  const height = Math.max(1, Math.floor(rect.height * dpr));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, width: rect.width, height: rect.height };
+}
+
+function makeTransform(bay, width, height) {
+  const margin = 22;
+  const scale = Math.min(
+    (width - margin * 2) / Math.max(1, Number(bay.width || 1)),
+    (height - margin * 2) / Math.max(1, Number(bay.height || 1)),
+  );
+  const originX = (width - Number(bay.width || 1) * scale) / 2;
+  const originY = (height - Number(bay.height || 1) * scale) / 2;
+  return {
+    scale,
+    x: worldX => originX + worldX * scale,
+    y: worldY => originY + (Number(bay.height || 1) - worldY) * scale,
+  };
+}
+
+function drawAll() {
+  updateSummary();
+  const data = currentCase();
+  canvases.forEach(canvas => drawBay(canvas, data));
+}
+
+function drawBay(canvas, data) {
+  const bayId = Number(canvas.dataset.bayId);
+  const bay = data.bays[bayId];
+  const { ctx, width, height } = resizeCanvas(canvas);
+  const tr = makeTransform(bay, width, height);
+  canvas._hitboxes = [];
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+
+  const x0 = tr.x(0);
+  const y0 = tr.y(Number(bay.height || 0));
+  const bw = Number(bay.width || 0) * tr.scale;
+  const bh = Number(bay.height || 0) * tr.scale;
+  ctx.strokeStyle = '#94a3b8';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x0, y0, bw, bh);
+
+  const active = data.assignments
+    .filter(a => Number(a.bay_id) === bayId && Number(a.entry) <= currentTime && currentTime < Number(a.exit))
+    .sort((a, b) => Number(a.block_id) - Number(b.block_id));
+
+  for (const assignment of active) {
+    drawBlock(ctx, tr, data, assignment, canvas._hitboxes);
+  }
+
+  ctx.fillStyle = '#64748b';
+  ctx.font = '12px Menlo, Consolas, monospace';
+  ctx.fillText(`active=${active.length}`, x0 + 6, y0 + 16);
+}
+
+function drawBlock(ctx, tr, data, assignment, hitboxes) {
+  const block = data.blocks[assignment.block_id];
+  if (!block) return;
+  const orientations = block.shape || [];
+  const orient = orientations[assignment.orient_idx] || orientations[0];
+  if (!orient || !Array.isArray(orient.layers)) return;
+
+  const fill = penaltyColor(Number(assignment.preference_penalty || 0));
+  const stroke = Number(assignment.tardiness || 0) > 0 ? '#dc2626' : '#374151';
+  const lineWidth = Number(assignment.tardiness || 0) > 0 ? 3 : 1;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+  orient.layers.forEach((layer, layerIndex) => {
+    if (!Array.isArray(layer) || layer.length < 3) return;
+    ctx.beginPath();
+    layer.forEach((point, index) => {
+      const wx = Number(assignment.x || 0) + Number(point[0]);
+      const wy = Number(assignment.y || 0) + Number(point[1]);
+      minX = Math.min(minX, wx); maxX = Math.max(maxX, wx);
+      minY = Math.min(minY, wy); maxY = Math.max(maxY, wy);
+      const sx = tr.x(wx);
+      const sy = tr.y(wy);
+      if (index === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    });
+    ctx.closePath();
+    ctx.fillStyle = hexToRgba(fill, Math.max(0.35, 0.68 - layerIndex * 0.08));
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = lineWidth;
+    ctx.fill();
+    ctx.stroke();
+  });
+
+  if (!Number.isFinite(minX)) return;
+  const sx0 = tr.x(minX), sx1 = tr.x(maxX);
+  const sy0 = tr.y(maxY), sy1 = tr.y(minY);
+  hitboxes.push({ x0: Math.min(sx0, sx1), y0: Math.min(sy0, sy1), x1: Math.max(sx0, sx1), y1: Math.max(sy0, sy1), assignment });
+
+  const cx = tr.x((minX + maxX) / 2);
+  const cy = tr.y((minY + maxY) / 2);
+  const label = `B${assignment.block_id}`;
+  const bestBayText = assignment.preference_penalty ? ` →${(assignment.best_bays || []).map(bay => 'Bay' + bay).join('/')}` : '';
+  const sub = `${assignment.preference_penalty ? 'P+' + assignment.preference_penalty + bestBayText : ''}${assignment.tardiness ? ' T+' + assignment.tardiness : ''}`.trim();
+  ctx.save();
+  ctx.font = '11px Menlo, Consolas, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+  ctx.fillStyle = '#111827';
+  ctx.strokeText(label, cx, cy - (sub ? 6 : 0));
+  ctx.fillText(label, cx, cy - (sub ? 6 : 0));
+  if (sub) {
+    ctx.font = '10px Menlo, Consolas, monospace';
+    ctx.strokeText(sub, cx, cy + 7);
+    ctx.fillText(sub, cx, cy + 7);
+  }
+  ctx.restore();
+}
+
+function onCanvasMouseMove(event) {
+  const canvas = event.currentTarget;
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const hitboxes = canvas._hitboxes || [];
+  let hit = null;
+  for (let i = hitboxes.length - 1; i >= 0; i--) {
+    const h = hitboxes[i];
+    if (h.x0 <= x && x <= h.x1 && h.y0 <= y && y <= h.y1) {
+      hit = h.assignment;
+      break;
+    }
+  }
+  if (!hit) {
+    canvas.style.cursor = 'default';
+    blockInfo.textContent = 'Hover a block.';
+    blockInfo.classList.add('muted');
+    return;
+  }
+  canvas.style.cursor = 'pointer';
+  blockInfo.classList.remove('muted');
+  const prefs = hit.bay_preferences || [];
+  const prefText = prefs.map((s, bay) => `Bay${bay}:${s}`).join(' ');
+  const bestText = (hit.best_bays || []).map(bay => `Bay${bay}`).join('/');
+  blockInfo.textContent = [
+    `B${hit.block_id}`,
+    `bay=${hit.bay_id}`,
+    `entry=${hit.entry}`,
+    `exit=${hit.exit}`,
+    `release=${hit.release}`,
+    `due=${hit.due}`,
+    `proc=${hit.processing}`,
+    `workload=${hit.workload}`,
+    `S=[${prefText}]`,
+    `assignedS=${hit.assigned_pref}`,
+    `maxS=${hit.max_pref}`,
+    `obj3Penalty=${hit.preference_penalty}`,
+    `obj3ZeroBay=${bestText || '-'}`,
+    `T=${hit.tardiness}`,
+    `orient=${hit.orient_idx}`,
+    `x=${hit.x}`,
+    `y=${hit.y}`,
+  ].join('  ');
+}
+
+function animationFrame(timestamp) {
+  if (!playing) return;
+  if (lastFrameTime === null) lastFrameTime = timestamp;
+  const dt = (timestamp - lastFrameTime) / 1000;
+  lastFrameTime = timestamp;
+  const data = currentCase();
+  const speed = Number(speedSelect.value || 1);
+  currentTimeFloat += dt * BASE_TIME_PER_SEC * speed;
+  if (currentTimeFloat > data.t_max) currentTimeFloat = data.t_min;
+  currentTime = Math.floor(currentTimeFloat);
+  timeSlider.value = String(currentTime);
+  drawAll();
+  requestAnimationFrame(animationFrame);
+}
+
+caseSelect.addEventListener('change', () => setCase(Number(caseSelect.value)));
+timeSlider.addEventListener('input', () => {
+  currentTime = Number(timeSlider.value);
+  currentTimeFloat = currentTime;
+  drawAll();
+});
+playButton.addEventListener('click', () => {
+  playing = !playing;
+  playButton.textContent = playing ? 'Pause' : 'Play';
+  lastFrameTime = null;
+  if (playing) requestAnimationFrame(animationFrame);
+});
+window.addEventListener('resize', drawAll);
+
+setupCaseSelect();
+setCase(currentCaseIndex);
+</script>
+</body>
+</html>
+"""
 
 
 def main() -> int:
@@ -240,39 +707,45 @@ def main() -> int:
     run_dir = Path(args.run_dir)
     if not run_dir.is_absolute():
         run_dir = root / run_dir
+    run_dir = run_dir.resolve()
 
-    meta_path = run_dir / "meta.json"
-    solution_path = run_dir / "solution.json"
-    result_path = run_dir / "result.json"
-    if not meta_path.is_file():
-        print(f"error: {meta_path} not found", file=sys.stderr)
+    run_dirs = collect_run_dirs(run_dir)
+    if not run_dirs:
+        print(
+            f"error: no run directories found under {run_dir}; expected meta.json and solution.json",
+            file=sys.stderr,
+        )
         return 1
-    if not solution_path.is_file():
-        print(f"error: {solution_path} not found", file=sys.stderr)
+
+    cases = []
+    initial_case_index = 0
+    selected = run_dir if is_case_run_dir(run_dir) else run_dirs[0]
+    for candidate in run_dirs:
+        try:
+            if candidate == selected:
+                initial_case_index = len(cases)
+            cases.append(load_view_case(root, candidate))
+        except Exception as exc:
+            if candidate == selected:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+            print(f"warning: skipped {candidate}: {exc}", file=sys.stderr)
+
+    if not cases:
+        print("error: no viewable cases found", file=sys.stderr)
         return 1
 
-    meta = load_json(meta_path)
-    solution = load_json(solution_path)
-    result = load_json(result_path) if result_path.is_file() else None
+    viewer_data = {
+        "cases": cases,
+        "initial_case_index": initial_case_index,
+    }
+    html = render_html(viewer_data)
 
-    case = meta.get("case")
-    if not isinstance(case, str) or not case:
-        print("error: meta.json does not contain a valid case", file=sys.stderr)
-        return 1
-    case_path = resolve_case_path(root, case)
-    if not case_path.is_file():
-        print(f"error: case file not found: {case_path}", file=sys.stderr)
-        return 1
-    prob_info = load_json(case_path)
-
-    assignments = build_assignments(solution)
-    svg = render_svg(prob_info, assignments, meta, result)
-
-    out_path = Path(args.out) if args.out else run_dir / "gantt.svg"
+    out_path = Path(args.out) if args.out else run_dir / "viewer.html"
     if not out_path.is_absolute():
         out_path = root / out_path
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(svg, encoding="utf-8")
+    out_path.write_text(html, encoding="utf-8")
     print(f"created: {out_path}")
     return 0
 
