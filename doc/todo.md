@@ -1,6 +1,7 @@
 precompute
 - Cを設定 & lazy cache
 - 高速化
+- 怪しいものはpythonに返してshapelyで厳密に計算する
 
 solver
 - entry/exit条件を考える
@@ -14,6 +15,8 @@ solver
     2. leftから順に詰める
   - 小さい近傍
     - 少しずらす
+  - ベストなinsertを探す
+- 焼きなましにする
 - 配置の厳密な最適化
 - 細長いものが多いなら、l,rから入れた方が良いかも
 - magic numberはconstにする

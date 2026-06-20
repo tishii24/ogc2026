@@ -3,12 +3,24 @@
 
 from __future__ import annotations
 
+import argparse
 import csv
 import math
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Summarize log/score.csv.")
+    parser.add_argument(
+        "--matrix",
+        action="store_true",
+        help="Show a version/timelimit x testcase score matrix.",
+    )
+    return parser.parse_args()
 
 
 def repo_root() -> Path:
@@ -32,6 +44,18 @@ def format_number(value: float) -> str:
     if math.isfinite(value) and value.is_integer():
         return str(int(value))
     return f"{value:.3f}"
+
+
+def natural_key(value: str) -> list[Any]:
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", value)]
+
+
+def case_label(case: str) -> str:
+    stem = Path(case).stem
+    match = re.fullmatch(r"prob_(\d+)", stem)
+    if match:
+        return match.group(1)
+    return stem
 
 
 def latest_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -141,6 +165,20 @@ def summarize(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     )
 
 
+def print_rows(headers: list[str], rows: list[list[str]]) -> None:
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, cell in enumerate(row):
+            widths[index] = max(widths[index], len(cell))
+
+    print(
+        "  ".join(header.ljust(widths[index]) for index, header in enumerate(headers))
+    )
+    print("  ".join("-" * width for width in widths))
+    for row in rows:
+        print("  ".join(cell.rjust(widths[index]) for index, cell in enumerate(row)))
+
+
 def print_table(summaries: list[dict[str, Any]]) -> None:
     headers = [
         "version",
@@ -173,20 +211,55 @@ def print_table(summaries: list[dict[str, Any]]) -> None:
             ]
         )
 
-    widths = [len(header) for header in headers]
-    for row in rows:
-        for index, cell in enumerate(row):
-            widths[index] = max(widths[index], len(cell))
+    print_rows(headers, rows)
 
-    print(
-        "  ".join(header.ljust(widths[index]) for index, header in enumerate(headers))
+
+def score_cell(row: dict[str, str] | None) -> str:
+    if row is None:
+        return "-"
+    objective = parse_float(row.get("objective", ""))
+    if not parse_bool(row.get("feasible", "")) or objective is None:
+        return "NG"
+    return format_number(objective)
+
+
+def print_score_matrix(rows: list[dict[str, str]]) -> None:
+    cases = sorted(
+        {row.get("case", "") for row in rows if row.get("case", "")},
+        key=lambda case: natural_key(case_label(case)),
     )
-    print("  ".join("-" * width for width in widths))
-    for row in rows:
-        print("  ".join(cell.rjust(widths[index]) for index, cell in enumerate(row)))
+    row_keys = sorted(
+        {
+            (row.get("version", ""), parse_float(row.get("timelimit", "")))
+            for row in rows
+            if row.get("version", "")
+            and parse_float(row.get("timelimit", "")) is not None
+        },
+        key=lambda key: (natural_key(key[0]), key[1]),
+    )
+    by_key = {
+        (
+            row.get("version", ""),
+            parse_float(row.get("timelimit", "")),
+            row.get("case", ""),
+        ): row
+        for row in rows
+    }
+
+    headers = ["version", "timelimit"] + [case_label(case) for case in cases]
+    table_rows = []
+    for version, timelimit in row_keys:
+        assert timelimit is not None
+        table_rows.append(
+            [version, format_number(timelimit)]
+            + [score_cell(by_key.get((version, timelimit, case))) for case in cases]
+        )
+
+    print_rows(headers, table_rows)
 
 
 def main() -> int:
+    args = parse_args()
     score_path = repo_root() / "log" / "score.csv"
     if not score_path.is_file():
         print(f"error: {score_path} not found", file=sys.stderr)
@@ -200,7 +273,10 @@ def main() -> int:
         print("error: no valid rows found", file=sys.stderr)
         return 1
 
-    print_table(summarize(rows))
+    if args.matrix:
+        print_score_matrix(rows)
+    else:
+        print_table(summarize(rows))
     return 0
 
 
