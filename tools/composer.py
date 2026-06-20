@@ -33,7 +33,6 @@ def algorithm(prob_info, timelimit=60):
         [str(solver), "-", str(timelimit)],
         input=json.dumps(prob_info),
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
         text=True,
         timeout=float(timelimit) + 5.0,
         cwd=str(root),
@@ -45,8 +44,6 @@ def algorithm(prob_info, timelimit=60):
             + str(completed.returncode)
             + "\\nSTDOUT:\\n"
             + (completed.stdout or "")
-            + "\\nSTDERR:\\n"
-            + (completed.stderr or "")
         )
 
     return json.loads(completed.stdout)

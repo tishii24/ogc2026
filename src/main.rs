@@ -1,3 +1,4 @@
+mod collision;
 mod precompute;
 mod solver;
 mod util;

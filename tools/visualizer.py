@@ -121,6 +121,30 @@ def enrich_assignments(
     return enriched
 
 
+def compute_tardiness_summary(assignments: list[dict[str, Any]]) -> dict[str, Any]:
+    blocks = [
+        {
+            "block_id": int(a["block_id"]),
+            "tardiness": int(a.get("tardiness", 0)),
+            "bay_id": int(a.get("bay_id", 0)),
+            "entry": int(a.get("entry", 0)),
+            "exit": int(a.get("exit", 0)),
+            "due": int(a.get("due", 0)),
+            "release": int(a.get("release", 0)),
+            "processing": int(a.get("processing", 0)),
+        }
+        for a in assignments
+        if int(a.get("tardiness", 0)) > 0
+    ]
+    blocks.sort(key=lambda a: (-a["tardiness"], a["exit"], a["block_id"]))
+    return {
+        "total": sum(a["tardiness"] for a in blocks),
+        "count": len(blocks),
+        "max": max((a["tardiness"] for a in blocks), default=0),
+        "blocks": blocks,
+    }
+
+
 def compute_obj2_detail(
     prob_info: dict[str, Any], assignments: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -224,6 +248,7 @@ def load_view_case(root: Path, run_dir: Path) -> dict[str, Any]:
     prob_info = load_json(case_path)
 
     assignments = enrich_assignments(prob_info, build_assignments(solution))
+    tardiness = compute_tardiness_summary(assignments)
     t_min = min((int(a["entry"]) for a in assignments), default=0)
     t_max = max((int(a["exit"]) for a in assignments), default=max(t_min, 1))
     name = str(meta.get("testcase") or prob_info.get("name") or run_dir.name)
@@ -238,6 +263,7 @@ def load_view_case(root: Path, run_dir: Path) -> dict[str, Any]:
         "bays": prob_info.get("bays", []),
         "blocks": prob_info.get("blocks", []),
         "assignments": assignments,
+        "tardiness": tardiness,
         "obj2": compute_obj2_detail(prob_info, assignments),
         "t_min": t_min,
         "t_max": max(t_min, t_max),
@@ -288,7 +314,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     cursor: pointer;
   }
   button:hover { background: #eef2ff; }
-  #summary, #timeLabel, #blockInfo { font-family: Menlo, Consolas, monospace; font-size: 13px; }
+  #summary, #timeLabel, #blockInfo, #tardinessWarning { font-family: Menlo, Consolas, monospace; font-size: 13px; }
   #timeSlider { min-width: 320px; flex: 1; }
   .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: #374151; }
   .chip { display: inline-flex; align-items: center; gap: 4px; }
@@ -303,6 +329,13 @@ HTML_TEMPLATE = r"""<!doctype html>
   .bar.max { background: #fb7185; }
   .bar.min { background: #60a5fa; }
   .muted { color: #6b7280; }
+  .tardy-warning { margin-top: 10px; padding: 8px 10px; border-radius: 6px; border: 1px solid #fecaca; background: #fef2f2; color: #991b1b; font-weight: 600; }
+  .tardy-ok { margin-top: 10px; padding: 8px 10px; border-radius: 6px; border: 1px solid #bbf7d0; background: #f0fdf4; color: #166534; }
+  .tardy-row { display: grid; grid-template-columns: 54px 1fr auto; gap: 8px; align-items: center; padding: 6px 0; border-top: 1px solid #f1f5f9; font-size: 13px; }
+  .tardy-row:first-child { border-top: 0; }
+  .tardy-rank { font-family: Menlo, Consolas, monospace; font-weight: 600; color: #991b1b; }
+  .jump-buttons { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+  .jump-buttons button { padding: 2px 6px; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -325,6 +358,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       <input id="timeSlider" type="range" min="0" max="1" step="1" value="0">
     </div>
     <div id="summary" style="margin-top: 10px;"></div>
+    <div id="tardinessWarning"></div>
     <div class="legend" style="margin-top: 10px;">
       <span class="chip"><span class="swatch" style="background:#d1fae5"></span>P=0</span>
       <span class="chip"><span class="swatch" style="background:#fef3c7"></span>P≤10</span>
@@ -336,6 +370,11 @@ HTML_TEMPLATE = r"""<!doctype html>
   </div>
 
   <div id="bays"></div>
+
+  <div class="panel">
+    <h3 style="margin: 0 0 8px 0; font-size: 16px;">Tardiness</h3>
+    <div id="tardinessPanel"></div>
+  </div>
 
   <div class="panel">
     <h3 style="margin: 0 0 8px 0; font-size: 16px;">Obj2: normalized workload imbalance</h3>
@@ -358,7 +397,9 @@ const speedSelect = document.getElementById('speedSelect');
 const timeSlider = document.getElementById('timeSlider');
 const timeLabel = document.getElementById('timeLabel');
 const summary = document.getElementById('summary');
+const tardinessWarning = document.getElementById('tardinessWarning');
 const baysRoot = document.getElementById('bays');
+const tardinessPanel = document.getElementById('tardinessPanel');
 const obj2Root = document.getElementById('obj2');
 const blockInfo = document.getElementById('blockInfo');
 
@@ -402,8 +443,12 @@ function setupCaseSelect() {
     const option = document.createElement('option');
     option.value = String(index);
     const result = caseData.result || {};
+    const tardiness = caseData.tardiness || { total: 0, count: 0, max: 0 };
     const obj = result.objective !== undefined && result.objective !== null ? ` obj=${result.objective}` : '';
-    option.textContent = `${caseData.name}${obj}`;
+    const tardy = Number(tardiness.total || 0) > 0
+      ? `⚠ ${caseData.name} T=${tardiness.total} blocks=${tardiness.count} max=${tardiness.max}`
+      : `✓ ${caseData.name} T=0`;
+    option.textContent = `${tardy}${obj}`;
     caseSelect.appendChild(option);
   });
   caseSelect.value = String(currentCaseIndex);
@@ -418,6 +463,7 @@ function setCase(index) {
   timeSlider.max = String(data.t_max);
   timeSlider.value = String(currentTime);
   renderBays();
+  renderTardiness();
   renderObj2();
   updateSummary();
   drawAll();
@@ -427,18 +473,26 @@ function updateSummary() {
   const data = currentCase();
   const meta = data.meta || {};
   const result = data.result || {};
+  const tardiness = data.tardiness || { total: 0, count: 0, max: 0 };
   const parts = [
     `version=${meta.version ?? '-'}`,
     `timelimit=${meta.timelimit ?? '-'}`,
     `case=${data.name}`,
     `feasible=${result.feasible ?? meta.feasible ?? '-'}`,
     `objective=${result.objective ?? meta.objective ?? '-'}`,
-    `obj1=${result.obj1 ?? '-'}`,
+    `obj1=${result.obj1 ?? tardiness.total ?? '-'}`,
     `obj2=${result.obj2 ?? data.obj2.value}`,
     `obj3=${result.obj3 ?? '-'}`,
     `run=${data.run_dir}`,
   ];
   summary.textContent = parts.join('  ');
+  if (Number(tardiness.total || 0) > 0) {
+    tardinessWarning.className = 'tardy-warning';
+    tardinessWarning.textContent = `⚠ TARDINESS total=${tardiness.total} blocks=${tardiness.count} max=${tardiness.max}`;
+  } else {
+    tardinessWarning.className = 'tardy-ok';
+    tardinessWarning.textContent = '✓ TARDINESS none';
+  }
   timeLabel.textContent = `t=${currentTime} / ${data.t_max}`;
 }
 
@@ -469,6 +523,75 @@ function renderBays() {
     baysRoot.appendChild(card);
     canvases.push(canvas);
   });
+}
+
+function jumpToTime(t) {
+  const data = currentCase();
+  const nextTime = Math.max(Number(data.t_min || 0), Math.min(Number(data.t_max || 0), Number(t)));
+  currentTime = Math.floor(nextTime);
+  currentTimeFloat = currentTime;
+  timeSlider.value = String(currentTime);
+  drawAll();
+}
+
+function renderTardiness() {
+  const data = currentCase();
+  const tardiness = data.tardiness || { total: 0, count: 0, max: 0, blocks: [] };
+  const blocks = tardiness.blocks || [];
+  tardinessPanel.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.style.cssText = 'margin-bottom:8px;font-family:Menlo,Consolas,monospace;';
+  header.textContent = `total=${tardiness.total || 0}  blocks=${tardiness.count || 0}  max=${tardiness.max || 0}`;
+  tardinessPanel.appendChild(header);
+
+  if (!blocks.length) {
+    const none = document.createElement('div');
+    none.className = 'muted';
+    none.textContent = 'none';
+    tardinessPanel.appendChild(none);
+    return;
+  }
+
+  const maxRows = 30;
+  blocks.slice(0, maxRows).forEach((block, index) => {
+    const row = document.createElement('div');
+    row.className = 'tardy-row';
+
+    const rank = document.createElement('div');
+    rank.className = 'tardy-rank';
+    rank.textContent = `${index + 1}. B${block.block_id}`;
+    row.appendChild(rank);
+
+    const detail = document.createElement('div');
+    detail.textContent = `T=${block.tardiness}  bay=${block.bay_id}  release=${block.release}  due=${block.due}  entry=${block.entry}  exit=${block.exit}  proc=${block.processing}`;
+    row.appendChild(detail);
+
+    const jumps = document.createElement('div');
+    jumps.className = 'jump-buttons';
+    [
+      ['entry', block.entry],
+      ['due', block.due],
+      ['exit-1', Number(block.exit) - 1],
+    ].forEach(([label, time]) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.addEventListener('click', () => jumpToTime(time));
+      jumps.appendChild(button);
+    });
+    row.appendChild(jumps);
+
+    tardinessPanel.appendChild(row);
+  });
+
+  if (blocks.length > maxRows) {
+    const omitted = document.createElement('div');
+    omitted.className = 'muted';
+    omitted.style.marginTop = '6px';
+    omitted.textContent = `showing top ${maxRows} of ${blocks.length} tardy blocks`;
+    tardinessPanel.appendChild(omitted);
+  }
 }
 
 function renderObj2() {
