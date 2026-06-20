@@ -22,18 +22,20 @@
 
 ```bash
 VERSION=v1
+TIMELIMIT=60
+
+# 提出ファイルの作成
 python tools/composer.py $VERSION
 
-python tools/runner.py $VERSION --case train/prob_1.json --timelimit 60
-python tools/runner.py $VERSION --cases train/*.json --timelimit 60
+# 実行
+python tools/runner.py $VERSION --case train/prob_1.json --timelimit $TIMELIMIT
+python tools/runner.py $VERSION --cases train/*.json --timelimit $TIMELIMIT
 
+# ビジュアライザの作成
+python tools/visualizer.py log/$VERSION/$TIMELIMIT
+
+# 統計情報の表示
 python tools/stats.py
-```
-
-## 可視化
-
-```bash
-python tools/visualizer.py log/local-test/60/prob_1
 ```
 
 ## Docker で Linux 向け提出物を作る
@@ -42,8 +44,10 @@ python tools/visualizer.py log/local-test/60/prob_1
 `myalgorithm.py` は `solver` に標準入力で問題 JSON を渡すため、一時ファイルは作らない。
 
 ```bash
+# Docker image のビルド（初回のみ）
 docker build --platform linux/amd64 -t ogc2026-judge .
 
+# 提出物の作成
 VERSION=submit-v001
 
 docker run --rm \
@@ -53,11 +57,6 @@ docker run --rm \
   ogc2026-judge \
   python3.12 tools/composer.py $VERSION --platform linux
 
-cd solutions/$VERSION
-zip -r ../../$VERSION.zip .
-
-zipinfo ../../$VERSION.zip
+(cd "solutions/$VERSION" && zip -r "../../$VERSION.zip" .)
+zipinfo "$VERSION.zip"
 ```
-
-提出 zip のルート直下には `myalgorithm.py` と `solver` だけが入っていればよい。
-`solver` は Linux x86-64 ELF で、実行権限が付いていることを確認する。

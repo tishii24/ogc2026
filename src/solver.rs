@@ -1,7 +1,8 @@
 use crate::{
     collision::{BlockPlacement, CollisionResult},
     precompute::Precompute,
-    util::{RandPcg64Mcg, Random, time},
+    util::rand::{RandPcg64Mcg, Random},
+    util::time,
     *,
 };
 use std::cmp::Reverse;
@@ -10,7 +11,6 @@ use std::collections::BTreeMap;
 const LOCAL_SEARCH_TIME_RATIO: f64 = 0.95;
 const MAX_BAY_ASSIGNMENTS: usize = 32;
 const MAX_TIME_CANDIDATES: usize = 48;
-const RANDOM_POSITION_TRIALS: usize = 48;
 
 #[derive(Clone, Copy, Debug)]
 struct ScheduledBlock {
@@ -207,11 +207,7 @@ fn try_remove_reinsert<R: Random>(
 
     for assignment in assignments {
         let mut order = removed.clone();
-        if rng.nextf() < 0.5 {
-            rng.shuffle(&mut order);
-        } else {
-            order.sort_by_key(|s| problem.blocks[s.block_id].due_date);
-        }
+        order.sort_by_key(|s| problem.blocks[s.block_id].due_date);
 
         let mut cur = base.clone();
         let mut ok = true;
@@ -317,41 +313,20 @@ fn find_insert_position<R: Random>(
             continue;
         }
 
-        let mut bay_order: Vec<usize> = match fixed_bay_id {
-            Some(bay_id) => vec![bay_id],
-            None => pre.bay_order_by_pref[original.block_id].clone(),
+        let bay_order: &[usize] = match fixed_bay_id {
+            Some(bay_id) => &vec![bay_id],
+            None => &pre.bay_order_by_pref[original.block_id],
         };
-        if fixed_bay_id.is_none() && rng.nextf() < 0.2 {
-            rng.shuffle(&mut bay_order);
-        }
-
-        if rng.nextf() < 0.12 {
-            if let Some(scheduled) = try_random_positions(
-                problem,
-                pre,
-                original.block_id,
-                &bay_order,
-                &times,
-                schedule,
-                rng,
-            ) {
-                return Some(scheduled);
-            }
-        }
 
         let mut directions = [0usize, 1, 2, 3];
-        if rng.nextf() < 0.2 {
-            rng.shuffle(&mut directions);
-        }
+        rng.shuffle(&mut directions);
 
         for &entry_time in &times {
-            for &bay_id in &bay_order {
+            for &bay_id in bay_order {
                 for &direction in &directions {
                     let mut orient_order: Vec<usize> =
                         (0..problem.blocks[original.block_id].shape.len()).collect();
-                    if rng.nextf() < 0.2 {
-                        rng.shuffle(&mut orient_order);
-                    }
+                    rng.shuffle(&mut orient_order);
                     for orient_idx in orient_order {
                         let Some(range) =
                             pre.collision
@@ -399,42 +374,6 @@ fn find_insert_position<R: Random>(
     None
 }
 
-fn try_random_positions<R: Random>(
-    problem: &Problem,
-    pre: &Precompute,
-    block_id: usize,
-    bay_order: &[usize],
-    times: &[i64],
-    schedule: &[ScheduledBlock],
-    rng: &mut R,
-) -> Option<ScheduledBlock> {
-    for _ in 0..RANDOM_POSITION_TRIALS {
-        let entry_time = rng.choice(times);
-        let bay_id = rng.choice(bay_order);
-        let orient_idx = rng.gen_range(0, problem.blocks[block_id].shape.len());
-        let Some(range) = pre.collision.fit_range(bay_id, block_id, orient_idx) else {
-            continue;
-        };
-        let x_len = (range.max_x - range.min_x + 1) as usize;
-        let y_len = (range.max_y - range.min_y + 1) as usize;
-        let x = range.min_x + rng.gen_range(0, x_len) as i64;
-        let y = range.min_y + rng.gen_range(0, y_len) as i64;
-        let scheduled = ScheduledBlock {
-            block_id,
-            bay_id,
-            orient_idx,
-            x,
-            y,
-            entry_time,
-            exit_time: entry_time + problem.blocks[block_id].processing_time,
-        };
-        if can_insert(pre, scheduled, schedule) {
-            return Some(scheduled);
-        }
-    }
-    None
-}
-
 fn time_candidates<R: Random>(
     problem: &Problem,
     original: ScheduledBlock,
@@ -442,6 +381,12 @@ fn time_candidates<R: Random>(
     on_time_only: bool,
     rng: &mut R,
 ) -> Vec<i64> {
+    fn push_time_candidate(times: &mut Vec<i64>, t: i64, lo: i64, hi: i64) {
+        if lo <= t && t <= hi {
+            times.push(t);
+        }
+    }
+
     let block = &problem.blocks[original.block_id];
     let p = block.processing_time;
     let earliest = block.release_time;
@@ -497,16 +442,8 @@ fn time_candidates<R: Random>(
     times.sort_unstable();
     times.dedup();
     times.sort_by_key(|&t| ((t + p - block.due_date).max(0), t));
-    if times.len() > MAX_TIME_CANDIDATES {
-        times.truncate(MAX_TIME_CANDIDATES);
-    }
+    times.truncate(MAX_TIME_CANDIDATES);
     times
-}
-
-fn push_time_candidate(times: &mut Vec<i64>, t: i64, lo: i64, hi: i64) {
-    if lo <= t && t <= hi {
-        times.push(t);
-    }
 }
 
 fn choose_removed_blocks<R: Random>(
@@ -523,11 +460,6 @@ fn choose_removed_blocks<R: Random>(
 
     let k = k.min(n);
     let mut ids: Vec<usize> = schedule.iter().map(|s| s.block_id).collect();
-    if rng.nextf() < 0.25 {
-        rng.shuffle(&mut ids);
-        ids.truncate(k);
-        return ids;
-    }
 
     let mut loads = vec![0.0; problem.bays.len()];
     for s in schedule {
