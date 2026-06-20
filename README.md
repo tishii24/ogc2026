@@ -39,6 +39,7 @@ python tools/visualizer.py log/local-test/60/prob_1
 ## Docker で Linux 向け提出物を作る
 
 ジャッジ環境に近い Ubuntu 24.04 / x86_64 環境で `solver` をビルドする。
+`myalgorithm.py` は `solver` に標準入力で問題 JSON を渡すため、一時ファイルは作らない。
 
 ```bash
 docker build --platform linux/amd64 -t ogc2026-judge .
@@ -51,4 +52,12 @@ docker run --rm \
   -w /work/ogc2026 \
   ogc2026-judge \
   python3.12 tools/composer.py $VERSION --platform linux
+
+cd solutions/$VERSION
+zip -r ../../$VERSION.zip .
+
+zipinfo ../../$VERSION.zip
 ```
+
+提出 zip のルート直下には `myalgorithm.py` と `solver` だけが入っていればよい。
+`solver` は Linux x86-64 ELF で、実行権限が付いていることを確認する。

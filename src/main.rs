@@ -5,6 +5,7 @@ mod util;
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
+use std::io::{self, Read};
 use std::process;
 
 use serde::Deserialize;
@@ -109,8 +110,16 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let args = parse_args(env::args().skip(1).collect())?;
-    let input = fs::read_to_string(&args.input_path)
-        .map_err(|err| format!("failed to read {}: {err}", args.input_path))?;
+    let input = if args.input_path == "-" {
+        let mut input = String::new();
+        io::stdin()
+            .read_to_string(&mut input)
+            .map_err(|err| format!("failed to read stdin: {err}"))?;
+        input
+    } else {
+        fs::read_to_string(&args.input_path)
+            .map_err(|err| format!("failed to read {}: {err}", args.input_path))?
+    };
     let problem: Problem = serde_json::from_str(&input)
         .map_err(|err| format!("failed to parse problem json: {err}"))?;
 
@@ -151,6 +160,7 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
             "--help" | "-h" => {
                 return Err("usage: ogc2026 <input.json> [timelimit] or ogc2026 --input <input.json> [--timelimit <sec>]".to_string());
             }
+            "-" => positional.push(args[i].clone()),
             other if other.starts_with('-') => {
                 return Err(format!("unknown option: {other}"));
             }
