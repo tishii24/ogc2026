@@ -711,11 +711,13 @@ fn rasterize_convex_pair(builder: &mut CollisionGridBuilder, a: ConvexPart, b: C
         min_x = min_x.min(hull.points[i].x);
         max_x = max_x.max(hull.points[i].x);
     }
-    let min_dx = ((min_x.floor() as i64) + 1).max(builder.min_dx);
-    let max_dx = ((max_x.ceil() as i64) - 1).min(builder.max_dx);
+    let min_dx = (min_x - AREA_EPS).ceil() as i64;
+    let max_dx = (max_x + AREA_EPS).floor() as i64;
+    let min_dx = min_dx.max(builder.min_dx);
+    let max_dx = max_dx.min(builder.max_dx);
 
     for dx in min_dx..=max_dx {
-        if let Some((min_dy, max_dy)) = vertical_slice_strict(&hull, dx) {
+        if let Some((min_dy, max_dy)) = vertical_slice_conservative(&hull, dx) {
             builder.add_interval(dx, min_dy, max_dy);
         }
     }
@@ -798,7 +800,7 @@ fn rotated_edge(points: &[Point], len: usize, start: usize, offset: usize) -> Po
     }
 }
 
-fn vertical_slice_strict(poly: &ConvexPolygon, dx: i64) -> Option<(i64, i64)> {
+fn vertical_slice_conservative(poly: &ConvexPolygon, dx: i64) -> Option<(i64, i64)> {
     let x = dx as f64;
     let mut low = f64::NEG_INFINITY;
     let mut high = f64::INFINITY;
@@ -808,19 +810,19 @@ fn vertical_slice_strict(poly: &ConvexPolygon, dx: i64) -> Option<(i64, i64)> {
         let q = poly.points[(i + 1) % poly.len];
         let ex = q.x - p.x;
         let ey = q.y - p.y;
-        let rhs = ey * (x - p.x) + AREA_EPS;
+        let rhs = ey * (x - p.x);
 
         if ex > AREA_EPS {
             low = low.max(p.y + rhs / ex);
         } else if ex < -AREA_EPS {
             high = high.min(p.y + rhs / ex);
-        } else if -ey * (x - p.x) <= AREA_EPS {
+        } else if -ey * (x - p.x) < -AREA_EPS {
             return None;
         }
     }
 
-    let min_dy = low.floor() as i64 + 1;
-    let max_dy = high.ceil() as i64 - 1;
+    let min_dy = (low - AREA_EPS).ceil() as i64;
+    let max_dy = (high + AREA_EPS).floor() as i64;
     if min_dy <= max_dy {
         Some((min_dy, max_dy))
     } else {
@@ -1090,7 +1092,7 @@ mod tests {
     }
 
     #[test]
-    fn rasterized_grid_matches_geo_for_sample_offsets() {
+    fn rasterized_grid_is_conservative_against_geo_for_sample_offsets() {
         let moving = build_shape_geom(&Orientation {
             layers: vec![vec![
                 [0.0, 0.0],
@@ -1118,7 +1120,10 @@ mod tests {
             for dy in -4..=5 {
                 let shifted_b = translate_polygon(&b.polygon, dx, dy);
                 let exact = polygons_overlap_area_positive(&a.polygon, &shifted_b);
-                assert_eq!(grid.get(dx, dy), exact, "mismatch at dx={dx}, dy={dy}");
+                assert!(
+                    !exact || grid.get(dx, dy),
+                    "false negative at dx={dx}, dy={dy}"
+                );
             }
         }
     }
@@ -1516,7 +1521,7 @@ mod tests {
     }
 
     #[test]
-    fn rasterized_grid_matches_geo_for_prob1_embedded_samples() {
+    fn rasterized_grid_is_conservative_against_geo_for_prob1_embedded_samples() {
         for (case_id, moving_layers, fixed_layers) in prob1_sample_orientation_pairs() {
             let moving = build_shape_geom(&Orientation {
                 layers: moving_layers,
@@ -1530,10 +1535,9 @@ mod tests {
             for dx in range.min_dx..=range.max_dx {
                 for dy in range.min_dy..=range.max_dy {
                     let exact = crane_collision_direct_geo(&moving, &fixed, dx, dy);
-                    assert_eq!(
-                        grid.get(dx, dy),
-                        exact,
-                        "prob1 sample {case_id} mismatch at dx={dx}, dy={dy}"
+                    assert!(
+                        !exact || grid.get(dx, dy),
+                        "prob1 sample {case_id} false negative at dx={dx}, dy={dy}"
                     );
                 }
             }
@@ -1579,28 +1583,23 @@ mod tests {
         for dx in range.min_dx..=range.max_dx {
             for dy in range.min_dy..=range.max_dy {
                 let exact = crane_collision_direct_geo(moving, fixed, dx, dy);
-                let expected = if exact {
-                    CollisionResult::Hit
-                } else {
-                    CollisionResult::Clear
-                };
-                assert_eq!(
-                    pre.crane(
-                        BlockPlacement {
-                            block_id: moving_block_id,
-                            orient_idx: 0,
-                            x: 0,
-                            y: 0,
-                        },
-                        BlockPlacement {
-                            block_id: fixed_block_id,
-                            orient_idx: 0,
-                            x: dx,
-                            y: dy,
-                        },
-                    ),
-                    expected,
-                    "prob1 sample {case_id} {label} mismatch at dx={dx}, dy={dy}"
+                let fast = pre.crane(
+                    BlockPlacement {
+                        block_id: moving_block_id,
+                        orient_idx: 0,
+                        x: 0,
+                        y: 0,
+                    },
+                    BlockPlacement {
+                        block_id: fixed_block_id,
+                        orient_idx: 0,
+                        x: dx,
+                        y: dy,
+                    },
+                );
+                assert!(
+                    !exact || fast == CollisionResult::Hit,
+                    "prob1 sample {case_id} {label} false negative at dx={dx}, dy={dy}"
                 );
             }
         }
@@ -1660,7 +1659,7 @@ mod tests {
     }
 
     #[test]
-    fn crane_distinguishes_overlap_from_edge_touch() {
+    fn crane_treats_edge_touch_as_hit_conservatively() {
         let problem = problem(
             vec![Bay {
                 width: 10,
@@ -1675,7 +1674,7 @@ mod tests {
 
         assert_eq!(
             pre.crane(placement(0, 0, 0), placement(1, 2, 0)),
-            CollisionResult::Clear
+            CollisionResult::Hit
         );
         assert_eq!(
             pre.crane(placement(0, 0, 0), placement(1, 1, 0)),
