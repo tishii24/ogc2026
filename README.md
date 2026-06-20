@@ -36,19 +36,6 @@ python tools/stats.py
 python tools/visualizer.py log/local-test/60/prob_1
 ```
 
-## 提出
-
-```bash
-rustup target add x86_64-unknown-linux-musl
-
-python tools/composer.py submit-v001 --platform linux
-
-cd solutions/submit-v001
-zip -r ../../submission-v001.zip .
-
-zipinfo ../../submission-v001.zip
-```
-
 ## Docker で Linux 向け提出物を作る
 
 ジャッジ環境に近い Ubuntu 24.04 / x86_64 環境で `solver` をビルドする。
