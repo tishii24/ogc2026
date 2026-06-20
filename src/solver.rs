@@ -9,6 +9,8 @@ use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
 const LOCAL_SEARCH_TIME_RATIO: f64 = 0.95;
+const START_TEMP: f64 = 1e4;
+const END_TEMP: f64 = 1.0;
 const MAX_BAY_ASSIGNMENTS: usize = 32;
 const MAX_TIME_CANDIDATES: usize = 48;
 
@@ -34,38 +36,51 @@ pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
     let pre = Precompute::build(problem);
     eprintln!("elapsed: {:.4}", time::elapsed_seconds());
 
-    let mut best = build_initial_schedule(problem, &pre)?;
-    let mut best_score = score_schedule(problem, &pre, &best);
-    eprintln!("initial score: {:.3}", best_score);
-
     let mut rng = RandPcg64Mcg::new(1);
+    let mut current = build_initial_schedule(problem, &pre, &mut rng)?;
+    let mut current_score = score_schedule(problem, &pre, &current);
+    let mut best = current.clone();
+    let mut best_score = current_score;
+    eprintln!("initial score: {:.3}", best_score);
     let deadline = timelimit * LOCAL_SEARCH_TIME_RATIO;
     let mut iter = 0usize;
     let mut accepted = 0usize;
+    let mut improved = 0usize;
 
     while time::elapsed_seconds() < deadline {
         iter += 1;
+        let progress = (time::elapsed_seconds() / deadline).clamp(0.0, 1.0);
+        let temp = START_TEMP * (END_TEMP / START_TEMP).powf(progress);
         let k = rng.gen_range(2, 10).min(problem.blocks.len());
-        let removed = choose_removed_blocks(problem, &pre, &best, k, &mut rng);
+        let removed = choose_removed_blocks(problem, &pre, &current, k, &mut rng);
         if removed.is_empty() {
             break;
         }
 
-        if let Some(candidate) = try_remove_reinsert(problem, &pre, &best, &removed, &mut rng) {
+        if let Some(candidate) = try_remove_reinsert(problem, &pre, &current, &removed, &mut rng) {
             let score = score_schedule(problem, &pre, &candidate);
-            if score + 1e-9 < best_score {
-                eprintln!("new best score: {:.3}", score);
-                best = candidate;
-                best_score = score;
+            let delta = score - current_score;
+            if delta <= 0.0 || rng.nextf() < (-delta / temp).exp() {
+                current = candidate;
+                current_score = score;
                 accepted += 1;
+
+                if current_score + 1e-9 < best_score {
+                    eprintln!("new best score: {:.3}", current_score);
+                    best = current.clone();
+                    best_score = current_score;
+                    improved += 1;
+                }
             }
         }
     }
 
     eprintln!(
-        "local search: iter={}, accepted={}, score={:.3}, elapsed={:.4}",
+        "annealing: iter={}, accepted={}, improved={}, current={:.3}, best={:.3}, elapsed={:.4}",
         iter,
         accepted,
+        improved,
+        current_score,
         best_score,
         time::elapsed_seconds()
     );
@@ -73,108 +88,35 @@ pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
     Ok(schedule_to_solution(&best))
 }
 
-fn build_initial_schedule(
+fn build_initial_schedule<R: Random>(
     problem: &Problem,
     pre: &Precompute,
+    rng: &mut R,
 ) -> Result<Vec<ScheduledBlock>, String> {
-    let n = problem.blocks.len();
-    let mut schedule = Vec::with_capacity(n);
-    let mut entered = vec![false; n];
-    let mut finished = 0;
-    let mut active: Vec<ScheduledBlock> = Vec::new();
-    let mut t = 0;
+    let mut schedule = Vec::with_capacity(problem.blocks.len());
+    let mut order: Vec<usize> = (0..problem.blocks.len()).collect();
+    order.sort_by_key(|&block_id| {
+        let block = &problem.blocks[block_id];
+        (block.due_date, block.release_time, block_id)
+    });
 
-    while finished < n {
-        let mut i = 0;
-        while i < active.len() {
-            if active[i].exit_time <= t {
-                active.swap_remove(i);
-                finished += 1;
-            } else {
-                i += 1;
-            }
-        }
-
-        let mut candidates: Vec<usize> = (0..n)
-            .filter(|&block_id| !entered[block_id] && problem.blocks[block_id].release_time <= t)
-            .collect();
-        candidates.sort_by_key(|&block_id| {
-            let block = &problem.blocks[block_id];
-            let lateness = (t + block.processing_time - block.due_date).max(0);
-            (
-                Reverse(lateness),
-                block.due_date,
-                block.release_time,
-                block_id,
-            )
-        });
-
-        let mut entered_any = false;
-        for block_id in candidates {
-            if let Some(place) = find_bottom_left(problem, pre, block_id, &active) {
-                let block = &problem.blocks[block_id];
-                let scheduled = ScheduledBlock {
-                    block_id,
-                    bay_id: place.bay_id,
-                    orient_idx: place.orient_idx,
-                    x: place.x,
-                    y: place.y,
-                    entry_time: t,
-                    exit_time: t + block.processing_time,
-                };
-                schedule.push(scheduled);
-                active.push(scheduled);
-                entered[block_id] = true;
-                entered_any = true;
-            }
-        }
-
-        if finished == n {
-            break;
-        }
-        if !entered_any
-            && active.is_empty()
-            && entered
-                .iter()
-                .enumerate()
-                .any(|(block_id, &done)| !done && problem.blocks[block_id].release_time <= t)
-        {
-            return Err(format!("failed to place any released block at time {t}"));
-        }
-
-        t += 1;
+    for block_id in order {
+        let block = &problem.blocks[block_id];
+        let original = ScheduledBlock {
+            block_id,
+            bay_id: 0,
+            orient_idx: 0,
+            x: 0,
+            y: 0,
+            entry_time: block.release_time,
+            exit_time: block.release_time + block.processing_time,
+        };
+        let scheduled = find_insert_position(problem, pre, original, None, &schedule, rng)
+            .ok_or_else(|| format!("failed to place block {block_id} in initial schedule"))?;
+        schedule.push(scheduled);
     }
 
     Ok(schedule)
-}
-
-fn find_bottom_left(
-    problem: &Problem,
-    pre: &Precompute,
-    block_id: usize,
-    active: &[ScheduledBlock],
-) -> Option<Placement> {
-    for &bay_id in &pre.bay_order_by_pref[block_id] {
-        for orient_idx in 0..problem.blocks[block_id].shape.len() {
-            let Some(range) = pre.collision.fit_range(bay_id, block_id, orient_idx) else {
-                continue;
-            };
-            for y in range.min_y..=range.max_y {
-                for x in range.min_x..=range.max_x {
-                    if can_place_with(block_id, bay_id, orient_idx, x, y, active, pre) {
-                        return Some(Placement {
-                            bay_id,
-                            orient_idx,
-                            x,
-                            y,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    None
 }
 
 fn try_remove_reinsert<R: Random>(
@@ -204,6 +146,7 @@ fn try_remove_reinsert<R: Random>(
     }
     assignments.sort_by(|a, b| a.cost.total_cmp(&b.cost));
     assignments.truncate(MAX_BAY_ASSIGNMENTS);
+    rng.shuffle(&mut assignments);
 
     for assignment in assignments {
         let mut order = removed.clone();
@@ -562,30 +505,6 @@ fn can_insert(pre: &Precompute, new_block: ScheduledBlock, schedule: &[Scheduled
                 new_block.exit_time,
             )
     }) {
-        if !placements_clear(pre, new_place, *old) {
-            return false;
-        }
-    }
-    true
-}
-
-fn can_place_with(
-    block_id: usize,
-    bay_id: usize,
-    orient_idx: usize,
-    x: i64,
-    y: i64,
-    active: &[ScheduledBlock],
-    pre: &Precompute,
-) -> bool {
-    let new_place = BlockPlacement {
-        block_id,
-        orient_idx,
-        x,
-        y,
-    };
-
-    for old in active.iter().filter(|old| old.bay_id == bay_id) {
         if !placements_clear(pre, new_place, *old) {
             return false;
         }
