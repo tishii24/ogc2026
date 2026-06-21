@@ -14,9 +14,12 @@ const LOCAL_SEARCH_TIME_RATIO: f64 = 0.95;
 const START_TEMP: f64 = 1e4;
 const END_TEMP: f64 = 1.0;
 
-const MIN_REMOVED_BLOCKS: usize = 2;
-const MAX_REMOVED_BLOCKS: usize = 9;
+const MIN_REMOVED_BLOCKS: usize = 3;
+const MAX_REMOVED_BLOCKS: usize = 13;
 const REMOVE_POOL_FACTOR: usize = 8;
+const REMOVE_SEED_COUNT: usize = 3;
+const REMOVE_RANDOM_SEED_COUNT: usize = 1;
+const REMOVE_NEIGHBOR_POOL_FACTOR: usize = 4;
 
 const REMOVE_TARDINESS_WEIGHT: i64 = 10_000;
 const REMOVE_PREF_PENALTY_WEIGHT: i64 = 100;
@@ -443,13 +446,91 @@ fn choose_removed_blocks<R: Random>(
             };
     }
 
+    let mut by_block = vec![None; problem.blocks.len()];
+    for &s in schedule {
+        by_block[s.block_id] = Some(s);
+    }
+
+    fn center(pre: &Precompute, s: ScheduledBlock) -> (f64, f64) {
+        let (cx, cy) = pre.orientation_bbox_center[s.block_id][s.orient_idx];
+        (s.x as f64 + cx, s.y as f64 + cy)
+    }
+
+    fn push_selected(selected: &mut Vec<usize>, used: &mut [bool], block_id: usize, k: usize) {
+        if selected.len() < k && !used[block_id] {
+            selected.push(block_id);
+            used[block_id] = true;
+        }
+    }
+
     rng.shuffle(&mut ids);
     ids.sort_by_key(|&block_id| Reverse(badness[block_id]));
     let pool_len = (k * REMOVE_POOL_FACTOR).min(ids.len()).max(k);
     ids.truncate(pool_len);
-    rng.shuffle(&mut ids);
-    ids.truncate(k);
-    ids
+    let bad_pool = ids;
+
+    let mut selected = Vec::with_capacity(k);
+    let mut used = vec![false; problem.blocks.len()];
+    let seed_count = REMOVE_SEED_COUNT.min(k);
+    let random_seed_count = REMOVE_RANDOM_SEED_COUNT.min(seed_count);
+    let bad_seed_count = seed_count - random_seed_count;
+
+    let mut seed_pool = bad_pool.clone();
+    rng.shuffle(&mut seed_pool);
+    for &block_id in seed_pool.iter().take(bad_seed_count) {
+        push_selected(&mut selected, &mut used, block_id, k);
+    }
+
+    let mut random_seed_pool: Vec<usize> = schedule.iter().map(|s| s.block_id).collect();
+    rng.shuffle(&mut random_seed_pool);
+    for block_id in random_seed_pool {
+        if selected.len() >= seed_count {
+            break;
+        }
+        push_selected(&mut selected, &mut used, block_id, k);
+    }
+
+    let seeds = selected.clone();
+    for (seed_index, &seed_id) in seeds.iter().enumerate() {
+        if selected.len() >= k {
+            break;
+        }
+        let Some(seed) = by_block[seed_id] else {
+            continue;
+        };
+        let seeds_left = seeds.len() - seed_index;
+        let need = (k - selected.len() + seeds_left - 1) / seeds_left;
+        let (sx, sy) = center(pre, seed);
+        let mut neighbors: Vec<(f64, usize)> = schedule
+            .iter()
+            .filter(|s| s.bay_id == seed.bay_id && !used[s.block_id])
+            .map(|&s| {
+                let (x, y) = center(pre, s);
+                let dx = x - sx;
+                let dy = y - sy;
+                (dx * dx + dy * dy, s.block_id)
+            })
+            .collect();
+        neighbors.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let pool_len = (need * REMOVE_NEIGHBOR_POOL_FACTOR).min(neighbors.len());
+        let mut neighbor_ids: Vec<usize> = neighbors
+            .into_iter()
+            .take(pool_len)
+            .map(|(_, block_id)| block_id)
+            .collect();
+        rng.shuffle(&mut neighbor_ids);
+        for block_id in neighbor_ids.into_iter().take(need) {
+            push_selected(&mut selected, &mut used, block_id, k);
+        }
+    }
+
+    let mut fill_pool = bad_pool;
+    rng.shuffle(&mut fill_pool);
+    for block_id in fill_pool {
+        push_selected(&mut selected, &mut used, block_id, k);
+    }
+
+    selected
 }
 
 fn most_loaded_bay(pre: &Precompute, loads: &[f64]) -> Option<usize> {

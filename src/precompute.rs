@@ -7,9 +7,10 @@ pub struct Precompute {
     pub pref_penalty: Vec<Vec<i64>>,
     pub bay_order_by_pref: Vec<Vec<usize>>,
     pub orientation_order_by_bbox: Vec<Vec<usize>>,
+    pub orientation_bbox_center: Vec<Vec<(f64, f64)>>,
 }
 
-fn orientation_bbox_area(orientation: &Orientation) -> f64 {
+fn orientation_bbox(orientation: &Orientation) -> (f64, (f64, f64)) {
     let mut min_x = f64::INFINITY;
     let mut min_y = f64::INFINITY;
     let mut max_x = f64::NEG_INFINITY;
@@ -24,7 +25,10 @@ fn orientation_bbox_area(orientation: &Orientation) -> f64 {
         }
     }
 
-    (max_x - min_x) * (max_y - min_y)
+    (
+        (max_x - min_x) * (max_y - min_y),
+        ((min_x + max_x) * 0.5, (min_y + max_y) * 0.5),
+    )
 }
 
 impl Precompute {
@@ -80,11 +84,24 @@ impl Precompute {
             .map(|block| {
                 let mut order: Vec<usize> = (0..block.shape.len()).collect();
                 order.sort_by(|&a, &b| {
-                    orientation_bbox_area(&block.shape[a])
-                        .total_cmp(&orientation_bbox_area(&block.shape[b]))
+                    orientation_bbox(&block.shape[a])
+                        .0
+                        .total_cmp(&orientation_bbox(&block.shape[b]).0)
                         .then(a.cmp(&b))
                 });
                 order
+            })
+            .collect();
+
+        let orientation_bbox_center = problem
+            .blocks
+            .iter()
+            .map(|block| {
+                block
+                    .shape
+                    .iter()
+                    .map(|orientation| orientation_bbox(orientation).1)
+                    .collect()
             })
             .collect();
 
@@ -94,6 +111,7 @@ impl Precompute {
             pref_penalty,
             bay_order_by_pref,
             orientation_order_by_bbox,
+            orientation_bbox_center,
         }
     }
 }

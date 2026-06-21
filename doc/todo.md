@@ -1,9 +1,9 @@
-precompute
+precompute:
 - Cを設定 & lazy cache
-- 高速化
 - 怪しいものはpythonに返してshapelyで厳密に計算する
+- 高速化
 
-solver
+solver:
 - obj2,obj3の大域的最適化
 - 削除するブロックを適切に選ぶ
   - 位置
@@ -16,6 +16,14 @@ solver
 - 焼きなまし過程の可視化
 - 並列焼きなまし
 
-other
+visualizer:
+- max-prefでないblockもリストで表示
+- weightを表示
+
+stats:
+- 順位スコアを計算
+
+other:
 - 外側でコア数などを揃えて評価
-- augmentationして評価
+- 難しいケースをaugmentationして評価
+- 時間を延ばして評価

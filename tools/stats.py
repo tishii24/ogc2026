@@ -109,8 +109,63 @@ def compute_best_counts(rows: list[dict[str, str]]) -> dict[tuple[str, float], i
     return best_counts
 
 
+def row_key(row: dict[str, str]) -> tuple[str, float] | None:
+    version = row.get("version", "")
+    timelimit = parse_float(row.get("timelimit", ""))
+    if not version or timelimit is None:
+        return None
+    return (version, timelimit)
+
+
+def compute_rank_scores(rows: list[dict[str, str]]) -> dict[tuple[str, float], int]:
+    row_keys = sorted(
+        {key for row in rows if (key := row_key(row)) is not None},
+        key=lambda key: (natural_key(key[0]), key[1]),
+    )
+    cases = sorted(
+        {row.get("case", "") for row in rows if row.get("case", "")},
+        key=lambda case: natural_key(case_label(case)),
+    )
+    if not row_keys or not cases:
+        return {}
+
+    by_key = {
+        (key[0], key[1], row.get("case", "")): row
+        for row in rows
+        if (key := row_key(row)) is not None and row.get("case", "")
+    }
+    rank_scores = {key: 0 for key in row_keys}
+    failed_rank = len(row_keys) + 1
+
+    for case in cases:
+        feasible: list[tuple[float, tuple[str, float]]] = []
+        failed_keys: list[tuple[str, float]] = []
+        for key in row_keys:
+            row = by_key.get((key[0], key[1], case))
+            objective = parse_float(row.get("objective", "")) if row else None
+            if row and parse_bool(row.get("feasible", "")) and objective is not None:
+                feasible.append((objective, key))
+            else:
+                failed_keys.append(key)
+
+        feasible.sort(key=lambda item: (item[0], natural_key(item[1][0]), item[1][1]))
+        index = 0
+        while index < len(feasible):
+            objective = feasible[index][0]
+            rank = index + 1
+            while index < len(feasible) and feasible[index][0] == objective:
+                rank_scores[feasible[index][1]] += rank
+                index += 1
+
+        for key in failed_keys:
+            rank_scores[key] += failed_rank
+
+    return rank_scores
+
+
 def summarize(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     best_counts = compute_best_counts(rows)
+    rank_scores = compute_rank_scores(rows)
     groups: dict[tuple[str, float], dict[str, Any]] = {}
 
     for row in rows:
@@ -129,6 +184,7 @@ def summarize(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
                 "feasible": 0,
                 "failed": 0,
                 "best": 0,
+                "rank_score": 0,
                 "total_objective": 0.0,
                 "total_obj1": 0.0,
                 "total_obj2": 0.0,
@@ -158,6 +214,7 @@ def summarize(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
 
     for key, group in groups.items():
         group["best"] = best_counts.get(key, 0)
+        group["rank_score"] = rank_scores.get(key, 0)
 
     return sorted(groups.values(), key=lambda g: g["version"])
 
@@ -184,6 +241,7 @@ def print_table(summaries: list[dict[str, Any]]) -> None:
         "feasible",
         "failed",
         "best",
+        "rank_score",
         "total_objective",
         "total_obj1",
         "total_obj2",
@@ -200,6 +258,7 @@ def print_table(summaries: list[dict[str, Any]]) -> None:
                 str(item["feasible"]),
                 str(item["failed"]),
                 str(item["best"]),
+                str(item["rank_score"]),
                 format_number(item["total_objective"]),
                 format_number(item["total_obj1"]),
                 format_number(item["total_obj2"]),
