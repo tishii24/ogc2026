@@ -8,19 +8,24 @@ use crate::{
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
+const RNG_SEED: u64 = 1;
+
 const LOCAL_SEARCH_TIME_RATIO: f64 = 0.95;
 const START_TEMP: f64 = 1e4;
 const END_TEMP: f64 = 1.0;
-const RNG_SEED: u64 = 1;
+
 const MIN_REMOVED_BLOCKS: usize = 2;
-const MAX_REMOVED_BLOCKS_EXCLUSIVE: usize = 10;
+const MAX_REMOVED_BLOCKS: usize = 9;
 const REMOVE_POOL_FACTOR: usize = 8;
+
 const REMOVE_TARDINESS_WEIGHT: i64 = 10_000;
 const REMOVE_PREF_PENALTY_WEIGHT: i64 = 100;
-const REMOVE_HEAVY_BAY_WEIGHT: i64 = 0;
+const REMOVE_HEAVY_BAY_WEIGHT: i64 = 1;
+
 const MAX_ENUMERATED_BAY_ASSIGNMENTS: usize = 10_000;
 const MAX_BAY_ASSIGNMENTS: usize = 32;
 const MAX_TIME_CANDIDATES: usize = 48;
+
 const LATE_TIME_EXTRA_MARGIN: i64 = 30;
 
 #[derive(Clone, Copy, Debug)]
@@ -61,7 +66,7 @@ pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
         let progress = (time::elapsed_seconds() / deadline).clamp(0.0, 1.0);
         let temp = START_TEMP * (END_TEMP / START_TEMP).powf(progress);
         let k = rng
-            .gen_range(MIN_REMOVED_BLOCKS, MAX_REMOVED_BLOCKS_EXCLUSIVE)
+            .gen_range(MIN_REMOVED_BLOCKS, MAX_REMOVED_BLOCKS + 1)
             .min(problem.blocks.len());
         let removed = choose_removed_blocks(problem, &pre, &current, k, &mut rng);
         if removed.is_empty() {
@@ -499,23 +504,32 @@ fn can_insert(pre: &Precompute, new_block: ScheduledBlock, schedule: &[Scheduled
         a0 < b1 && b0 < a1
     }
 
-    fn placements_clear(pre: &Precompute, new_place: BlockPlacement, old: ScheduledBlock) -> bool {
-        let old_place = BlockPlacement {
-            block_id: old.block_id,
-            orient_idx: old.orient_idx,
-            x: old.x,
-            y: old.y,
-        };
-        pre.collision.crane(new_place, old_place) == CollisionResult::Clear
-            && pre.collision.crane(old_place, new_place) == CollisionResult::Clear
+    fn place(s: ScheduledBlock) -> BlockPlacement {
+        BlockPlacement {
+            block_id: s.block_id,
+            orient_idx: s.orient_idx,
+            x: s.x,
+            y: s.y,
+        }
     }
 
-    let new_place = BlockPlacement {
-        block_id: new_block.block_id,
-        orient_idx: new_block.orient_idx,
-        x: new_block.x,
-        y: new_block.y,
-    };
+    fn crane_clear(pre: &Precompute, moving: BlockPlacement, fixed: BlockPlacement) -> bool {
+        pre.collision.crane(moving, fixed) == CollisionResult::Clear
+    }
+
+    fn placements_clear(pre: &Precompute, new_block: ScheduledBlock, old: ScheduledBlock) -> bool {
+        let new_place = place(new_block);
+        let old_place = place(old);
+
+        if new_block.entry_time < old.entry_time && old.exit_time < new_block.exit_time {
+            crane_clear(pre, old_place, new_place)
+        } else if old.entry_time < new_block.entry_time && new_block.exit_time < old.exit_time {
+            crane_clear(pre, new_place, old_place)
+        } else {
+            // ABAB 型は両方向が必要。同時刻の ENTRY/EXIT も操作順に依存するため保守的に両方向を見る。
+            crane_clear(pre, new_place, old_place) && crane_clear(pre, old_place, new_place)
+        }
+    }
 
     for old in schedule.iter().filter(|old| {
         old.bay_id == new_block.bay_id
@@ -526,7 +540,7 @@ fn can_insert(pre: &Precompute, new_block: ScheduledBlock, schedule: &[Scheduled
                 new_block.exit_time,
             )
     }) {
-        if !placements_clear(pre, new_place, *old) {
+        if !placements_clear(pre, new_block, *old) {
             return false;
         }
     }
