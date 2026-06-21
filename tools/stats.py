@@ -159,10 +159,7 @@ def summarize(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     for key, group in groups.items():
         group["best"] = best_counts.get(key, 0)
 
-    return sorted(
-        groups.values(),
-        key=lambda g: (g["failed"], -g["best"], g["total_objective"], g["version"]),
-    )
+    return sorted(groups.values(), key=lambda g: g["version"])
 
 
 def print_rows(headers: list[str], rows: list[list[str]]) -> None:
