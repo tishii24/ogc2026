@@ -122,7 +122,7 @@ fn build_initial_schedule<R: Random>(
             entry_time: block.release_time,
             exit_time: block.release_time + block.processing_time,
         };
-        let scheduled = find_insert_position(problem, pre, original, None, &schedule, rng)
+        let scheduled = find_insert_position(problem, pre, original, None, &schedule, true, rng)
             .ok_or_else(|| format!("failed to place block {block_id} in initial schedule"))?;
         schedule.push(scheduled);
     }
@@ -159,30 +159,37 @@ fn try_remove_reinsert<R: Random>(
     assignments.truncate(MAX_BAY_ASSIGNMENTS);
     rng.shuffle(&mut assignments);
 
-    for assignment in assignments {
-        let mut order = removed.clone();
-        order.sort_by_key(|s| problem.blocks[s.block_id].due_date);
+    let mut order: Vec<(usize, ScheduledBlock)> = removed.iter().copied().enumerate().collect();
+    order.sort_by_key(|&(_, s)| problem.blocks[s.block_id].due_date);
 
-        let mut cur = base.clone();
-        let mut ok = true;
-        for old in order {
-            let Some(pos) = removed.iter().position(|s| s.block_id == old.block_id) else {
-                ok = false;
-                break;
-            };
-            let bay_id = assignment.bays[pos];
-            let inserted = find_insert_position(problem, pre, old, Some(bay_id), &cur, rng)
-                .or_else(|| find_insert_position(problem, pre, old, None, &cur, rng));
-            if let Some(scheduled) = inserted {
-                cur.push(scheduled);
-            } else {
-                ok = false;
-                break;
+    for allow_tardiness in [false, true] {
+        for assignment in assignments.iter() {
+            let mut cur = base.clone();
+            let mut ok = true;
+            for &(pos, old) in &order {
+                let bay_id = assignment.bays[pos];
+                let inserted = find_insert_position(
+                    problem,
+                    pre,
+                    old,
+                    Some(bay_id),
+                    &cur,
+                    allow_tardiness,
+                    rng,
+                )
+                .or_else(|| {
+                    find_insert_position(problem, pre, old, None, &cur, allow_tardiness, rng)
+                });
+                if let Some(scheduled) = inserted {
+                    cur.push(scheduled);
+                } else {
+                    ok = false;
+                    break;
+                }
             }
-        }
-
-        if ok {
-            return Some(cur);
+            if ok {
+                return Some(cur);
+            }
         }
     }
 
@@ -272,52 +279,48 @@ fn find_insert_position<R: Random>(
     original: ScheduledBlock,
     fixed_bay_id: Option<usize>,
     schedule: &[ScheduledBlock],
+    allow_tardiness: bool,
     rng: &mut R,
 ) -> Option<ScheduledBlock> {
-    for on_time_only in [true, false] {
-        let times = time_candidates(problem, original, schedule, on_time_only, rng);
-        if times.is_empty() {
-            continue;
-        }
+    let times = time_candidates(problem, original, schedule, allow_tardiness, rng);
+    let fixed_bay = fixed_bay_id.map(|bay_id| [bay_id]);
+    let bay_order: &[usize] = match &fixed_bay {
+        Some(bays) => bays,
+        None => &pre.bay_order_by_pref[original.block_id],
+    };
 
-        let bay_order: &[usize] = match fixed_bay_id {
-            Some(bay_id) => &vec![bay_id],
-            None => &pre.bay_order_by_pref[original.block_id],
-        };
-
-        for &entry_time in &times {
-            for &bay_id in bay_order {
-                for &orient_idx in &pre.orientation_order_by_bbox[original.block_id] {
-                    let Some(range) =
-                        pre.collision
-                            .fit_range(bay_id, original.block_id, orient_idx)
-                    else {
-                        continue;
-                    };
-                    let x_len = (range.max_x - range.min_x + 1) as usize;
-                    let y_len = (range.max_y - range.min_y + 1) as usize;
-                    for left in [true, false] {
-                        for yi in 0..y_len {
-                            let y = range.min_y + yi as i64;
-                            for xi in 0..x_len {
-                                let x = if left {
-                                    range.min_x + xi as i64
-                                } else {
-                                    range.max_x - xi as i64
-                                };
-                                let scheduled = ScheduledBlock {
-                                    block_id: original.block_id,
-                                    bay_id,
-                                    orient_idx,
-                                    x,
-                                    y,
-                                    entry_time,
-                                    exit_time: entry_time
-                                        + problem.blocks[original.block_id].processing_time,
-                                };
-                                if can_insert(pre, scheduled, schedule) {
-                                    return Some(scheduled);
-                                }
+    for &entry_time in &times {
+        for &bay_id in bay_order {
+            for &orient_idx in &pre.orientation_order_by_bbox[original.block_id] {
+                let Some(range) = pre
+                    .collision
+                    .fit_range(bay_id, original.block_id, orient_idx)
+                else {
+                    continue;
+                };
+                let x_len = (range.max_x - range.min_x + 1) as usize;
+                let y_len = (range.max_y - range.min_y + 1) as usize;
+                for left in [true, false] {
+                    for yi in 0..y_len {
+                        let y = range.min_y + yi as i64;
+                        for xi in 0..x_len {
+                            let x = if left {
+                                range.min_x + xi as i64
+                            } else {
+                                range.max_x - xi as i64
+                            };
+                            let scheduled = ScheduledBlock {
+                                block_id: original.block_id,
+                                bay_id,
+                                orient_idx,
+                                x,
+                                y,
+                                entry_time,
+                                exit_time: entry_time
+                                    + problem.blocks[original.block_id].processing_time,
+                            };
+                            if can_insert(pre, scheduled, schedule) {
+                                return Some(scheduled);
                             }
                         }
                     }
@@ -333,7 +336,7 @@ fn time_candidates<R: Random>(
     problem: &Problem,
     original: ScheduledBlock,
     schedule: &[ScheduledBlock],
-    on_time_only: bool,
+    allow_tardiness: bool,
     rng: &mut R,
 ) -> Vec<i64> {
     fn push_time_candidate(times: &mut Vec<i64>, t: i64, lo: i64, hi: i64) {
@@ -347,26 +350,25 @@ fn time_candidates<R: Random>(
     let earliest = block.release_time;
     let latest_on_time = block.due_date - p;
 
-    let (lo, hi) = if on_time_only {
-        if latest_on_time < earliest {
-            return Vec::new();
-        }
-        (earliest, latest_on_time)
-    } else {
+    let lo = earliest;
+    let hi = if allow_tardiness {
         let max_exit = schedule
             .iter()
             .map(|s| s.exit_time)
             .max()
             .unwrap_or(original.exit_time)
             .max(original.exit_time);
-        let lo = earliest.max(latest_on_time + 1);
-        let hi = max_exit
+        max_exit
             .max(block.due_date)
             .max(original.entry_time)
             .max(lo)
             + p
-            + LATE_TIME_EXTRA_MARGIN;
-        (lo, hi)
+            + LATE_TIME_EXTRA_MARGIN
+    } else {
+        if latest_on_time < earliest {
+            return Vec::new();
+        }
+        latest_on_time
     };
 
     let mut times = Vec::new();
