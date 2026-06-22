@@ -15,7 +15,7 @@ const START_TEMP: f64 = 1e4;
 const END_TEMP: f64 = 1.0;
 
 const MIN_REMOVED_BLOCKS: usize = 1;
-const MAX_REMOVED_BLOCKS: usize = 8;
+const MAX_REMOVED_BLOCKS: usize = 13;
 const REMOVE_POOL_FACTOR: usize = 8;
 const REMOVE_SEED_COUNT: usize = 3;
 const REMOVE_RANDOM_SEED_COUNT: usize = 1;
