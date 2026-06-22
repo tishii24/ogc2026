@@ -21,12 +21,6 @@ const REMOVE_SEED_COUNT: usize = 3;
 const REMOVE_RANDOM_SEED_COUNT: usize = 1;
 const REMOVE_NEIGHBOR_POOL_FACTOR: usize = 4;
 
-const MAX_ENUMERATED_BAY_ASSIGNMENTS: usize = 10_000;
-const MAX_BAY_ASSIGNMENTS: usize = 32;
-const MAX_TIME_CANDIDATES: usize = 4;
-
-const LATE_TIME_EXTRA_MARGIN: i64 = 30;
-
 #[derive(Clone, Copy, Debug)]
 struct ScheduledBlock {
     block_id: usize,
@@ -38,10 +32,13 @@ struct ScheduledBlock {
     exit_time: i64,
 }
 
-#[derive(Clone, Debug)]
-struct BayAssignment {
-    cost: f64,
-    bays: Vec<usize>,
+type Interval = (i64, i64);
+
+struct InsertCandidate {
+    scheduled: ScheduledBlock,
+    tardiness: i64,
+    delta_obj23: f64,
+    orient_rank: usize,
 }
 
 pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
@@ -50,7 +47,7 @@ pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
     eprintln!("elapsed: {:.4}", time::elapsed_seconds());
 
     let mut rng = RandPcg64Mcg::new(RNG_SEED);
-    let mut current = build_initial_schedule(problem, &pre, &mut rng)?;
+    let mut current = build_initial_schedule(problem, &pre)?;
     let mut current_score = score_schedule(problem, &pre, &current);
     let mut best = current.clone();
     let mut best_score = current_score;
@@ -72,7 +69,7 @@ pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
             break;
         }
 
-        if let Some(candidate) = try_remove_reinsert(problem, &pre, &current, &removed, &mut rng) {
+        if let Some(candidate) = try_remove_reinsert(problem, &pre, &current, &removed) {
             let score = score_schedule(problem, &pre, &candidate);
             let delta = score - current_score;
             if delta <= 0.0 || rng.nextf() < (-delta / temp).exp() {
@@ -103,12 +100,12 @@ pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
     Ok(schedule_to_solution(&best))
 }
 
-fn build_initial_schedule<R: Random>(
+fn build_initial_schedule(
     problem: &Problem,
     pre: &Precompute,
-    rng: &mut R,
 ) -> Result<Vec<ScheduledBlock>, String> {
     let mut schedule = Vec::with_capacity(problem.blocks.len());
+    let mut loads = vec![0.0; problem.bays.len()];
     let mut order: Vec<usize> = (0..problem.blocks.len()).collect();
     order.sort_by_key(|&block_id| {
         let block = &problem.blocks[block_id];
@@ -126,20 +123,20 @@ fn build_initial_schedule<R: Random>(
             entry_time: block.release_time,
             exit_time: block.release_time + block.processing_time,
         };
-        let scheduled = find_insert_position(problem, pre, original, None, &schedule, true, rng)
+        let scheduled = find_best_insert_position(problem, pre, original, &schedule, &loads)
             .ok_or_else(|| format!("failed to place block {block_id} in initial schedule"))?;
+        loads[scheduled.bay_id] += block.workload as f64;
         schedule.push(scheduled);
     }
 
     Ok(schedule)
 }
 
-fn try_remove_reinsert<R: Random>(
+fn try_remove_reinsert(
     problem: &Problem,
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     removed_ids: &[usize],
-    rng: &mut R,
 ) -> Option<Vec<ScheduledBlock>> {
     let mut removed = Vec::with_capacity(removed_ids.len());
     let mut base = Vec::with_capacity(schedule.len() - removed_ids.len());
@@ -155,177 +152,99 @@ fn try_remove_reinsert<R: Random>(
         return None;
     }
 
-    let mut assignments = enumerate_bay_assignments(problem, pre, &base, &removed);
-    if assignments.is_empty() {
-        return None;
-    }
-    assignments.sort_by(|a, b| a.cost.total_cmp(&b.cost));
-    assignments.truncate(MAX_BAY_ASSIGNMENTS);
-    rng.shuffle(&mut assignments);
+    removed.sort_by(|a, b| {
+        pre.block_area[b.block_id]
+            .total_cmp(&pre.block_area[a.block_id])
+            .then(a.block_id.cmp(&b.block_id))
+    });
 
-    let mut order: Vec<(usize, ScheduledBlock)> = removed.iter().copied().enumerate().collect();
-    order.sort_by_key(|&(_, s)| problem.blocks[s.block_id].due_date);
-
-    for allow_tardiness in [false, true] {
-        for assignment in assignments.iter() {
-            let mut cur = base.clone();
-            let mut ok = true;
-            for &(pos, old) in &order {
-                let bay_id = assignment.bays[pos];
-                let inserted = find_insert_position(
-                    problem,
-                    pre,
-                    old,
-                    Some(bay_id),
-                    &cur,
-                    allow_tardiness,
-                    rng,
-                )
-                .or_else(|| {
-                    find_insert_position(problem, pre, old, None, &cur, allow_tardiness, rng)
-                });
-                if let Some(scheduled) = inserted {
-                    cur.push(scheduled);
-                } else {
-                    ok = false;
-                    break;
-                }
-            }
-            if ok {
-                return Some(cur);
-            }
-        }
+    let mut cur = base;
+    let mut loads = vec![0.0; problem.bays.len()];
+    for s in &cur {
+        loads[s.bay_id] += problem.blocks[s.block_id].workload as f64;
     }
 
-    None
+    for old in removed {
+        let scheduled = find_best_insert_position(problem, pre, old, &cur, &loads)?;
+        loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
+        cur.push(scheduled);
+    }
+
+    Some(cur)
 }
 
-fn enumerate_bay_assignments(
-    problem: &Problem,
-    pre: &Precompute,
-    base: &[ScheduledBlock],
-    removed: &[ScheduledBlock],
-) -> Vec<BayAssignment> {
-    fn dfs(
-        problem: &Problem,
-        pre: &Precompute,
-        removed: &[ScheduledBlock],
-        base_loads: &[f64],
-        pos: usize,
-        cur: &mut Vec<usize>,
-        out: &mut Vec<BayAssignment>,
-    ) {
-        fn has_fit_position(
-            problem: &Problem,
-            pre: &Precompute,
-            block_id: usize,
-            bay_id: usize,
-        ) -> bool {
-            (0..problem.blocks[block_id].shape.len()).any(|orient_idx| {
-                pre.collision
-                    .fit_range(bay_id, block_id, orient_idx)
-                    .is_some()
-            })
-        }
-
-        if out.len() > MAX_ENUMERATED_BAY_ASSIGNMENTS {
-            return;
-        }
-        if pos == removed.len() {
-            let mut loads = base_loads.to_vec();
-            let mut obj3 = 0.0;
-            for (s, &bay_id) in removed.iter().zip(cur.iter()) {
-                loads[bay_id] += problem.blocks[s.block_id].workload as f64;
-                obj3 += pre.pref_penalty[s.block_id][bay_id] as f64;
-            }
-            let cost =
-                problem.weights.w2 * normalized_imbalance(pre, &loads) + problem.weights.w3 * obj3;
-            out.push(BayAssignment {
-                cost,
-                bays: cur.clone(),
-            });
-            return;
-        }
-
-        let block_id = removed[pos].block_id;
-        for &bay_id in &pre.bay_order_by_pref[block_id] {
-            if !has_fit_position(problem, pre, block_id, bay_id) {
-                continue;
-            }
-            cur.push(bay_id);
-            dfs(problem, pre, removed, base_loads, pos + 1, cur, out);
-            cur.pop();
-        }
-    }
-
-    let mut base_loads = vec![0.0; problem.bays.len()];
-    for s in base {
-        base_loads[s.bay_id] += problem.blocks[s.block_id].workload as f64;
-    }
-
-    let mut candidates = Vec::new();
-    let mut cur = Vec::with_capacity(removed.len());
-    dfs(
-        problem,
-        pre,
-        removed,
-        &base_loads,
-        0,
-        &mut cur,
-        &mut candidates,
-    );
-    candidates
-}
-
-fn find_insert_position<R: Random>(
+fn find_best_insert_position(
     problem: &Problem,
     pre: &Precompute,
     original: ScheduledBlock,
-    fixed_bay_id: Option<usize>,
     schedule: &[ScheduledBlock],
-    allow_tardiness: bool,
-    rng: &mut R,
+    loads: &[f64],
 ) -> Option<ScheduledBlock> {
-    let times = time_candidates(problem, original, schedule, allow_tardiness, rng);
-    let fixed_bay = fixed_bay_id.map(|bay_id| [bay_id]);
-    let bay_order: &[usize] = match &fixed_bay {
-        Some(bays) => bays,
-        None => &pre.bay_order_by_pref[original.block_id],
-    };
+    let block_id = original.block_id;
+    let block = &problem.blocks[block_id];
+    let p = block.processing_time;
+    let lo = block.release_time;
+    let cur_max_exit = schedule.iter().map(|s| s.exit_time).max().unwrap_or(lo);
+    let hi = cur_max_exit.max(lo);
+    let current_obj2 = normalized_imbalance(pre, loads);
+    let mut best: Option<InsertCandidate> = None;
 
-    for &entry_time in &times {
-        for &bay_id in bay_order {
-            for &orient_idx in &pre.orientation_order_by_bbox[original.block_id] {
-                let Some(range) = pre
-                    .collision
-                    .fit_range(bay_id, original.block_id, orient_idx)
-                else {
-                    continue;
-                };
-                let x_len = (range.max_x - range.min_x + 1) as usize;
-                let y_len = (range.max_y - range.min_y + 1) as usize;
+    for bay_id in 0..problem.bays.len() {
+        let mut next_loads = loads.to_vec();
+        next_loads[bay_id] += block.workload as f64;
+        let delta_obj2 =
+            problem.weights.w2 * (normalized_imbalance(pre, &next_loads) - current_obj2);
+        let delta_obj3 = problem.weights.w3 * pre.pref_penalty[block_id][bay_id] as f64;
+        let delta_obj23 = delta_obj2 + delta_obj3;
+
+        for (orient_rank, &orient_idx) in pre.orientation_order_by_bbox[block_id].iter().enumerate()
+        {
+            let Some(range) = pre.collision.fit_range(bay_id, block_id, orient_idx) else {
+                continue;
+            };
+            let x_len = (range.max_x - range.min_x + 1) as usize;
+            let y_len = (range.max_y - range.min_y + 1) as usize;
+
+            for yi in 0..y_len {
+                let y = range.min_y + yi as i64;
                 for left in [true, false] {
-                    for yi in 0..y_len {
-                        let y = range.min_y + yi as i64;
-                        for xi in 0..x_len {
-                            let x = if left {
-                                range.min_x + xi as i64
-                            } else {
-                                range.max_x - xi as i64
-                            };
-                            let scheduled = ScheduledBlock {
-                                block_id: original.block_id,
-                                bay_id,
-                                orient_idx,
-                                x,
-                                y,
-                                entry_time,
-                                exit_time: entry_time
-                                    + problem.blocks[original.block_id].processing_time,
-                            };
-                            if can_insert(pre, scheduled, schedule) {
-                                return Some(scheduled);
-                            }
+                    for xi in 0..x_len {
+                        let x = if left {
+                            range.min_x + xi as i64
+                        } else {
+                            range.max_x - xi as i64
+                        };
+                        let tentative = ScheduledBlock {
+                            block_id,
+                            bay_id,
+                            orient_idx,
+                            x,
+                            y,
+                            entry_time: 0,
+                            exit_time: p,
+                        };
+                        let Some(entry_time) =
+                            best_time_for_fixed_placement(pre, tentative, schedule, lo, hi)
+                        else {
+                            continue;
+                        };
+                        let scheduled = ScheduledBlock {
+                            entry_time,
+                            exit_time: entry_time + p,
+                            ..tentative
+                        };
+                        debug_assert!(can_insert(pre, scheduled, schedule));
+                        let candidate = InsertCandidate {
+                            scheduled,
+                            tardiness: (scheduled.exit_time - block.due_date).max(0),
+                            delta_obj23,
+                            orient_rank,
+                        };
+                        if best
+                            .as_ref()
+                            .map_or(true, |best| insert_candidate_better(&candidate, best))
+                        {
+                            best = Some(candidate);
                         }
                     }
                 }
@@ -333,91 +252,160 @@ fn find_insert_position<R: Random>(
         }
     }
 
-    None
+    best.map(|candidate| candidate.scheduled)
 }
 
-fn time_candidates<R: Random>(
-    problem: &Problem,
-    original: ScheduledBlock,
-    schedule: &[ScheduledBlock],
-    allow_tardiness: bool,
-    rng: &mut R,
-) -> Vec<i64> {
-    fn push_time_candidate(times: &mut Vec<i64>, t: i64, lo: i64, hi: i64) {
-        if lo <= t && t <= hi {
-            times.push(t);
-        }
+fn insert_candidate_better(a: &InsertCandidate, b: &InsertCandidate) -> bool {
+    match a.tardiness.cmp(&b.tardiness) {
+        std::cmp::Ordering::Less => return true,
+        std::cmp::Ordering::Greater => return false,
+        std::cmp::Ordering::Equal => {}
     }
+    match a.delta_obj23.total_cmp(&b.delta_obj23) {
+        std::cmp::Ordering::Less => return true,
+        std::cmp::Ordering::Greater => return false,
+        std::cmp::Ordering::Equal => {}
+    }
+    match a.scheduled.entry_time.cmp(&b.scheduled.entry_time) {
+        std::cmp::Ordering::Less => return true,
+        std::cmp::Ordering::Greater => return false,
+        std::cmp::Ordering::Equal => {}
+    }
+    match a.orient_rank.cmp(&b.orient_rank) {
+        std::cmp::Ordering::Less => return true,
+        std::cmp::Ordering::Greater => return false,
+        std::cmp::Ordering::Equal => {}
+    }
+    match a.scheduled.x.cmp(&b.scheduled.x) {
+        std::cmp::Ordering::Less => return true,
+        std::cmp::Ordering::Greater => return false,
+        std::cmp::Ordering::Equal => {}
+    }
+    a.scheduled.y < b.scheduled.y
+}
 
-    let block = &problem.blocks[original.block_id];
-    let p = block.processing_time;
-    let earliest = block.release_time;
-    let latest_on_time = block.due_date - p;
+fn clamp_interval(l: i64, r: i64, lo: i64, hi: i64) -> Option<Interval> {
+    let l = l.max(lo);
+    let r = r.min(hi);
+    if l <= r { Some((l, r)) } else { None }
+}
 
-    let max_exit = schedule
-        .iter()
-        .map(|s| s.exit_time)
-        .max()
-        .unwrap_or(original.exit_time)
-        .max(original.exit_time);
+fn add_forbidden_intervals_for_old(
+    pre: &Precompute,
+    new_block: ScheduledBlock,
+    old: ScheduledBlock,
+    lo: i64,
+    hi: i64,
+    forbidden: &mut Vec<Interval>,
+) {
+    let p = new_block.exit_time - new_block.entry_time;
+    let a = old.entry_time;
+    let b = old.exit_time;
 
-    let lo = earliest;
-    let hi = if allow_tardiness {
-        let max_exit = schedule
-            .iter()
-            .map(|s| s.exit_time)
-            .max()
-            .unwrap_or(original.exit_time)
-            .max(original.exit_time);
-        max_exit
-            .max(block.due_date)
-            .max(original.entry_time)
-            .max(lo)
-            + p
-            + LATE_TIME_EXTRA_MARGIN
-    } else {
-        if latest_on_time < earliest {
-            return Vec::new();
-        }
-        latest_on_time
+    let Some((ol, or)) = clamp_interval(a - p + 1, b - 1, lo, hi) else {
+        return;
     };
 
-    let mut times = Vec::new();
-    push_time_candidate(&mut times, original.entry_time, lo, hi);
-    push_time_candidate(&mut times, earliest, lo, hi);
-    push_time_candidate(&mut times, latest_on_time, lo, hi);
-    push_time_candidate(&mut times, lo, lo, hi);
-    push_time_candidate(&mut times, hi, lo, hi);
+    let new_place = BlockPlacement {
+        block_id: new_block.block_id,
+        orient_idx: new_block.orient_idx,
+        x: new_block.x,
+        y: new_block.y,
+    };
+    let old_place = BlockPlacement {
+        block_id: old.block_id,
+        orient_idx: old.orient_idx,
+        x: old.x,
+        y: old.y,
+    };
 
-    for s in schedule {
-        push_time_candidate(&mut times, s.entry_time, lo, hi);
-        push_time_candidate(&mut times, s.exit_time, lo, hi);
-        push_time_candidate(&mut times, s.entry_time - p + 1, lo, hi);
-        push_time_candidate(&mut times, s.exit_time - p + 1, lo, hi);
+    let new_old_clear = pre.collision.crane(new_place, old_place) == CollisionResult::Clear;
+    let old_new_clear = pre.collision.crane(old_place, new_place) == CollisionResult::Clear;
+    if new_old_clear && old_new_clear {
+        return;
     }
 
-    let span = hi - lo + 1;
-    if span <= MAX_TIME_CANDIDATES as i64 {
-        for t in lo..=hi {
-            times.push(t);
+    let mut points = vec![ol, or + 1];
+
+    if let Some((l, r)) = clamp_interval(a + 1, b - p - 1, ol, or) {
+        points.push(l);
+        points.push(r + 1);
+    }
+    if let Some((l, r)) = clamp_interval(b - p + 1, a - 1, ol, or) {
+        points.push(l);
+        points.push(r + 1);
+    }
+
+    points.sort_unstable();
+    points.dedup();
+
+    for window in points.windows(2) {
+        let l = window[0];
+        let r = window[1] - 1;
+        if l > r {
+            continue;
         }
-    } else {
-        while times.len() < MAX_TIME_CANDIDATES {
-            times.push(lo + rng.gen_range(0, span as usize) as i64);
+
+        let t = l;
+        let ok = if a < t && t + p < b {
+            new_old_clear
+        } else if t < a && b < t + p {
+            old_new_clear
+        } else {
+            new_old_clear && old_new_clear
+        };
+
+        if !ok {
+            forbidden.push((l, r));
         }
     }
+}
 
-    times.sort_unstable();
-    times.dedup();
-    times.sort_by_key(|&t| ((t + p - block.due_date).max(0), t));
-    times.truncate(MAX_TIME_CANDIDATES);
-
-    if allow_tardiness {
-        let safe_entry = max_exit.max(earliest);
-        push_time_candidate(&mut times, safe_entry, lo, hi);
+fn merge_intervals(intervals: &mut Vec<Interval>) {
+    eprintln!("intervals.len()={}");
+    intervals.sort_unstable_by_key(|&(l, r)| (l, r));
+    let mut merged: Vec<Interval> = Vec::new();
+    for &(l, r) in intervals.iter() {
+        if let Some(last) = merged.last_mut() {
+            if l <= last.1 + 1 {
+                last.1 = last.1.max(r);
+                continue;
+            }
+        }
+        merged.push((l, r));
     }
+    *intervals = merged;
+}
 
-    times
+fn first_feasible_time(mut forbidden: Vec<Interval>, lo: i64, hi: i64) -> Option<i64> {
+    merge_intervals(&mut forbidden);
+    let mut t = lo;
+    for (l, r) in forbidden {
+        if t < l {
+            return Some(t);
+        }
+        if t <= r {
+            t = r + 1;
+        }
+        if t > hi {
+            return None;
+        }
+    }
+    if t <= hi { Some(t) } else { None }
+}
+
+fn best_time_for_fixed_placement(
+    pre: &Precompute,
+    new_block: ScheduledBlock,
+    schedule: &[ScheduledBlock],
+    lo: i64,
+    hi: i64,
+) -> Option<i64> {
+    let mut forbidden = Vec::new();
+    for &old in schedule.iter().filter(|old| old.bay_id == new_block.bay_id) {
+        add_forbidden_intervals_for_old(pre, new_block, old, lo, hi, &mut forbidden);
+    }
+    first_feasible_time(forbidden, lo, hi)
 }
 
 fn choose_removed_blocks<R: Random>(
