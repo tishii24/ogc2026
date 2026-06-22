@@ -20,6 +20,7 @@ const REMOVE_POOL_FACTOR: usize = 8;
 const REMOVE_SEED_COUNT: usize = 3;
 const REMOVE_RANDOM_SEED_COUNT: usize = 1;
 const REMOVE_NEIGHBOR_POOL_FACTOR: usize = 4;
+const INSERT_X_BUFFER: i64 = 10;
 
 #[derive(Clone, Copy, Debug)]
 struct ScheduledBlock {
@@ -187,6 +188,7 @@ fn find_best_insert_position(
     let cur_max_exit = schedule.iter().map(|s| s.exit_time).max().unwrap_or(lo);
     let hi = cur_max_exit.max(lo);
     let current_obj2 = normalized_imbalance(pre, loads);
+    let original_tardiness = (original.exit_time - block.due_date).max(0);
     let mut best: Option<InsertCandidate> = None;
 
     for bay_id in 0..problem.bays.len() {
@@ -202,52 +204,62 @@ fn find_best_insert_position(
             let Some(range) = pre.collision.fit_range(bay_id, block_id, orient_idx) else {
                 continue;
             };
-            let x_len = (range.max_x - range.min_x + 1) as usize;
-            let y_len = (range.max_y - range.min_y + 1) as usize;
+            let mut anchor_x: Option<i64> = None;
+            let mut found_acceptable_in_orientation = false;
 
-            for yi in 0..y_len {
-                let y = range.min_y + yi as i64;
-                for left in [true, false] {
-                    for xi in 0..x_len {
-                        let x = if left {
-                            range.min_x + xi as i64
-                        } else {
-                            range.max_x - xi as i64
-                        };
-                        let tentative = ScheduledBlock {
-                            block_id,
-                            bay_id,
-                            orient_idx,
-                            x,
-                            y,
-                            entry_time: 0,
-                            exit_time: p,
-                        };
-                        let Some(entry_time) =
-                            best_time_for_fixed_placement(pre, tentative, schedule, lo, hi)
-                        else {
-                            continue;
-                        };
-                        let scheduled = ScheduledBlock {
-                            entry_time,
-                            exit_time: entry_time + p,
-                            ..tentative
-                        };
-                        debug_assert!(can_insert(pre, scheduled, schedule));
-                        let candidate = InsertCandidate {
-                            scheduled,
-                            tardiness: (scheduled.exit_time - block.due_date).max(0),
-                            delta_obj23,
-                            orient_rank,
-                        };
-                        if best
-                            .as_ref()
-                            .map_or(true, |best| insert_candidate_better(&candidate, best))
-                        {
-                            best = Some(candidate);
-                        }
+            for x in range.min_x..=range.max_x {
+                if let Some(anchor_x) = anchor_x {
+                    if x > anchor_x + INSERT_X_BUFFER {
+                        break;
                     }
                 }
+
+                for y in range.min_y..=range.max_y {
+                    let tentative = ScheduledBlock {
+                        block_id,
+                        bay_id,
+                        orient_idx,
+                        x,
+                        y,
+                        entry_time: 0,
+                        exit_time: p,
+                    };
+                    let Some(entry_time) =
+                        best_time_for_fixed_placement(pre, tentative, schedule, lo, hi)
+                    else {
+                        continue;
+                    };
+                    let scheduled = ScheduledBlock {
+                        entry_time,
+                        exit_time: entry_time + p,
+                        ..tentative
+                    };
+                    debug_assert!(can_insert(pre, scheduled, schedule));
+                    let tardiness = (scheduled.exit_time - block.due_date).max(0);
+                    let candidate = InsertCandidate {
+                        scheduled,
+                        tardiness,
+                        delta_obj23,
+                        orient_rank,
+                    };
+                    if best
+                        .as_ref()
+                        .map_or(true, |best| insert_candidate_better(&candidate, best))
+                    {
+                        best = Some(candidate);
+                    }
+
+                    if tardiness <= original_tardiness {
+                        if anchor_x.is_none() {
+                            anchor_x = Some(x);
+                        }
+                        found_acceptable_in_orientation = true;
+                    }
+                }
+            }
+
+            if found_acceptable_in_orientation {
+                break;
             }
         }
     }
@@ -362,7 +374,6 @@ fn add_forbidden_intervals_for_old(
 }
 
 fn merge_intervals(intervals: &mut Vec<Interval>) {
-    eprintln!("intervals.len()={}");
     intervals.sort_unstable_by_key(|&(l, r)| (l, r));
     let mut merged: Vec<Interval> = Vec::new();
     for &(l, r) in intervals.iter() {
