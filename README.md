@@ -27,18 +27,20 @@ TIMELIMIT=60
 # 提出ファイルの作成
 python tools/composer.py $VERSION
 
-# 実行
+# 単一ケースだけ実行
 python tools/runner.py $VERSION --case train/prob_1.json --timelimit $TIMELIMIT
-python tools/runner.py $VERSION --cases train/*.json --timelimit $TIMELIMIT --jobs 4
+
+# suite の実行
+python tools/runner.py $VERSION --suite suites/half.json --timelimit $TIMELIMIT --jobs 4
 
 # ビジュアライザの作成
 python tools/visualizer.py log/$VERSION/$TIMELIMIT
 
 # 統計情報の表示
-python tools/stats.py
+python tools/stats.py --suite suites/half.json
 
 # version, timelimit ごとのケース別スコア表示
-python tools/stats.py --matrix
+python tools/stats.py --suite suites/half.json --matrix
 ```
 
 ## Docker で Linux 向け提出物を作る

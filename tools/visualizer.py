@@ -145,6 +145,59 @@ def compute_tardiness_summary(assignments: list[dict[str, Any]]) -> dict[str, An
     }
 
 
+def compute_obj13_penalty_summary(
+    weights: dict[str, float], assignments: list[dict[str, Any]]
+) -> dict[str, Any]:
+    w1 = weights["w1"]
+    w3 = weights["w3"]
+    blocks = []
+    total_obj1 = 0.0
+    total_obj3 = 0.0
+    for a in assignments:
+        tardiness = int(a.get("tardiness", 0))
+        pref_penalty = int(a.get("preference_penalty", 0))
+        obj1_penalty = w1 * tardiness
+        obj3_penalty = w3 * pref_penalty
+        total = obj1_penalty + obj3_penalty
+        total_obj1 += obj1_penalty
+        total_obj3 += obj3_penalty
+        if total <= 0:
+            continue
+        blocks.append(
+            {
+                "block_id": int(a["block_id"]),
+                "total": total,
+                "obj1_penalty": obj1_penalty,
+                "obj3_penalty": obj3_penalty,
+                "tardiness": tardiness,
+                "preference_penalty": pref_penalty,
+                "bay_id": int(a.get("bay_id", 0)),
+                "best_bays": a.get("best_bays", []),
+                "entry": int(a.get("entry", 0)),
+                "exit": int(a.get("exit", 0)),
+                "due": int(a.get("due", 0)),
+                "release": int(a.get("release", 0)),
+                "processing": int(a.get("processing", 0)),
+            }
+        )
+
+    blocks.sort(
+        key=lambda a: (
+            -a["total"],
+            -a["obj1_penalty"],
+            -a["obj3_penalty"],
+            a["block_id"],
+        )
+    )
+    return {
+        "total": total_obj1 + total_obj3,
+        "obj1": total_obj1,
+        "obj3": total_obj3,
+        "count": len(blocks),
+        "blocks": blocks,
+    }
+
+
 def compute_obj2_detail(
     prob_info: dict[str, Any], assignments: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -247,8 +300,15 @@ def load_view_case(root: Path, run_dir: Path) -> dict[str, Any]:
         raise FileNotFoundError(f"case file not found: {case_path}")
     prob_info = load_json(case_path)
 
+    weights_src = prob_info.get("weights", {})
+    weights = {
+        "w1": float(weights_src.get("w1", 1.0)),
+        "w2": float(weights_src.get("w2", 1.0)),
+        "w3": float(weights_src.get("w3", 1.0)),
+    }
     assignments = enrich_assignments(prob_info, build_assignments(solution))
     tardiness = compute_tardiness_summary(assignments)
+    obj13_penalty = compute_obj13_penalty_summary(weights, assignments)
     t_min = min((int(a["entry"]) for a in assignments), default=0)
     t_max = max((int(a["exit"]) for a in assignments), default=max(t_min, 1))
     name = str(meta.get("testcase") or prob_info.get("name") or run_dir.name)
@@ -262,8 +322,10 @@ def load_view_case(root: Path, run_dir: Path) -> dict[str, Any]:
         "result": result,
         "bays": prob_info.get("bays", []),
         "blocks": prob_info.get("blocks", []),
+        "weights": weights,
         "assignments": assignments,
         "tardiness": tardiness,
+        "obj13_penalty": obj13_penalty,
         "obj2": compute_obj2_detail(prob_info, assignments),
         "t_min": t_min,
         "t_max": max(t_min, t_max),
@@ -331,6 +393,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   .muted { color: #6b7280; }
   .tardy-warning { margin-top: 10px; padding: 8px 10px; border-radius: 6px; border: 1px solid #fecaca; background: #fef2f2; color: #991b1b; font-weight: 600; }
   .tardy-ok { margin-top: 10px; padding: 8px 10px; border-radius: 6px; border: 1px solid #bbf7d0; background: #f0fdf4; color: #166534; }
+  .penalty-list { max-height: 420px; overflow-y: auto; border-top: 1px solid #f1f5f9; }
   .tardy-row { display: grid; grid-template-columns: 54px 1fr auto; gap: 8px; align-items: center; padding: 6px 0; border-top: 1px solid #f1f5f9; font-size: 13px; }
   .tardy-row:first-child { border-top: 0; }
   .tardy-rank { font-family: Menlo, Consolas, monospace; font-weight: 600; color: #991b1b; }
@@ -372,7 +435,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   <div id="bays"></div>
 
   <div class="panel">
-    <h3 style="margin: 0 0 8px 0; font-size: 16px;">Tardiness</h3>
+    <h3 style="margin: 0 0 8px 0; font-size: 16px;">Obj1 + Obj3 block penalty</h3>
     <div id="tardinessPanel"></div>
   </div>
 
@@ -473,16 +536,31 @@ function updateSummary() {
   const data = currentCase();
   const meta = data.meta || {};
   const result = data.result || {};
+  const weights = data.weights || { w1: 1, w2: 1, w3: 1 };
+  const w1 = Number(weights.w1 ?? 1);
+  const w2 = Number(weights.w2 ?? 1);
+  const w3 = Number(weights.w3 ?? 1);
   const tardiness = data.tardiness || { total: 0, count: 0, max: 0 };
+  const obj13 = data.obj13_penalty || {};
+  const obj1Weighted = result.obj1 !== undefined && result.obj1 !== null
+    ? Number(result.obj1) * w1
+    : Number(obj13.obj1 ?? 0);
+  const obj2Weighted = result.obj2 !== undefined && result.obj2 !== null
+    ? Number(result.obj2) * w2
+    : Number(data.obj2.value || 0) * w2;
+  const obj3Weighted = result.obj3 !== undefined && result.obj3 !== null
+    ? Number(result.obj3) * w3
+    : Number(obj13.obj3 ?? 0);
   const parts = [
     `version=${meta.version ?? '-'}`,
     `timelimit=${meta.timelimit ?? '-'}`,
     `case=${data.name}`,
     `feasible=${result.feasible ?? meta.feasible ?? '-'}`,
     `objective=${result.objective ?? meta.objective ?? '-'}`,
-    `obj1=${result.obj1 ?? tardiness.total ?? '-'}`,
-    `obj2=${result.obj2 ?? data.obj2.value}`,
-    `obj3=${result.obj3 ?? '-'}`,
+    `obj1=${formatNumber(obj1Weighted)}`,
+    `obj2=${formatNumber(obj2Weighted)}`,
+    `obj3=${formatNumber(obj3Weighted)}`,
+    `weights=(w1=${formatNumber(w1)} w2=${formatNumber(w2)} w3=${formatNumber(w3)})`,
     `run=${data.run_dir}`,
   ];
   summary.textContent = parts.join('  ');
@@ -536,13 +614,13 @@ function jumpToTime(t) {
 
 function renderTardiness() {
   const data = currentCase();
-  const tardiness = data.tardiness || { total: 0, count: 0, max: 0, blocks: [] };
-  const blocks = tardiness.blocks || [];
+  const penalty = data.obj13_penalty || { total: 0, obj1: 0, obj3: 0, count: 0, blocks: [] };
+  const blocks = penalty.blocks || [];
   tardinessPanel.innerHTML = '';
 
   const header = document.createElement('div');
   header.style.cssText = 'margin-bottom:8px;font-family:Menlo,Consolas,monospace;';
-  header.textContent = `total=${tardiness.total || 0}  blocks=${tardiness.count || 0}  max=${tardiness.max || 0}`;
+  header.textContent = `total=${formatNumber(penalty.total || 0)}  obj1=${formatNumber(penalty.obj1 || 0)}  obj3=${formatNumber(penalty.obj3 || 0)}  blocks=${penalty.count || 0}`;
   tardinessPanel.appendChild(header);
 
   if (!blocks.length) {
@@ -553,8 +631,11 @@ function renderTardiness() {
     return;
   }
 
-  const maxRows = 30;
-  blocks.slice(0, maxRows).forEach((block, index) => {
+  const list = document.createElement('div');
+  list.className = 'penalty-list';
+  tardinessPanel.appendChild(list);
+
+  blocks.forEach((block, index) => {
     const row = document.createElement('div');
     row.className = 'tardy-row';
 
@@ -564,7 +645,8 @@ function renderTardiness() {
     row.appendChild(rank);
 
     const detail = document.createElement('div');
-    detail.textContent = `T=${block.tardiness}  bay=${block.bay_id}  release=${block.release}  due=${block.due}  entry=${block.entry}  exit=${block.exit}  proc=${block.processing}`;
+    const bestBays = (block.best_bays || []).map(bay => `Bay${bay}`).join('/');
+    detail.textContent = `total=${formatNumber(block.total)}  obj1=${formatNumber(block.obj1_penalty)}(T=${block.tardiness})  obj3=${formatNumber(block.obj3_penalty)}(P=${block.preference_penalty})  bay=${block.bay_id}  best=${bestBays || '-'}  release=${block.release}  due=${block.due}  entry=${block.entry}  exit=${block.exit}  proc=${block.processing}`;
     row.appendChild(detail);
 
     const jumps = document.createElement('div');
@@ -582,16 +664,8 @@ function renderTardiness() {
     });
     row.appendChild(jumps);
 
-    tardinessPanel.appendChild(row);
+    list.appendChild(row);
   });
-
-  if (blocks.length > maxRows) {
-    const omitted = document.createElement('div');
-    omitted.className = 'muted';
-    omitted.style.marginTop = '6px';
-    omitted.textContent = `showing top ${maxRows} of ${blocks.length} tardy blocks`;
-    tardinessPanel.appendChild(omitted);
-  }
 }
 
 function renderObj2() {

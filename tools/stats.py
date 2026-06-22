@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import glob
+import json
 import math
 import re
 import sys
@@ -20,11 +22,64 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Show a version/timelimit x testcase score matrix.",
     )
+    parser.add_argument(
+        "--suite",
+        help='Only summarize cases in suite JSON. Format: {"cases": ["train/prob_1.json", ...]}',
+    )
     return parser.parse_args()
 
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
+
+
+def natural_key(value: str) -> list[Any]:
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", value)]
+
+
+def normalize_case_path(root: Path, case: str) -> str:
+    path = Path(case)
+    if not path.is_absolute():
+        path = root / path
+    path = path.resolve()
+    if path.is_relative_to(root):
+        return str(path.relative_to(root))
+    return str(path)
+
+
+def load_suite_cases(root: Path, suite: str) -> list[str]:
+    path = Path(suite)
+    if not path.is_absolute():
+        path = root / path
+    with path.open(encoding="utf-8") as f:
+        data = json.load(f)
+
+    if not isinstance(data, dict):
+        raise ValueError("suite must be a JSON object")
+    patterns = data.get("cases")
+    if not isinstance(patterns, list) or not all(
+        isinstance(pattern, str) for pattern in patterns
+    ):
+        raise ValueError("suite.cases must be a list of strings")
+
+    cases: list[str] = []
+    seen: set[str] = set()
+    for pattern in patterns:
+        matches = (
+            glob.glob(str(root / pattern))
+            if not Path(pattern).is_absolute()
+            else glob.glob(pattern)
+        )
+        matches.sort(key=lambda path: natural_key(str(Path(path))))
+        if matches:
+            normalized = [normalize_case_path(root, match) for match in matches]
+        else:
+            normalized = [normalize_case_path(root, pattern)]
+        for case in normalized:
+            if case not in seen:
+                cases.append(case)
+                seen.add(case)
+    return cases
 
 
 def parse_float(value: str) -> float | None:
@@ -44,10 +99,6 @@ def format_number(value: float) -> str:
     if math.isfinite(value) and value.is_integer():
         return str(int(value))
     return f"{value:.3f}"
-
-
-def natural_key(value: str) -> list[Any]:
-    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", value)]
 
 
 def case_label(case: str) -> str:
@@ -96,10 +147,12 @@ def compute_best_counts(rows: list[dict[str, str]]) -> dict[tuple[str, float], i
         if not feasible_rows:
             continue
 
-        best_objective = min(
-            parse_float(row.get("objective", "")) for row in feasible_rows
-        )
-        assert best_objective is not None
+        objectives = [
+            objective
+            for row in feasible_rows
+            if (objective := parse_float(row.get("objective", ""))) is not None
+        ]
+        best_objective = min(objectives)
         for row in feasible_rows:
             objective = parse_float(row.get("objective", ""))
             if objective is not None and objective == best_objective:
@@ -117,15 +170,18 @@ def row_key(row: dict[str, str]) -> tuple[str, float] | None:
     return (version, timelimit)
 
 
-def compute_rank_scores(rows: list[dict[str, str]]) -> dict[tuple[str, float], int]:
+def compute_rank_scores(
+    rows: list[dict[str, str]], cases: list[str] | None = None
+) -> dict[tuple[str, float], int]:
     row_keys = sorted(
         {key for row in rows if (key := row_key(row)) is not None},
         key=lambda key: (natural_key(key[0]), key[1]),
     )
-    cases = sorted(
-        {row.get("case", "") for row in rows if row.get("case", "")},
-        key=lambda case: natural_key(case_label(case)),
-    )
+    if cases is None:
+        cases = sorted(
+            {row.get("case", "") for row in rows if row.get("case", "")},
+            key=lambda case: natural_key(case_label(case)),
+        )
     if not row_keys or not cases:
         return {}
 
@@ -163,9 +219,11 @@ def compute_rank_scores(rows: list[dict[str, str]]) -> dict[tuple[str, float], i
     return rank_scores
 
 
-def summarize(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+def summarize(
+    rows: list[dict[str, str]], cases: list[str] | None = None
+) -> list[dict[str, Any]]:
     best_counts = compute_best_counts(rows)
-    rank_scores = compute_rank_scores(rows)
+    rank_scores = compute_rank_scores(rows, cases)
     groups: dict[tuple[str, float], dict[str, Any]] = {}
 
     for row in rows:
@@ -279,11 +337,14 @@ def score_cell(row: dict[str, str] | None) -> str:
     return format_number(objective)
 
 
-def print_score_matrix(rows: list[dict[str, str]]) -> None:
-    cases = sorted(
-        {row.get("case", "") for row in rows if row.get("case", "")},
-        key=lambda case: natural_key(case_label(case)),
-    )
+def print_score_matrix(
+    rows: list[dict[str, str]], cases: list[str] | None = None
+) -> None:
+    if cases is None:
+        cases = sorted(
+            {row.get("case", "") for row in rows if row.get("case", "")},
+            key=lambda case: natural_key(case_label(case)),
+        )
     row_keys = sorted(
         {
             (row.get("version", ""), parse_float(row.get("timelimit", "")))
@@ -316,7 +377,16 @@ def print_score_matrix(rows: list[dict[str, str]]) -> None:
 
 def main() -> int:
     args = parse_args()
-    score_path = repo_root() / "log" / "score.csv"
+    root = repo_root()
+    suite_cases: list[str] | None = None
+    if args.suite:
+        try:
+            suite_cases = load_suite_cases(root, args.suite)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    score_path = root / "log" / "score.csv"
     if not score_path.is_file():
         print(f"error: {score_path} not found", file=sys.stderr)
         return 1
@@ -325,14 +395,17 @@ def main() -> int:
         rows = list(csv.DictReader(f))
 
     rows = latest_rows(rows)
+    if suite_cases is not None:
+        suite_case_set = set(suite_cases)
+        rows = [row for row in rows if row.get("case", "") in suite_case_set]
     if not rows:
         print("error: no valid rows found", file=sys.stderr)
         return 1
 
     if args.matrix:
-        print_score_matrix(rows)
+        print_score_matrix(rows, suite_cases)
     else:
-        print_table(summarize(rows))
+        print_table(summarize(rows, suite_cases))
     return 0
 
 

@@ -358,6 +358,13 @@ fn time_candidates<R: Random>(
     let earliest = block.release_time;
     let latest_on_time = block.due_date - p;
 
+    let max_exit = schedule
+        .iter()
+        .map(|s| s.exit_time)
+        .max()
+        .unwrap_or(original.exit_time)
+        .max(original.exit_time);
+
     let lo = earliest;
     let hi = if allow_tardiness {
         let max_exit = schedule
@@ -408,6 +415,12 @@ fn time_candidates<R: Random>(
     times.dedup();
     times.sort_by_key(|&t| ((t + p - block.due_date).max(0), t));
     times.truncate(MAX_TIME_CANDIDATES);
+
+    if allow_tardiness {
+        let safe_entry = max_exit.max(earliest);
+        push_time_candidate(&mut times, safe_entry, lo, hi);
+    }
+
     times
 }
 
@@ -437,13 +450,14 @@ fn choose_removed_blocks<R: Random>(
         let block = &problem.blocks[s.block_id];
         let tardiness = (s.exit_time - block.due_date).max(0);
         let pref_penalty = pre.pref_penalty[s.block_id][s.bay_id];
-        badness[s.block_id] = tardiness * REMOVE_TARDINESS_WEIGHT
-            + pref_penalty * REMOVE_PREF_PENALTY_WEIGHT
+        let score = tardiness as f64 * problem.weights.w1
+            + pref_penalty as f64 * problem.weights.w3
             + if Some(s.bay_id) == heavy_bay {
-                REMOVE_HEAVY_BAY_WEIGHT
+                problem.weights.w2
             } else {
-                0
+                0.
             };
+        badness[s.block_id] = score as i64;
     }
 
     let mut by_block = vec![None; problem.blocks.len()];

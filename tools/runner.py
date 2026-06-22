@@ -41,17 +41,10 @@ def parse_args() -> argparse.Namespace:
         description="Run solutions/{version}/myalgorithm.py on local cases."
     )
     parser.add_argument("version", help="Version directory under solutions/")
+    parser.add_argument("--case", help="Problem JSON path for a single case.")
     parser.add_argument(
-        "--case",
-        action="append",
-        default=[],
-        help="Problem JSON path. Can be specified multiple times.",
-    )
-    parser.add_argument(
-        "--cases",
-        nargs="+",
-        default=[],
-        help="Problem JSON paths or glob patterns. default: train/*.json",
+        "--suite",
+        help='Suite JSON path. Format: {"cases": ["train/prob_1.json", ...]}. default: train/*.json',
     )
     parser.add_argument(
         "--timelimit",
@@ -85,10 +78,34 @@ def natural_key(path: Path) -> list[Any]:
     ]
 
 
+def load_suite_cases(root: Path, suite: str) -> list[str]:
+    path = Path(suite)
+    if not path.is_absolute():
+        path = root / path
+    with path.open(encoding="utf-8") as f:
+        data = json.load(f)
+
+    if not isinstance(data, dict):
+        raise ValueError("suite must be a JSON object")
+    cases = data.get("cases")
+    if not isinstance(cases, list) or not all(isinstance(case, str) for case in cases):
+        raise ValueError("suite.cases must be a list of strings")
+    return cases
+
+
 def collect_cases(root: Path, args: argparse.Namespace) -> list[Path]:
-    patterns = [*args.case, *args.cases]
-    if not patterns:
-        patterns = ["train/*.json"]
+    if args.case and args.suite:
+        raise ValueError("--case and --suite cannot be used together")
+    if args.case:
+        path = Path(args.case)
+        if not path.is_absolute():
+            path = root / path
+        path = path.resolve()
+        if not path.is_file():
+            raise ValueError(f"case not found: {args.case}")
+        return [path]
+
+    patterns = load_suite_cases(root, args.suite) if args.suite else ["train/*.json"]
 
     paths: list[Path] = []
     seen: set[Path] = set()
@@ -98,6 +115,7 @@ def collect_cases(root: Path, args: argparse.Namespace) -> list[Path]:
             if not Path(pattern).is_absolute()
             else glob.glob(pattern)
         )
+        matches.sort(key=lambda path: natural_key(Path(path)))
         if not matches:
             path = root / pattern if not Path(pattern).is_absolute() else Path(pattern)
             matches = [str(path)]
@@ -107,7 +125,6 @@ def collect_cases(root: Path, args: argparse.Namespace) -> list[Path]:
                 paths.append(path)
                 seen.add(path)
 
-    paths.sort(key=natural_key)
     return paths
 
 
@@ -330,7 +347,11 @@ def main() -> int:
         )
         return 1
 
-    cases = collect_cases(root, args)
+    try:
+        cases = collect_cases(root, args)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     if not cases:
         print("error: no cases found", file=sys.stderr)
         return 1
