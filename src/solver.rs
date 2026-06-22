@@ -21,6 +21,8 @@ const REMOVE_SEED_COUNT: usize = 3;
 const REMOVE_RANDOM_SEED_COUNT: usize = 1;
 const REMOVE_NEIGHBOR_POOL_FACTOR: usize = 4;
 const INSERT_X_BUFFER: i64 = 10;
+const ORDER_SLACK_WEIGHT_MIN: f64 = 0.0;
+const ORDER_SLACK_WEIGHT_MAX: f64 = 4.0;
 
 #[derive(Clone, Copy, Debug)]
 struct ScheduledBlock {
@@ -70,7 +72,10 @@ pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
             break;
         }
 
-        if let Some(candidate) = try_remove_reinsert(problem, &pre, &current, &removed) {
+        let order_slack_weight = sample_order_slack_weight(&mut rng);
+        if let Some(candidate) =
+            try_remove_reinsert(problem, &pre, &current, &removed, order_slack_weight)
+        {
             let score = score_schedule(problem, &pre, &candidate);
             let delta = score - current_score;
             if delta <= 0.0 || rng.nextf() < (-delta / temp).exp() {
@@ -133,11 +138,90 @@ fn build_initial_schedule(
     Ok(schedule)
 }
 
+fn sample_order_slack_weight<R: Random>(rng: &mut R) -> f64 {
+    ORDER_SLACK_WEIGHT_MIN + (ORDER_SLACK_WEIGHT_MAX - ORDER_SLACK_WEIGHT_MIN) * rng.nextf()
+}
+
+fn block_slack(problem: &Problem, block_id: usize) -> i64 {
+    let block = &problem.blocks[block_id];
+    block.due_date - block.release_time - block.processing_time
+}
+
+fn insert_order_score(
+    problem: &Problem,
+    pre: &Precompute,
+    s: ScheduledBlock,
+    max_area: f64,
+    max_slack: i64,
+    slack_span: f64,
+    slack_weight: f64,
+) -> f64 {
+    let area_norm = pre.block_area[s.block_id] / max_area;
+    let slack_urgency = (max_slack - block_slack(problem, s.block_id)) as f64 / slack_span;
+    area_norm + slack_weight * slack_urgency
+}
+
+fn sort_removed_by_area_slack(
+    problem: &Problem,
+    pre: &Precompute,
+    removed: &mut [ScheduledBlock],
+    slack_weight: f64,
+) {
+    let max_area = removed
+        .iter()
+        .map(|s| pre.block_area[s.block_id])
+        .fold(0.0, f64::max)
+        .max(1.0);
+    let min_slack = removed
+        .iter()
+        .map(|s| block_slack(problem, s.block_id))
+        .min()
+        .unwrap_or(0);
+    let max_slack = removed
+        .iter()
+        .map(|s| block_slack(problem, s.block_id))
+        .max()
+        .unwrap_or(min_slack);
+    let slack_span = (max_slack - min_slack).max(1) as f64;
+
+    removed.sort_by(|a, b| {
+        let score_a = insert_order_score(
+            problem,
+            pre,
+            *a,
+            max_area,
+            max_slack,
+            slack_span,
+            slack_weight,
+        );
+        let score_b = insert_order_score(
+            problem,
+            pre,
+            *b,
+            max_area,
+            max_slack,
+            slack_span,
+            slack_weight,
+        );
+        score_b
+            .total_cmp(&score_a)
+            .then(block_slack(problem, a.block_id).cmp(&block_slack(problem, b.block_id)))
+            .then(pre.block_area[b.block_id].total_cmp(&pre.block_area[a.block_id]))
+            .then(
+                problem.blocks[a.block_id]
+                    .due_date
+                    .cmp(&problem.blocks[b.block_id].due_date),
+            )
+            .then(a.block_id.cmp(&b.block_id))
+    });
+}
+
 fn try_remove_reinsert(
     problem: &Problem,
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     removed_ids: &[usize],
+    order_slack_weight: f64,
 ) -> Option<Vec<ScheduledBlock>> {
     let mut removed = Vec::with_capacity(removed_ids.len());
     let mut base = Vec::with_capacity(schedule.len() - removed_ids.len());
@@ -153,11 +237,7 @@ fn try_remove_reinsert(
         return None;
     }
 
-    removed.sort_by(|a, b| {
-        pre.block_area[b.block_id]
-            .total_cmp(&pre.block_area[a.block_id])
-            .then(a.block_id.cmp(&b.block_id))
-    });
+    sort_removed_by_area_slack(problem, pre, &mut removed, order_slack_weight);
 
     let mut cur = base;
     let mut loads = vec![0.0; problem.bays.len()];
