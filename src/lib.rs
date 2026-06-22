@@ -1,6 +1,5 @@
 pub mod collision;
 pub mod precompute;
-pub mod relaxed_solver;
 pub mod solver;
 pub mod util;
 
