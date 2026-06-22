@@ -96,9 +96,7 @@ def parse_bool(value: str) -> bool:
 
 
 def format_number(value: float) -> str:
-    if math.isfinite(value) and value.is_integer():
-        return str(int(value))
-    return f"{value:.3f}"
+    return str(round(value))
 
 
 def case_label(case: str) -> str:
@@ -170,6 +168,21 @@ def row_key(row: dict[str, str]) -> tuple[str, float] | None:
     return (version, timelimit)
 
 
+def load_case_weights(root: Path, case: str) -> tuple[float, float, float]:
+    path = Path(case)
+    if not path.is_absolute():
+        path = root / path
+    with path.open(encoding="utf-8") as f:
+        data = json.load(f)
+
+    weights = data.get("weights", {})
+    return (
+        float(weights.get("w1", 1.0)),
+        float(weights.get("w2", 1.0)),
+        float(weights.get("w3", 1.0)),
+    )
+
+
 def compute_rank_scores(
     rows: list[dict[str, str]], cases: list[str] | None = None
 ) -> dict[tuple[str, float], int]:
@@ -220,11 +233,12 @@ def compute_rank_scores(
 
 
 def summarize(
-    rows: list[dict[str, str]], cases: list[str] | None = None
+    root: Path, rows: list[dict[str, str]], cases: list[str] | None = None
 ) -> list[dict[str, Any]]:
     best_counts = compute_best_counts(rows)
     rank_scores = compute_rank_scores(rows, cases)
     groups: dict[tuple[str, float], dict[str, Any]] = {}
+    weights_by_case: dict[str, tuple[float, float, float]] = {}
 
     for row in rows:
         version = row.get("version", "")
@@ -258,15 +272,22 @@ def summarize(
 
         if parse_bool(row.get("feasible", "")):
             group["feasible"] += 1
-            for src, dst in [
-                ("objective", "total_objective"),
-                ("obj1", "total_obj1"),
-                ("obj2", "total_obj2"),
-                ("obj3", "total_obj3"),
+            objective = parse_float(row.get("objective", ""))
+            if objective is not None:
+                group["total_objective"] += objective
+
+            case = row.get("case", "")
+            if case not in weights_by_case:
+                weights_by_case[case] = load_case_weights(root, case)
+            w1, w2, w3 = weights_by_case[case]
+            for src, dst, weight in [
+                ("obj1", "total_obj1", w1),
+                ("obj2", "total_obj2", w2),
+                ("obj3", "total_obj3", w3),
             ]:
                 value = parse_float(row.get(src, ""))
                 if value is not None:
-                    group[dst] += value
+                    group[dst] += weight * value
         else:
             group["failed"] += 1
 
@@ -405,7 +426,7 @@ def main() -> int:
     if args.matrix:
         print_score_matrix(rows, suite_cases)
     else:
-        print_table(summarize(rows, suite_cases))
+        print_table(summarize(root, rows, suite_cases))
     return 0
 
 
