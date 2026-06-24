@@ -8,6 +8,7 @@ import csv
 import glob
 import importlib.util
 import json
+import os
 import re
 import shutil
 import sys
@@ -33,6 +34,17 @@ CSV_COLUMNS = [
     "obj3",
     "n_blocks",
     "error",
+]
+
+MAX_ALGORITHM_THREADS = 4
+THREAD_LIMIT_ENV_KEYS = [
+    "RAYON_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "BLIS_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
 ]
 
 
@@ -70,6 +82,12 @@ def validate_version(version: str) -> None:
         raise ValueError(
             "version must contain only letters, digits, underscore, dot, or hyphen"
         )
+
+
+def apply_thread_limit(max_threads: int = MAX_ALGORITHM_THREADS) -> None:
+    value = str(max_threads)
+    for key in THREAD_LIMIT_ENV_KEYS:
+        os.environ[key] = value
 
 
 def natural_key(path: Path) -> list[Any]:
@@ -204,6 +222,7 @@ def run_case(
     case_path: Path,
     timelimit: float,
 ) -> dict[str, Any]:
+    apply_thread_limit()
     timestamp = datetime.now().isoformat(timespec="seconds")
     rel_case = (
         str(case_path.relative_to(root))

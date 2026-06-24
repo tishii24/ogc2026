@@ -8,6 +8,12 @@ use crate::{
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
+macro_rules! log {
+    ($($arg:tt)*) => {
+        eprintln!("[{:.4}] {}", time::elapsed_seconds(), format_args!($($arg)*))
+    };
+}
+
 const RNG_SEED: u64 = 1;
 
 const LOCAL_SEARCH_TIME_RATIO: f64 = 0.95;
@@ -21,6 +27,14 @@ const REMOVE_SEED_COUNT: usize = 3;
 const REMOVE_RANDOM_SEED_COUNT: usize = 1;
 const REMOVE_NEIGHBOR_POOL_FACTOR: usize = 4;
 const INSERT_X_BUFFER: i64 = 10;
+const INITIAL_INSERT_PARAMS: InsertSearchParams = InsertSearchParams {
+    x_step: 1,
+    y_step: 1,
+};
+const REINSERT_PARAMS: InsertSearchParams = InsertSearchParams {
+    x_step: 1,
+    y_step: 1,
+};
 const ORDER_SLACK_WEIGHT_MIN: f64 = 0.0;
 const ORDER_SLACK_WEIGHT_MAX: f64 = 4.0;
 
@@ -37,6 +51,12 @@ struct ScheduledBlock {
 
 type Interval = (i64, i64);
 
+#[derive(Clone, Copy)]
+struct InsertSearchParams {
+    x_step: i64,
+    y_step: i64,
+}
+
 struct InsertCandidate {
     scheduled: ScheduledBlock,
     tardiness: i64,
@@ -45,16 +65,16 @@ struct InsertCandidate {
 }
 
 pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
-    eprintln!("building precompute...");
+    log!("building precompute...");
     let pre = Precompute::build(problem);
-    eprintln!("elapsed: {:.4}", time::elapsed_seconds());
+    log!("precompute built");
 
     let mut rng = RandPcg64Mcg::new(RNG_SEED);
     let mut current = build_initial_schedule(problem, &pre)?;
     let mut current_score = score_schedule(problem, &pre, &current);
     let mut best = current.clone();
     let mut best_score = current_score;
-    eprintln!("initial score: {:.3}", best_score);
+    log!("initial score: {:.3}", best_score);
     let deadline = timelimit * LOCAL_SEARCH_TIME_RATIO;
     let mut iter = 0usize;
     let mut accepted = 0usize;
@@ -84,7 +104,7 @@ pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
                 accepted += 1;
 
                 if current_score + 1e-9 < best_score {
-                    eprintln!("new best score: {:.3}", current_score);
+                    log!("new best score: {:.3}", current_score);
                     best = current.clone();
                     best_score = current_score;
                     improved += 1;
@@ -93,14 +113,13 @@ pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
         }
     }
 
-    eprintln!(
-        "annealing: iter={}, accepted={}, improved={}, current={:.3}, best={:.3}, elapsed={:.4}",
+    log!(
+        "annealing: iter={}, accepted={}, improved={}, current={:.3}, best={:.3}",
         iter,
         accepted,
         improved,
         current_score,
-        best_score,
-        time::elapsed_seconds()
+        best_score
     );
 
     Ok(schedule_to_solution(&best))
@@ -129,8 +148,15 @@ fn build_initial_schedule(
             entry_time: block.release_time,
             exit_time: block.release_time + block.processing_time,
         };
-        let scheduled = find_best_insert_position(problem, pre, original, &schedule, &loads)
-            .ok_or_else(|| format!("failed to place block {block_id} in initial schedule"))?;
+        let scheduled = find_best_insert_position(
+            problem,
+            pre,
+            original,
+            &schedule,
+            &loads,
+            INITIAL_INSERT_PARAMS,
+        )
+        .ok_or_else(|| format!("failed to place block {block_id} in initial schedule"))?;
         loads[scheduled.bay_id] += block.workload as f64;
         schedule.push(scheduled);
     }
@@ -246,7 +272,8 @@ fn try_remove_reinsert(
     }
 
     for old in removed {
-        let scheduled = find_best_insert_position(problem, pre, old, &cur, &loads)?;
+        let scheduled =
+            find_best_insert_position(problem, pre, old, &cur, &loads, REINSERT_PARAMS)?;
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
         cur.push(scheduled);
     }
@@ -260,6 +287,7 @@ fn find_best_insert_position(
     original: ScheduledBlock,
     schedule: &[ScheduledBlock],
     loads: &[f64],
+    params: InsertSearchParams,
 ) -> Option<ScheduledBlock> {
     let block_id = original.block_id;
     let block = &problem.blocks[block_id];
@@ -267,6 +295,9 @@ fn find_best_insert_position(
     let lo = block.release_time;
     let cur_max_exit = schedule.iter().map(|s| s.exit_time).max().unwrap_or(lo);
     let hi = cur_max_exit.max(lo);
+    debug_assert!(params.x_step > 0);
+    debug_assert!(params.y_step > 0);
+
     let current_obj2 = normalized_imbalance(pre, loads);
     let original_tardiness = (original.exit_time - block.due_date).max(0);
     let mut best: Option<InsertCandidate> = None;
@@ -287,14 +318,14 @@ fn find_best_insert_position(
             let mut anchor_x: Option<i64> = None;
             let mut found_acceptable_in_orientation = false;
 
-            for x in range.min_x..=range.max_x {
+            for x in (range.min_x..=range.max_x).step_by(params.x_step as usize) {
                 if let Some(anchor_x) = anchor_x {
                     if x > anchor_x + INSERT_X_BUFFER {
                         break;
                     }
                 }
 
-                for y in range.min_y..=range.max_y {
+                for y in (range.min_y..=range.max_y).step_by(params.y_step as usize) {
                     let tentative = ScheduledBlock {
                         block_id,
                         bay_id,
