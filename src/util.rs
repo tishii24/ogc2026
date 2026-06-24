@@ -1,31 +1,25 @@
 #![allow(dead_code)]
 
 pub mod time {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Instant;
 
-    static mut START: Option<Instant> = None;
-    static mut R: f64 = 1.0;
+    static START: OnceLock<Instant> = OnceLock::new();
+    static R_BITS: AtomicU64 = AtomicU64::new(1.0f64.to_bits());
 
     #[allow(unused)]
     pub fn start_clock(r: f64) {
-        unsafe {
-            R = r;
-            START = Some(Instant::now());
-        }
+        R_BITS.store(r.to_bits(), Ordering::Relaxed);
+        START.get_or_init(Instant::now);
     }
 
     #[inline]
     #[allow(unused)]
     pub fn elapsed_seconds() -> f64 {
-        unsafe {
-            match START {
-                Some(start) => start.elapsed().as_secs_f64() * R,
-                None => {
-                    START = Some(Instant::now());
-                    0.0
-                }
-            }
-        }
+        let start = START.get_or_init(Instant::now);
+        let r = f64::from_bits(R_BITS.load(Ordering::Relaxed));
+        start.elapsed().as_secs_f64() * r
     }
 }
 

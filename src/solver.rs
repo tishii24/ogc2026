@@ -5,10 +5,14 @@ use crate::{
     util::time,
     *,
 };
+use rayon::prelude::*;
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
 macro_rules! log {
+    () => {
+        eprintln!("[{:.4}]", time::elapsed_seconds())
+    };
     ($($arg:tt)*) => {
         eprintln!("[{:.4}] {}", time::elapsed_seconds(), format_args!($($arg)*))
     };
@@ -28,8 +32,8 @@ const REMOVE_RANDOM_SEED_COUNT: usize = 1;
 const REMOVE_NEIGHBOR_POOL_FACTOR: usize = 4;
 const INSERT_X_BUFFER: i64 = 10;
 const INITIAL_INSERT_PARAMS: InsertSearchParams = InsertSearchParams {
-    x_step: 1,
-    y_step: 1,
+    x_step: 4,
+    y_step: 4,
 };
 const REINSERT_PARAMS: InsertSearchParams = InsertSearchParams {
     x_step: 1,
@@ -64,18 +68,69 @@ struct InsertCandidate {
     orient_rank: usize,
 }
 
+struct AnnealingResult {
+    worker_id: usize,
+    schedule: Vec<ScheduledBlock>,
+    score: f64,
+    current_score: f64,
+    iter: usize,
+    accepted: usize,
+    improved: usize,
+}
+
 pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
     log!("building precompute...");
     let pre = Precompute::build(problem);
     log!("precompute built");
 
-    let mut rng = RandPcg64Mcg::new(RNG_SEED);
-    let mut current = build_initial_schedule(problem, &pre)?;
-    let mut current_score = score_schedule(problem, &pre, &current);
+    let initial = build_initial_schedule(problem, &pre)?;
+    let initial_score = score_schedule(problem, &pre, &initial);
+    log!("initial score: {:.3}", initial_score);
+
+    let deadline = timelimit * LOCAL_SEARCH_TIME_RATIO;
+    let worker_count = rayon::current_num_threads().max(1);
+    log!("annealing workers: {}", worker_count);
+    let results: Vec<_> = (0..worker_count)
+        .into_par_iter()
+        .map(|worker_id| {
+            run_annealing_worker(problem, &pre, &initial, initial_score, deadline, worker_id)
+        })
+        .collect();
+
+    let mut best = initial;
+    let mut best_score = initial_score;
+    for result in results {
+        log!(
+            "[id={}] iter={}, best={:.3}, accepted={}, improved={}, current={:.3}",
+            result.worker_id,
+            result.iter,
+            result.accepted,
+            result.improved,
+            result.current_score,
+            result.score
+        );
+        if result.score + 1e-9 < best_score {
+            best_score = result.score;
+            best = result.schedule;
+        }
+    }
+
+    Ok(schedule_to_solution(&best))
+}
+
+fn run_annealing_worker(
+    problem: &Problem,
+    pre: &Precompute,
+    initial: &[ScheduledBlock],
+    initial_score: f64,
+    deadline: f64,
+    worker_id: usize,
+) -> AnnealingResult {
+    let mut rng = RandPcg64Mcg::new(RNG_SEED.wrapping_add(worker_id as u64));
+    let mut current = initial.to_vec();
+    let mut current_score = initial_score;
     let mut best = current.clone();
     let mut best_score = current_score;
-    log!("initial score: {:.3}", best_score);
-    let deadline = timelimit * LOCAL_SEARCH_TIME_RATIO;
     let mut iter = 0usize;
     let mut accepted = 0usize;
     let mut improved = 0usize;
@@ -87,16 +142,16 @@ pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
         let k = rng
             .gen_range(MIN_REMOVED_BLOCKS, MAX_REMOVED_BLOCKS + 1)
             .min(problem.blocks.len());
-        let removed = choose_removed_blocks(problem, &pre, &current, k, &mut rng);
+        let removed = choose_removed_blocks(problem, pre, &current, k, &mut rng);
         if removed.is_empty() {
             break;
         }
 
         let order_slack_weight = sample_order_slack_weight(&mut rng);
         if let Some(candidate) =
-            try_remove_reinsert(problem, &pre, &current, &removed, order_slack_weight)
+            try_remove_reinsert(problem, pre, &current, &removed, order_slack_weight)
         {
-            let score = score_schedule(problem, &pre, &candidate);
+            let score = score_schedule(problem, pre, &candidate);
             let delta = score - current_score;
             if delta <= 0.0 || rng.nextf() < (-delta / temp).exp() {
                 current = candidate;
@@ -104,7 +159,7 @@ pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
                 accepted += 1;
 
                 if current_score + 1e-9 < best_score {
-                    log!("new best score: {:.3}", current_score);
+                    log!("worker {} new best score: {:.3}", worker_id, current_score);
                     best = current.clone();
                     best_score = current_score;
                     improved += 1;
@@ -113,16 +168,15 @@ pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
         }
     }
 
-    log!(
-        "annealing: iter={}, accepted={}, improved={}, current={:.3}, best={:.3}",
+    AnnealingResult {
+        worker_id,
+        schedule: best,
+        score: best_score,
+        current_score,
         iter,
         accepted,
         improved,
-        current_score,
-        best_score
-    );
-
-    Ok(schedule_to_solution(&best))
+    }
 }
 
 fn build_initial_schedule(

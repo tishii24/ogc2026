@@ -1,7 +1,8 @@
 use crate::*;
 #[cfg(test)]
 use geo::{Coord, LineString, Polygon};
-use rayon::prelude::*;
+use std::ptr;
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 const AREA_EPS: f64 = 1e-10;
 const MAX_CONVEX_VERTS: usize = 10;
@@ -100,15 +101,18 @@ struct OrientPairCollision {
     crane: CollisionGrid,
 }
 
-#[derive(Clone, Debug)]
+struct OrientPairCache {
+    ptr: AtomicPtr<OrientPairCollision>,
+}
+
 struct BlockPairCollision {
     fixed_orients: usize,
-    orient_pair_index: Vec<Option<usize>>,
-    orient_pairs: Vec<OrientPairCollision>,
+    orient_pairs: Vec<OrientPairCache>,
 }
 
 pub struct CollisionPrecompute {
     fit_ranges: Vec<Vec<Vec<Option<FitRange>>>>,
+    geoms: Vec<Vec<ShapeGeom>>,
     block_pair_index: Vec<Option<usize>>,
     block_pairs: Vec<BlockPairCollision>,
     n: usize,
@@ -122,34 +126,20 @@ impl CollisionPrecompute {
         let mut block_pair_index = vec![None; n * n];
         let mut block_pairs = Vec::new();
 
-        let mut tasks = Vec::new();
         for i in 0..n {
-            for j in (i + 1)..n {
-                tasks.push((i, j));
+            for j in 0..n {
+                if i == j {
+                    continue;
+                }
+                let pair_idx = block_pairs.len();
+                block_pairs.push(build_empty_block_pair(geoms[i].len(), geoms[j].len()));
+                block_pair_index[i * n + j] = Some(pair_idx);
             }
-        }
-        eprintln!("building {} collision block pairs", tasks.len());
-
-        let built_pairs: Vec<_> = tasks
-            .par_iter()
-            .map(|&(i, j)| {
-                let (ij, ji) = build_bidirectional_block_pair(&geoms, i, j);
-                (i, j, ij, ji)
-            })
-            .collect();
-
-        for (i, j, ij_collision, ji_collision) in built_pairs {
-            let ij = block_pairs.len();
-            block_pairs.push(ij_collision);
-            block_pair_index[i * n + j] = Some(ij);
-
-            let ji = block_pairs.len();
-            block_pairs.push(ji_collision);
-            block_pair_index[j * n + i] = Some(ji);
         }
 
         Self {
             fit_ranges,
+            geoms,
             block_pair_index,
             block_pairs,
             n,
@@ -166,10 +156,8 @@ impl CollisionPrecompute {
 
         let pair = &self.block_pairs[pair_idx];
         let key = moving.orient_idx * pair.fixed_orients + fixed.orient_idx;
-        let orient_pair_idx =
-            pair.orient_pair_index[key].expect("collision orientation pair should be precomputed");
 
-        let orient_pair = &pair.orient_pairs[orient_pair_idx];
+        let orient_pair = self.get_or_build_orient_pair(moving, fixed, pair_idx, key);
         let dx = fixed.x - moving.x;
         let dy = fixed.y - moving.y;
 
@@ -180,12 +168,83 @@ impl CollisionPrecompute {
         }
     }
 
+    fn get_or_build_orient_pair(
+        &self,
+        moving: BlockPlacement,
+        fixed: BlockPlacement,
+        pair_idx: usize,
+        key: usize,
+    ) -> &OrientPairCollision {
+        let cell = &self.block_pairs[pair_idx].orient_pairs[key];
+        let ptr = cell.ptr.load(Ordering::Acquire);
+        if !ptr.is_null() {
+            return unsafe { &*ptr };
+        }
+
+        let moving_geom = &self.geoms[moving.block_id][moving.orient_idx];
+        let fixed_geom = &self.geoms[fixed.block_id][fixed.orient_idx];
+        let (forward_crane, reverse_crane) =
+            build_crane_grids_both_directions(moving_geom, fixed_geom);
+
+        let reverse_pair_idx = self.block_pair_index[fixed.block_id * self.n + moving.block_id]
+            .expect("reverse collision block pair should be precomputed");
+        let reverse_pair = &self.block_pairs[reverse_pair_idx];
+        let reverse_key = fixed.orient_idx * reverse_pair.fixed_orients + moving.orient_idx;
+        let reverse_cell = &reverse_pair.orient_pairs[reverse_key];
+
+        let reverse = OrientPairCollision {
+            crane: reverse_crane,
+        };
+        reverse_cell.publish(reverse);
+
+        let forward = OrientPairCollision {
+            crane: forward_crane,
+        };
+        let ptr = cell.publish(forward);
+        unsafe { &*ptr }
+    }
+
     pub fn fit_range(&self, bay_id: usize, block_id: usize, orient_idx: usize) -> Option<FitRange> {
         self.fit_ranges
             .get(bay_id)?
             .get(block_id)?
             .get(orient_idx)?
             .to_owned()
+    }
+}
+
+impl OrientPairCache {
+    fn new() -> Self {
+        Self {
+            ptr: AtomicPtr::new(ptr::null_mut()),
+        }
+    }
+
+    fn publish(&self, collision: OrientPairCollision) -> *mut OrientPairCollision {
+        let raw = Box::into_raw(Box::new(collision));
+        match self
+            .ptr
+            .compare_exchange(ptr::null_mut(), raw, Ordering::Release, Ordering::Acquire)
+        {
+            Ok(_) => raw,
+            Err(existing) => {
+                unsafe {
+                    drop(Box::from_raw(raw));
+                }
+                existing
+            }
+        }
+    }
+}
+
+impl Drop for OrientPairCache {
+    fn drop(&mut self) {
+        let ptr = *self.ptr.get_mut();
+        if !ptr.is_null() {
+            unsafe {
+                drop(Box::from_raw(ptr));
+            }
+        }
     }
 }
 
@@ -625,46 +684,14 @@ fn build_fit_range(bay: &Bay, bbox: BBox) -> Option<FitRange> {
     }
 }
 
-fn build_bidirectional_block_pair(
-    geoms: &[Vec<ShapeGeom>],
-    a_block: usize,
-    b_block: usize,
-) -> (BlockPairCollision, BlockPairCollision) {
-    let a_orients = geoms[a_block].len();
-    let b_orients = geoms[b_block].len();
-    let mut ab_orient_pair_index = vec![None; a_orients * b_orients];
-    let mut ba_orient_pair_index = vec![None; b_orients * a_orients];
-    let mut ab_orient_pairs = Vec::new();
-    let mut ba_orient_pairs = Vec::new();
-
-    for a_orient in 0..a_orients {
-        for b_orient in 0..b_orients {
-            let a = &geoms[a_block][a_orient];
-            let b = &geoms[b_block][b_orient];
-            let (ab_crane, ba_crane) = build_crane_grids_both_directions(a, b);
-
-            let ab_idx = ab_orient_pairs.len();
-            ab_orient_pair_index[a_orient * b_orients + b_orient] = Some(ab_idx);
-            ab_orient_pairs.push(OrientPairCollision { crane: ab_crane });
-
-            let ba_idx = ba_orient_pairs.len();
-            ba_orient_pair_index[b_orient * a_orients + a_orient] = Some(ba_idx);
-            ba_orient_pairs.push(OrientPairCollision { crane: ba_crane });
-        }
+fn build_empty_block_pair(moving_orients: usize, fixed_orients: usize) -> BlockPairCollision {
+    let orient_pairs = (0..moving_orients * fixed_orients)
+        .map(|_| OrientPairCache::new())
+        .collect();
+    BlockPairCollision {
+        fixed_orients,
+        orient_pairs,
     }
-
-    (
-        BlockPairCollision {
-            fixed_orients: b_orients,
-            orient_pair_index: ab_orient_pair_index,
-            orient_pairs: ab_orient_pairs,
-        },
-        BlockPairCollision {
-            fixed_orients: a_orients,
-            orient_pair_index: ba_orient_pair_index,
-            orient_pairs: ba_orient_pairs,
-        },
-    )
 }
 
 fn build_crane_grids_both_directions(
