@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::process;
 
-use ogc2026::{Problem, solver, util::time};
+use ogc2026::{Problem, solver, util::time::Timer};
 
 #[derive(Debug)]
 struct Args {
@@ -12,14 +12,14 @@ struct Args {
 }
 
 fn main() {
-    time::start_clock(1.);
-    if let Err(err) = run() {
+    let timer = Timer::start(1.);
+    if let Err(err) = run(timer) {
         eprintln!("error: {err}");
         process::exit(1);
     }
 }
 
-fn run() -> Result<(), String> {
+fn run(timer: Timer) -> Result<(), String> {
     let args = parse_args(env::args().skip(1).collect())?;
     let input = if args.input_path == "-" {
         let mut input = String::new();
@@ -34,7 +34,7 @@ fn run() -> Result<(), String> {
     let problem: Problem = serde_json::from_str(&input)
         .map_err(|err| format!("failed to parse problem json: {err}"))?;
 
-    let solution = solver::solve(&problem, args.timelimit)?;
+    let solution = solver::solve(&problem, args.timelimit, timer)?;
     let output = serde_json::to_string(&solution)
         .map_err(|err| format!("failed to serialize solution json: {err}"))?;
     println!("{output}");

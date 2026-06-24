@@ -1,8 +1,10 @@
 use crate::{
     collision::{BlockPlacement, CollisionResult},
     precompute::Precompute,
-    util::rand::{RandPcg64Mcg, Random},
-    util::time,
+    util::{
+        rand::{RandPcg64Mcg, Random},
+        time::Timer,
+    },
     *,
 };
 use rayon::prelude::*;
@@ -10,11 +12,8 @@ use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
 macro_rules! log {
-    () => {
-        eprintln!("[{:.4}]", time::elapsed_seconds())
-    };
-    ($($arg:tt)*) => {
-        eprintln!("[{:.4}] {}", time::elapsed_seconds(), format_args!($($arg)*))
+    ($timer:expr, $($arg:tt)*) => {
+        eprintln!("[{:.4}] {}", $timer.elapsed_seconds(), format_args!($($arg)*))
     };
 }
 
@@ -78,22 +77,32 @@ struct AnnealingResult {
     improved: usize,
 }
 
-pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
-    log!("building precompute...");
+pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution, String> {
+    log!(timer, "building precompute...");
     let pre = Precompute::build(problem);
-    log!("precompute built");
+    log!(timer, "precompute built");
 
     let initial = build_initial_schedule(problem, &pre)?;
     let initial_score = score_schedule(problem, &pre, &initial);
-    log!("initial score: {:.3}", initial_score);
+    log!(timer, "initial score: {:.3}", initial_score);
 
     let deadline = timelimit * LOCAL_SEARCH_TIME_RATIO;
     let worker_count = rayon::current_num_threads().max(1);
-    log!("annealing workers: {}", worker_count);
-    let results: Vec<_> = (0..worker_count)
+    log!(timer, "annealing workers: {}", worker_count);
+    let worker_timers = vec![timer; worker_count];
+    let results: Vec<_> = worker_timers
         .into_par_iter()
-        .map(|worker_id| {
-            run_annealing_worker(problem, &pre, &initial, initial_score, deadline, worker_id)
+        .enumerate()
+        .map(|(worker_id, worker_timer)| {
+            run_annealing_worker(
+                problem,
+                &pre,
+                &initial,
+                initial_score,
+                deadline,
+                worker_id,
+                worker_timer,
+            )
         })
         .collect();
 
@@ -101,6 +110,7 @@ pub fn solve(problem: &Problem, timelimit: f64) -> Result<Solution, String> {
     let mut best_score = initial_score;
     for result in results {
         log!(
+            timer,
             "[id={}] iter={}, best={:.3}, accepted={}, improved={}, current={:.3}",
             result.worker_id,
             result.iter,
@@ -125,6 +135,7 @@ fn run_annealing_worker(
     initial_score: f64,
     deadline: f64,
     worker_id: usize,
+    timer: Timer,
 ) -> AnnealingResult {
     let mut rng = RandPcg64Mcg::new(RNG_SEED.wrapping_add(worker_id as u64));
     let mut current = initial.to_vec();
@@ -135,9 +146,13 @@ fn run_annealing_worker(
     let mut accepted = 0usize;
     let mut improved = 0usize;
 
-    while time::elapsed_seconds() < deadline {
+    loop {
+        let elapsed = timer.elapsed_seconds();
+        if elapsed >= deadline {
+            break;
+        }
         iter += 1;
-        let progress = (time::elapsed_seconds() / deadline).clamp(0.0, 1.0);
+        let progress = (elapsed / deadline).clamp(0.0, 1.0);
         let temp = START_TEMP * (END_TEMP / START_TEMP).powf(progress);
         let k = rng
             .gen_range(MIN_REMOVED_BLOCKS, MAX_REMOVED_BLOCKS + 1)
@@ -159,7 +174,12 @@ fn run_annealing_worker(
                 accepted += 1;
 
                 if current_score + 1e-9 < best_score {
-                    log!("worker {} new best score: {:.3}", worker_id, current_score);
+                    log!(
+                        timer,
+                        "worker {} new best score: {:.3}",
+                        worker_id,
+                        current_score
+                    );
                     best = current.clone();
                     best_score = current_score;
                     improved += 1;
