@@ -1,5 +1,4 @@
 precompute:
-- Cを設定 & lazy cache
 - 怪しいものはpythonに返してshapelyで厳密に計算する
 - 高速化
 
@@ -25,6 +24,7 @@ stats:
 - ケースごとの特徴をグループ化して平均を表示
 
 other:
-- 外側でコア数などを揃えて評価
+- py側に複数返して、feasibilityを確認する
 - 難しいケースをaugmentationして評価
 - 時間を延ばして評価
+- 順位のつき方を確認

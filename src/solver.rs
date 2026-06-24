@@ -19,7 +19,7 @@ macro_rules! log {
 
 const RNG_SEED: u64 = 1;
 
-const LOCAL_SEARCH_TIME_RATIO: f64 = 0.95;
+const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 2.;
 const START_TEMP: f64 = 1e4;
 const END_TEMP: f64 = 1.0;
 
@@ -31,8 +31,8 @@ const REMOVE_RANDOM_SEED_COUNT: usize = 1;
 const REMOVE_NEIGHBOR_POOL_FACTOR: usize = 4;
 const INSERT_X_BUFFER: i64 = 10;
 const INITIAL_INSERT_PARAMS: InsertSearchParams = InsertSearchParams {
-    x_step: 4,
-    y_step: 4,
+    x_step: 1,
+    y_step: 1,
 };
 const REINSERT_PARAMS: InsertSearchParams = InsertSearchParams {
     x_step: 1,
@@ -86,7 +86,7 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
     let initial_score = score_schedule(problem, &pre, &initial);
     log!(timer, "initial score: {:.3}", initial_score);
 
-    let deadline = timelimit * LOCAL_SEARCH_TIME_RATIO;
+    let deadline = timelimit - LOCAL_SEARCH_TIME_BUFFER_SECONDS;
     let worker_count = rayon::current_num_threads().max(1);
     log!(timer, "annealing workers: {}", worker_count);
     let worker_timers = vec![timer; worker_count];
