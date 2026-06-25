@@ -1,6 +1,14 @@
 use crate::{collision::CollisionPrecompute, *};
 use std::cmp::Reverse;
 
+#[derive(Clone, Copy, Debug)]
+pub struct Bounds {
+    pub min_x: f64,
+    pub min_y: f64,
+    pub max_x: f64,
+    pub max_y: f64,
+}
+
 pub struct Precompute {
     pub collision: CollisionPrecompute,
     pub bay_load_scale: Vec<f64>,
@@ -8,10 +16,11 @@ pub struct Precompute {
     pub bay_order_by_pref: Vec<Vec<usize>>,
     pub orientation_order_by_bbox: Vec<Vec<usize>>,
     pub orientation_bbox_center: Vec<Vec<(f64, f64)>>,
+    pub orientation_bbox_bounds: Vec<Vec<Bounds>>,
     pub block_area: Vec<f64>,
 }
 
-fn orientation_bbox(orientation: &Orientation) -> (f64, (f64, f64)) {
+fn orientation_bbox_bounds(orientation: &Orientation) -> Bounds {
     let mut min_x = f64::INFINITY;
     let mut min_y = f64::INFINITY;
     let mut max_x = f64::NEG_INFINITY;
@@ -26,9 +35,22 @@ fn orientation_bbox(orientation: &Orientation) -> (f64, (f64, f64)) {
         }
     }
 
+    Bounds {
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+    }
+}
+
+fn orientation_bbox(orientation: &Orientation) -> (f64, (f64, f64)) {
+    let bbox = orientation_bbox_bounds(orientation);
     (
-        (max_x - min_x) * (max_y - min_y),
-        ((min_x + max_x) * 0.5, (min_y + max_y) * 0.5),
+        (bbox.max_x - bbox.min_x) * (bbox.max_y - bbox.min_y),
+        (
+            (bbox.min_x + bbox.max_x) * 0.5,
+            (bbox.min_y + bbox.max_y) * 0.5,
+        ),
     )
 }
 
@@ -125,6 +147,12 @@ impl Precompute {
             })
             .collect();
 
+        let orientation_bbox_bounds = problem
+            .blocks
+            .iter()
+            .map(|block| block.shape.iter().map(orientation_bbox_bounds).collect())
+            .collect();
+
         let block_area = problem.blocks.iter().map(block_area).collect();
 
         Self {
@@ -134,6 +162,7 @@ impl Precompute {
             bay_order_by_pref,
             orientation_order_by_bbox,
             orientation_bbox_center,
+            orientation_bbox_bounds,
             block_area,
         }
     }
