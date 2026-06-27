@@ -1,3 +1,5 @@
+# type: ignore
+
 #!/usr/bin/env python3
 """Run a composed OGC 2026 solution and append scores to log/score.csv."""
 

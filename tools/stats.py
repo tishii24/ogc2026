@@ -7,7 +7,6 @@ import argparse
 import csv
 import glob
 import json
-import math
 import re
 import sys
 from collections import defaultdict

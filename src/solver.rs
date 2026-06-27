@@ -1,5 +1,5 @@
 use crate::{
-    collision::{BlockPlacement, CollisionResult, FitRange},
+    collision::{BlockPlacement, CollisionResult},
     precompute::Precompute,
     util::{
         rand::{RandPcg64Mcg, Random},
@@ -30,12 +30,6 @@ const REMOVE_SEED_COUNT: usize = 3;
 const REMOVE_RANDOM_SEED_COUNT: usize = 1;
 const REMOVE_NEIGHBOR_POOL_FACTOR: usize = 4;
 const INSERT_X_BUFFER: i64 = 10;
-const RAY_WALK_PATIENCE: usize = 3;
-const RAY_STARTS: usize = 32;
-const RAY_MAX_STEPS: usize = 64;
-const RAY_MOVE_PROB: f64 = 0.;
-const RAY_MOVE_MIN_BLOCKS: usize = 1;
-const RAY_MOVE_MAX_BLOCKS: usize = 1;
 const INSERT_PARAMS: InsertSearchParams = InsertSearchParams {
     x_step: 1,
     y_step: 1,
@@ -67,19 +61,6 @@ struct InsertCandidate {
     tardiness: i64,
     delta_obj23: f64,
     orient_rank: usize,
-}
-
-#[derive(Clone, Copy)]
-struct RayDirection {
-    dx_sign: i64,
-    dy_sign: i64,
-    y_prob: f64,
-}
-
-struct RayInsertCandidate {
-    scheduled: ScheduledBlock,
-    tardiness: i64,
-    moved_steps: usize,
 }
 
 struct AnnealingResult {
@@ -161,7 +142,6 @@ fn run_annealing_worker(
     let mut iter = 0usize;
     let mut accepted = 0usize;
     let mut improved = 0usize;
-    let mut moved_group = 0;
 
     loop {
         let elapsed = timer.elapsed_seconds();
@@ -171,15 +151,6 @@ fn run_annealing_worker(
         iter += 1;
         let progress = (elapsed / deadline).clamp(0.0, 1.0);
         let temp = START_TEMP * (END_TEMP / START_TEMP).powf(progress);
-
-        if rng.nextf() < RAY_MOVE_PROB {
-            if let Some(candidate) = try_ray_move_group(pre, &current, &mut rng) {
-                current = candidate;
-                moved_group += 1;
-                accepted += 1;
-            }
-            continue;
-        }
 
         let k = rng
             .gen_range(MIN_REMOVED_BLOCKS, MAX_REMOVED_BLOCKS + 1)
@@ -219,8 +190,6 @@ fn run_annealing_worker(
             }
         }
     }
-
-    eprintln!("moved-group-count: {}", moved_group);
 
     AnnealingResult {
         worker_id,
@@ -434,36 +403,6 @@ fn find_best_insert_position<R: Random>(
             };
             let mut found_acceptable_in_orientation = false;
 
-            // for start in ray_insert_starts(
-            //     pre, block_id, bay_id, orient_idx, range, schedule, lo, hi, p, rng,
-            // ) {
-            //     let direction = sample_ray_direction(rng);
-            //     if let Some(ray_candidate) = search_insert_ray(
-            //         problem, pre, block_id, bay_id, orient_idx, range, schedule, lo, hi, p, start,
-            //         direction, params, rng,
-            //     ) {
-            //         let candidate = InsertCandidate {
-            //             scheduled: ray_candidate.scheduled,
-            //             tardiness: ray_candidate.tardiness,
-            //             delta_obj23,
-            //             orient_rank,
-            //         };
-            //         if best
-            //             .as_ref()
-            //             .map_or(true, |best| insert_candidate_better(&candidate, best))
-            //         {
-            //             best = Some(candidate);
-            //         }
-            //         if ray_candidate.tardiness <= original_tardiness {
-            //             found_acceptable_in_orientation = true;
-            //         }
-            //     }
-            // }
-
-            // if found_acceptable_in_orientation {
-            //     break;
-            // }
-
             let mut anchor_x: Option<i64> = None;
             for x in (range.min_x..=range.max_x).step_by(params.x_step as usize) {
                 if let Some(anchor_x) = anchor_x {
@@ -523,211 +462,6 @@ fn find_best_insert_position<R: Random>(
     }
 
     best.map(|candidate| candidate.scheduled)
-}
-
-impl RayDirection {
-    fn next_delta<R: Random>(&self, rng: &mut R, x_step: i64, y_step: i64) -> (i64, i64) {
-        if self.dy_sign == 0 {
-            return (self.dx_sign * x_step, 0);
-        }
-        if self.dx_sign == 0 {
-            return (0, self.dy_sign * y_step);
-        }
-        if rng.nextf() < self.y_prob {
-            (0, self.dy_sign * y_step)
-        } else {
-            (self.dx_sign * x_step, 0)
-        }
-    }
-}
-
-fn sample_ray_direction<R: Random>(rng: &mut R) -> RayDirection {
-    loop {
-        let dx_sign = match rng.gen_index(3) {
-            0 => -1,
-            1 => 0,
-            _ => 1,
-        };
-        let dy_sign = match rng.gen_index(3) {
-            0 => -1,
-            1 => 0,
-            _ => 1,
-        };
-        if dx_sign != 0 || dy_sign != 0 {
-            return RayDirection {
-                dx_sign,
-                dy_sign,
-                y_prob: rng.nextf(),
-            };
-        }
-    }
-}
-
-fn ray_insert_candidate_better(a: &RayInsertCandidate, b: &RayInsertCandidate) -> bool {
-    match a.tardiness.cmp(&b.tardiness) {
-        std::cmp::Ordering::Less => true,
-        std::cmp::Ordering::Greater => false,
-        std::cmp::Ordering::Equal => a.moved_steps > b.moved_steps,
-    }
-}
-
-fn gen_i64_inclusive<R: Random>(rng: &mut R, lo: i64, hi: i64) -> i64 {
-    debug_assert!(lo <= hi);
-    lo + rng.gen_range(0, (hi - lo + 1) as usize) as i64
-}
-
-fn push_start(starts: &mut Vec<(i64, i64)>, range: FitRange, x: i64, y: i64) {
-    if range.min_x <= x && x <= range.max_x && range.min_y <= y && y <= range.max_y {
-        starts.push((x, y));
-    }
-}
-
-fn possible_time_overlap(old: ScheduledBlock, p: i64, lo: i64, hi: i64) -> bool {
-    clamp_interval(old.entry_time - p + 1, old.exit_time - 1, lo, hi).is_some()
-}
-
-fn ray_insert_starts<R: Random>(
-    pre: &Precompute,
-    block_id: usize,
-    bay_id: usize,
-    orient_idx: usize,
-    range: FitRange,
-    schedule: &[ScheduledBlock],
-    lo: i64,
-    hi: i64,
-    p: i64,
-    rng: &mut R,
-) -> Vec<(i64, i64)> {
-    let mut starts = Vec::new();
-    push_start(&mut starts, range, range.min_x, range.min_y);
-    push_start(&mut starts, range, range.min_x, range.max_y);
-    push_start(&mut starts, range, range.max_x, range.min_y);
-    push_start(&mut starts, range, range.max_x, range.max_y);
-    push_start(
-        &mut starts,
-        range,
-        (range.min_x + range.max_x) / 2,
-        (range.min_y + range.max_y) / 2,
-    );
-
-    let new_bbox = pre.orientation_bbox_bounds[block_id][orient_idx];
-    for &old in schedule
-        .iter()
-        .filter(|old| old.bay_id == bay_id && possible_time_overlap(**old, p, lo, hi))
-    {
-        let old_bbox = pre.orientation_bbox_bounds[old.block_id][old.orient_idx];
-        let old_left = old.x as f64 + old_bbox.min_x;
-        let old_right = old.x as f64 + old_bbox.max_x;
-        let old_bottom = old.y as f64 + old_bbox.min_y;
-        let old_top = old.y as f64 + old_bbox.max_y;
-
-        let right_x = (old_right - new_bbox.min_x).ceil() as i64;
-        let left_x = (old_left - new_bbox.max_x).floor() as i64;
-        let top_y = (old_top - new_bbox.min_y).ceil() as i64;
-        let bottom_y = (old_bottom - new_bbox.max_y).floor() as i64;
-        let align_left_x = (old_left - new_bbox.min_x).round() as i64;
-        let align_right_x = (old_right - new_bbox.max_x).round() as i64;
-        let align_bottom_y = (old_bottom - new_bbox.min_y).round() as i64;
-        let align_top_y = (old_top - new_bbox.max_y).round() as i64;
-
-        for sep in 0..=1 {
-            let xs = [right_x + sep, left_x - sep, align_left_x, align_right_x];
-            let ys = [top_y + sep, bottom_y - sep, align_bottom_y, align_top_y];
-            for &x in &xs {
-                for &y in &ys {
-                    push_start(&mut starts, range, x, y);
-                }
-            }
-        }
-    }
-
-    starts.sort_unstable();
-    starts.dedup();
-    rng.shuffle(&mut starts);
-    while starts.len() < RAY_STARTS {
-        starts.push((
-            gen_i64_inclusive(rng, range.min_x, range.max_x),
-            gen_i64_inclusive(rng, range.min_y, range.max_y),
-        ));
-    }
-    starts.truncate(RAY_STARTS);
-    starts
-}
-
-fn search_insert_ray<R: Random>(
-    problem: &Problem,
-    pre: &Precompute,
-    block_id: usize,
-    bay_id: usize,
-    orient_idx: usize,
-    range: FitRange,
-    schedule: &[ScheduledBlock],
-    lo: i64,
-    hi: i64,
-    p: i64,
-    start: (i64, i64),
-    direction: RayDirection,
-    params: InsertSearchParams,
-    rng: &mut R,
-) -> Option<RayInsertCandidate> {
-    let mut x = start.0;
-    let mut y = start.1;
-    let mut best: Option<RayInsertCandidate> = None;
-    let mut bad_count = 0;
-
-    for moved_steps in 0..=RAY_MAX_STEPS {
-        if x < range.min_x || range.max_x < x || y < range.min_y || range.max_y < y {
-            break;
-        }
-
-        let tentative = ScheduledBlock {
-            block_id,
-            bay_id,
-            orient_idx,
-            x,
-            y,
-            entry_time: 0,
-            exit_time: p,
-        };
-
-        let candidate =
-            best_time_for_fixed_placement(pre, tentative, schedule, lo, hi).map(|entry_time| {
-                let scheduled = ScheduledBlock {
-                    entry_time,
-                    exit_time: entry_time + p,
-                    ..tentative
-                };
-                RayInsertCandidate {
-                    scheduled,
-                    tardiness: (scheduled.exit_time - problem.blocks[block_id].due_date).max(0),
-                    moved_steps,
-                }
-            });
-
-        if let Some(candidate) = candidate {
-            if best
-                .as_ref()
-                .map_or(true, |best| ray_insert_candidate_better(&candidate, best))
-            {
-                best = Some(candidate);
-                bad_count = 0;
-            } else if best.is_some() {
-                bad_count += 1;
-            }
-        } else if best.is_some() {
-            bad_count += 1;
-        }
-
-        if bad_count >= RAY_WALK_PATIENCE {
-            break;
-        }
-
-        let (dx, dy) = direction.next_delta(rng, params.x_step, params.y_step);
-        x += dx;
-        y += dy;
-    }
-
-    best
 }
 
 fn insert_candidate_better(a: &InsertCandidate, b: &InsertCandidate) -> bool {
@@ -885,107 +619,6 @@ fn best_time_for_fixed_placement(
 fn scheduled_center(pre: &Precompute, s: ScheduledBlock) -> (f64, f64) {
     let (cx, cy) = pre.orientation_bbox_center[s.block_id][s.orient_idx];
     (s.x as f64 + cx, s.y as f64 + cy)
-}
-
-fn choose_ray_move_group<R: Random>(
-    pre: &Precompute,
-    schedule: &[ScheduledBlock],
-    rng: &mut R,
-) -> Option<Vec<usize>> {
-    if schedule.is_empty() || RAY_MOVE_MAX_BLOCKS == 0 {
-        return None;
-    }
-
-    let seed_idx = rng.gen_index(schedule.len());
-    let seed = schedule[seed_idx];
-    let same_bay_count = schedule.iter().filter(|s| s.bay_id == seed.bay_id).count();
-    if same_bay_count == 0 {
-        return None;
-    }
-
-    let max_blocks = RAY_MOVE_MAX_BLOCKS.min(same_bay_count);
-    let min_blocks = RAY_MOVE_MIN_BLOCKS.min(max_blocks);
-    let k = rng.gen_range(min_blocks, max_blocks + 1);
-    let (sx, sy) = scheduled_center(pre, seed);
-    let mut candidates: Vec<(f64, usize)> = schedule
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| s.bay_id == seed.bay_id)
-        .map(|(idx, &s)| {
-            let (x, y) = scheduled_center(pre, s);
-            let dx = x - sx;
-            let dy = y - sy;
-            (dx * dx + dy * dy, idx)
-        })
-        .collect();
-
-    candidates.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-    Some(candidates.into_iter().take(k).map(|(_, idx)| idx).collect())
-}
-
-fn ray_moved_group_feasible(
-    pre: &Precompute,
-    schedule: &[ScheduledBlock],
-    group_indices: &[usize],
-) -> bool {
-    let mut is_group = vec![false; schedule.len()];
-    for &idx in group_indices {
-        is_group[idx] = true;
-        let s = schedule[idx];
-        let Some(range) = pre.collision.fit_range(s.bay_id, s.block_id, s.orient_idx) else {
-            return false;
-        };
-        if s.x < range.min_x || range.max_x < s.x || s.y < range.min_y || range.max_y < s.y {
-            return false;
-        }
-    }
-
-    let outside: Vec<ScheduledBlock> = schedule
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, &s)| if is_group[idx] { None } else { Some(s) })
-        .collect();
-
-    group_indices
-        .iter()
-        .all(|&idx| can_insert(pre, schedule[idx], &outside))
-}
-
-fn try_ray_move_group<R: Random>(
-    pre: &Precompute,
-    schedule: &[ScheduledBlock],
-    rng: &mut R,
-) -> Option<Vec<ScheduledBlock>> {
-    let group_indices = choose_ray_move_group(pre, schedule, rng)?;
-    let direction = sample_ray_direction(rng);
-    let mut dx_total = 0;
-    let mut dy_total = 0;
-    let mut best = None;
-    let mut bad_count = 0;
-
-    for _ in 1..=RAY_MAX_STEPS {
-        let (dx, dy) = direction.next_delta(rng, INSERT_PARAMS.x_step, INSERT_PARAMS.y_step);
-        dx_total += dx;
-        dy_total += dy;
-
-        let mut candidate = schedule.to_vec();
-        for &idx in &group_indices {
-            candidate[idx].x += dx_total;
-            candidate[idx].y += dy_total;
-        }
-
-        if ray_moved_group_feasible(pre, &candidate, &group_indices) {
-            best = Some(candidate);
-            bad_count = 0;
-        } else if best.is_some() {
-            bad_count += 1;
-            if bad_count >= RAY_WALK_PATIENCE {
-                break;
-            }
-        }
-    }
-
-    best
 }
 
 fn choose_removed_blocks<R: Random>(
