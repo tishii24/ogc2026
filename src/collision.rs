@@ -4,8 +4,8 @@ use geo::{Coord, LineString, Polygon};
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
-const AREA_EPS: f64 = 1e-10;
-const MAX_CONVEX_VERTS: usize = 10;
+const AREA_EPS: f64 = 1e-3;
+const MAX_CONVEX_VERTS: usize = 16;
 const MAX_MINKOWSKI_POINTS: usize = MAX_CONVEX_VERTS * MAX_CONVEX_VERTS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

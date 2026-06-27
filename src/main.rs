@@ -17,6 +17,7 @@ fn main() {
         eprintln!("error: {err}");
         process::exit(1);
     }
+    process::exit(0);
 }
 
 fn run(timer: Timer) -> Result<(), String> {

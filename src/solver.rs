@@ -19,9 +19,12 @@ macro_rules! log {
 
 const RNG_SEED: u64 = 1;
 
-const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 2.;
-const START_TEMP: f64 = 1e4;
-const END_TEMP: f64 = 1.0;
+const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
+const START_TEMP: f64 = 1e1;
+const END_TEMP: f64 = 1e0;
+
+const INITIAL_AREA_WEIGHT_MIN: f64 = 0.0;
+const INITIAL_AREA_WEIGHT_MAX: f64 = 2.0;
 
 const MIN_REMOVED_BLOCKS: usize = 1;
 const MAX_REMOVED_BLOCKS: usize = 13;
@@ -78,12 +81,8 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
     let pre = Precompute::build(problem);
     log!(timer, "precompute built");
 
-    let mut initial_rng = RandPcg64Mcg::new(RNG_SEED);
-    let initial = build_initial_schedule(problem, &pre, &mut initial_rng)?;
-    let initial_score = score_schedule(problem, &pre, &initial);
-    log!(timer, "initial score: {:.3}", initial_score);
-
-    let deadline = timelimit - LOCAL_SEARCH_TIME_BUFFER_SECONDS;
+    // let deadline = timelimit - LOCAL_SEARCH_TIME_BUFFER_SECONDS;
+    let deadline = 0.;
     let worker_count = rayon::current_num_threads().max(1);
     log!(timer, "annealing workers: {}", worker_count);
     let worker_timers = vec![timer; worker_count];
@@ -91,7 +90,17 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
         .into_par_iter()
         .enumerate()
         .map(|(worker_id, worker_timer)| {
-            run_annealing_worker(
+            let mut initial_rng = RandPcg64Mcg::new(RNG_SEED.wrapping_add(worker_id as u64));
+            let initial =
+                build_initial_schedule(problem, &pre, worker_id, worker_count, &mut initial_rng)?;
+            let initial_score = score_schedule(problem, &pre, &initial);
+            log!(
+                worker_timer,
+                "worker {} initial score: {:.3}",
+                worker_id,
+                initial_score
+            );
+            Ok(run_annealing_worker(
                 problem,
                 &pre,
                 &initial,
@@ -99,13 +108,14 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
                 deadline,
                 worker_id,
                 worker_timer,
-            )
+            ))
         })
-        .collect();
+        .collect::<Vec<Result<AnnealingResult, String>>>();
 
-    let mut best = initial;
-    let mut best_score = initial_score;
+    let mut best: Option<Vec<ScheduledBlock>> = None;
+    let mut best_score = f64::INFINITY;
     for result in results {
+        let result = result?;
         log!(
             timer,
             "[id={}] iter={}, best={:.3}, accepted={}, improved={}, current={:.3}",
@@ -118,10 +128,11 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
         );
         if result.score + 1e-9 < best_score {
             best_score = result.score;
-            best = result.schedule;
+            best = Some(result.schedule);
         }
     }
 
+    let best = best.ok_or_else(|| "no annealing worker result".to_string())?;
     Ok(schedule_to_solution(&best))
 }
 
@@ -205,20 +216,66 @@ fn run_annealing_worker(
 fn build_initial_schedule<R: Random>(
     problem: &Problem,
     pre: &Precompute,
+    worker_id: usize,
+    worker_count: usize,
     rng: &mut R,
 ) -> Result<Vec<ScheduledBlock>, String> {
+    fn initial_order_score(
+        problem: &Problem,
+        pre: &Precompute,
+        block_id: usize,
+        max_area: f64,
+        max_due: i64,
+        due_span: f64,
+        area_weight: f64,
+    ) -> f64 {
+        let area_norm = pre.block_area[block_id] / max_area;
+        let due_urgency = (max_due - problem.blocks[block_id].due_date) as f64 / due_span;
+        due_urgency + area_weight * area_norm
+    }
+
+    fn sort_initial_order(
+        problem: &Problem,
+        pre: &Precompute,
+        order: &mut [usize],
+        worker_id: usize,
+        worker_count: usize,
+    ) {
+        let max_area = pre.block_area.iter().copied().fold(0.0, f64::max).max(1.0);
+        let min_due = problem
+            .blocks
+            .iter()
+            .map(|block| block.due_date)
+            .min()
+            .unwrap_or(0);
+        let max_due = problem
+            .blocks
+            .iter()
+            .map(|block| block.due_date)
+            .max()
+            .unwrap_or(min_due);
+        let due_span = (max_due - min_due).max(1) as f64;
+        let w = worker_id as f64 / (worker_count - 1).max(1) as f64;
+        let area_weight =
+            INITIAL_AREA_WEIGHT_MIN + (INITIAL_AREA_WEIGHT_MAX - INITIAL_AREA_WEIGHT_MIN) * w;
+
+        order.sort_by(|&a, &b| {
+            let score_a =
+                initial_order_score(problem, pre, a, max_area, max_due, due_span, area_weight);
+            let score_b =
+                initial_order_score(problem, pre, b, max_area, max_due, due_span, area_weight);
+            score_b
+                .total_cmp(&score_a)
+                .then(problem.blocks[a].due_date.cmp(&problem.blocks[b].due_date))
+                .then(pre.block_area[b].total_cmp(&pre.block_area[a]))
+                .then(a.cmp(&b))
+        });
+    }
+
     let mut schedule = Vec::with_capacity(problem.blocks.len());
     let mut loads = vec![0.0; problem.bays.len()];
     let mut order: Vec<usize> = (0..problem.blocks.len()).collect();
-    order.sort_by_key(|&block_id| {
-        let block = &problem.blocks[block_id];
-        (
-            block.due_date,
-            pre.block_area[block_id] as i64,
-            block.release_time,
-            block_id,
-        )
-    });
+    sort_initial_order(problem, pre, &mut order, worker_id, worker_count);
 
     for block_id in order {
         let block = &problem.blocks[block_id];
@@ -373,7 +430,7 @@ fn find_best_insert_position<R: Random>(
     schedule: &[ScheduledBlock],
     loads: &[f64],
     params: InsertSearchParams,
-    rng: &mut R,
+    _rng: &mut R,
 ) -> Option<ScheduledBlock> {
     let block_id = original.block_id;
     let block = &problem.blocks[block_id];
