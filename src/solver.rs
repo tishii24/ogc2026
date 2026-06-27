@@ -33,6 +33,9 @@ const INSERT_X_BUFFER: i64 = 10;
 const RAY_WALK_PATIENCE: usize = 3;
 const RAY_STARTS: usize = 32;
 const RAY_MAX_STEPS: usize = 64;
+const RAY_MOVE_PROB: f64 = 0.;
+const RAY_MOVE_MIN_BLOCKS: usize = 1;
+const RAY_MOVE_MAX_BLOCKS: usize = 1;
 const INSERT_PARAMS: InsertSearchParams = InsertSearchParams {
     x_step: 1,
     y_step: 1,
@@ -158,6 +161,7 @@ fn run_annealing_worker(
     let mut iter = 0usize;
     let mut accepted = 0usize;
     let mut improved = 0usize;
+    let mut moved_group = 0;
 
     loop {
         let elapsed = timer.elapsed_seconds();
@@ -167,6 +171,16 @@ fn run_annealing_worker(
         iter += 1;
         let progress = (elapsed / deadline).clamp(0.0, 1.0);
         let temp = START_TEMP * (END_TEMP / START_TEMP).powf(progress);
+
+        if rng.nextf() < RAY_MOVE_PROB {
+            if let Some(candidate) = try_ray_move_group(pre, &current, &mut rng) {
+                current = candidate;
+                moved_group += 1;
+                accepted += 1;
+            }
+            continue;
+        }
+
         let k = rng
             .gen_range(MIN_REMOVED_BLOCKS, MAX_REMOVED_BLOCKS + 1)
             .min(problem.blocks.len());
@@ -206,6 +220,8 @@ fn run_annealing_worker(
         }
     }
 
+    eprintln!("moved-group-count: {}", moved_group);
+
     AnnealingResult {
         worker_id,
         schedule: best,
@@ -227,7 +243,12 @@ fn build_initial_schedule<R: Random>(
     let mut order: Vec<usize> = (0..problem.blocks.len()).collect();
     order.sort_by_key(|&block_id| {
         let block = &problem.blocks[block_id];
-        (block.due_date, block.release_time, block_id)
+        (
+            block.due_date,
+            pre.block_area[block_id] as i64,
+            block.release_time,
+            block_id,
+        )
     });
 
     for block_id in order {
@@ -411,39 +432,39 @@ fn find_best_insert_position<R: Random>(
             let Some(range) = pre.collision.fit_range(bay_id, block_id, orient_idx) else {
                 continue;
             };
-            let mut anchor_x: Option<i64> = None;
             let mut found_acceptable_in_orientation = false;
 
-            for start in ray_insert_starts(
-                pre, block_id, bay_id, orient_idx, range, schedule, lo, hi, p, rng,
-            ) {
-                let direction = sample_ray_direction(rng);
-                if let Some(ray_candidate) = search_insert_ray(
-                    problem, pre, block_id, bay_id, orient_idx, range, schedule, lo, hi, p, start,
-                    direction, params, rng,
-                ) {
-                    let candidate = InsertCandidate {
-                        scheduled: ray_candidate.scheduled,
-                        tardiness: ray_candidate.tardiness,
-                        delta_obj23,
-                        orient_rank,
-                    };
-                    if best
-                        .as_ref()
-                        .map_or(true, |best| insert_candidate_better(&candidate, best))
-                    {
-                        best = Some(candidate);
-                    }
-                    if ray_candidate.tardiness <= original_tardiness {
-                        found_acceptable_in_orientation = true;
-                    }
-                }
-            }
+            // for start in ray_insert_starts(
+            //     pre, block_id, bay_id, orient_idx, range, schedule, lo, hi, p, rng,
+            // ) {
+            //     let direction = sample_ray_direction(rng);
+            //     if let Some(ray_candidate) = search_insert_ray(
+            //         problem, pre, block_id, bay_id, orient_idx, range, schedule, lo, hi, p, start,
+            //         direction, params, rng,
+            //     ) {
+            //         let candidate = InsertCandidate {
+            //             scheduled: ray_candidate.scheduled,
+            //             tardiness: ray_candidate.tardiness,
+            //             delta_obj23,
+            //             orient_rank,
+            //         };
+            //         if best
+            //             .as_ref()
+            //             .map_or(true, |best| insert_candidate_better(&candidate, best))
+            //         {
+            //             best = Some(candidate);
+            //         }
+            //         if ray_candidate.tardiness <= original_tardiness {
+            //             found_acceptable_in_orientation = true;
+            //         }
+            //     }
+            // }
 
-            if found_acceptable_in_orientation {
-                break;
-            }
+            // if found_acceptable_in_orientation {
+            //     break;
+            // }
 
+            let mut anchor_x: Option<i64> = None;
             for x in (range.min_x..=range.max_x).step_by(params.x_step as usize) {
                 if let Some(anchor_x) = anchor_x {
                     if x > anchor_x + INSERT_X_BUFFER {
@@ -861,6 +882,112 @@ fn best_time_for_fixed_placement(
     first_feasible_time(forbidden, lo, hi)
 }
 
+fn scheduled_center(pre: &Precompute, s: ScheduledBlock) -> (f64, f64) {
+    let (cx, cy) = pre.orientation_bbox_center[s.block_id][s.orient_idx];
+    (s.x as f64 + cx, s.y as f64 + cy)
+}
+
+fn choose_ray_move_group<R: Random>(
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    rng: &mut R,
+) -> Option<Vec<usize>> {
+    if schedule.is_empty() || RAY_MOVE_MAX_BLOCKS == 0 {
+        return None;
+    }
+
+    let seed_idx = rng.gen_index(schedule.len());
+    let seed = schedule[seed_idx];
+    let same_bay_count = schedule.iter().filter(|s| s.bay_id == seed.bay_id).count();
+    if same_bay_count == 0 {
+        return None;
+    }
+
+    let max_blocks = RAY_MOVE_MAX_BLOCKS.min(same_bay_count);
+    let min_blocks = RAY_MOVE_MIN_BLOCKS.min(max_blocks);
+    let k = rng.gen_range(min_blocks, max_blocks + 1);
+    let (sx, sy) = scheduled_center(pre, seed);
+    let mut candidates: Vec<(f64, usize)> = schedule
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.bay_id == seed.bay_id)
+        .map(|(idx, &s)| {
+            let (x, y) = scheduled_center(pre, s);
+            let dx = x - sx;
+            let dy = y - sy;
+            (dx * dx + dy * dy, idx)
+        })
+        .collect();
+
+    candidates.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    Some(candidates.into_iter().take(k).map(|(_, idx)| idx).collect())
+}
+
+fn ray_moved_group_feasible(
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    group_indices: &[usize],
+) -> bool {
+    let mut is_group = vec![false; schedule.len()];
+    for &idx in group_indices {
+        is_group[idx] = true;
+        let s = schedule[idx];
+        let Some(range) = pre.collision.fit_range(s.bay_id, s.block_id, s.orient_idx) else {
+            return false;
+        };
+        if s.x < range.min_x || range.max_x < s.x || s.y < range.min_y || range.max_y < s.y {
+            return false;
+        }
+    }
+
+    let outside: Vec<ScheduledBlock> = schedule
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, &s)| if is_group[idx] { None } else { Some(s) })
+        .collect();
+
+    group_indices
+        .iter()
+        .all(|&idx| can_insert(pre, schedule[idx], &outside))
+}
+
+fn try_ray_move_group<R: Random>(
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    rng: &mut R,
+) -> Option<Vec<ScheduledBlock>> {
+    let group_indices = choose_ray_move_group(pre, schedule, rng)?;
+    let direction = sample_ray_direction(rng);
+    let mut dx_total = 0;
+    let mut dy_total = 0;
+    let mut best = None;
+    let mut bad_count = 0;
+
+    for _ in 1..=RAY_MAX_STEPS {
+        let (dx, dy) = direction.next_delta(rng, INSERT_PARAMS.x_step, INSERT_PARAMS.y_step);
+        dx_total += dx;
+        dy_total += dy;
+
+        let mut candidate = schedule.to_vec();
+        for &idx in &group_indices {
+            candidate[idx].x += dx_total;
+            candidate[idx].y += dy_total;
+        }
+
+        if ray_moved_group_feasible(pre, &candidate, &group_indices) {
+            best = Some(candidate);
+            bad_count = 0;
+        } else if best.is_some() {
+            bad_count += 1;
+            if bad_count >= RAY_WALK_PATIENCE {
+                break;
+            }
+        }
+    }
+
+    best
+}
+
 fn choose_removed_blocks<R: Random>(
     problem: &Problem,
     pre: &Precompute,
@@ -900,11 +1027,6 @@ fn choose_removed_blocks<R: Random>(
     let mut by_block = vec![None; problem.blocks.len()];
     for &s in schedule {
         by_block[s.block_id] = Some(s);
-    }
-
-    fn center(pre: &Precompute, s: ScheduledBlock) -> (f64, f64) {
-        let (cx, cy) = pre.orientation_bbox_center[s.block_id][s.orient_idx];
-        (s.x as f64 + cx, s.y as f64 + cy)
     }
 
     fn push_selected(selected: &mut Vec<usize>, used: &mut [bool], block_id: usize, k: usize) {
@@ -951,12 +1073,12 @@ fn choose_removed_blocks<R: Random>(
         };
         let seeds_left = seeds.len() - seed_index;
         let need = (k - selected.len() + seeds_left - 1) / seeds_left;
-        let (sx, sy) = center(pre, seed);
+        let (sx, sy) = scheduled_center(pre, seed);
         let mut neighbors: Vec<(f64, usize)> = schedule
             .iter()
             .filter(|s| s.bay_id == seed.bay_id && !used[s.block_id])
             .map(|&s| {
-                let (x, y) = center(pre, s);
+                let (x, y) = scheduled_center(pre, s);
                 let dx = x - sx;
                 let dy = y - sy;
                 (dx * dx + dy * dy, s.block_id)
