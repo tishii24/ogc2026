@@ -512,9 +512,9 @@ fn find_best_insert_position<R: Random>(
                 }
             }
 
-            if found_acceptable_in_orientation {
-                break;
-            }
+            // if found_acceptable_in_orientation {
+            //     break;
+            // }
         }
     }
 
