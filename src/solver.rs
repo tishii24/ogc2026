@@ -61,8 +61,7 @@ struct InsertSearchParams {
 
 struct InsertCandidate {
     scheduled: ScheduledBlock,
-    tardiness: i64,
-    delta_obj23: f64,
+    score_delta: f64,
     orient_rank: usize,
 }
 
@@ -459,8 +458,8 @@ fn find_best_insert_position<R: Random>(
                 continue;
             };
             let mut found_acceptable_in_orientation = false;
-
             let mut anchor_x: Option<i64> = None;
+
             for x in (range.min_x..=range.max_x).step_by(params.x_step as usize) {
                 if let Some(anchor_x) = anchor_x {
                     if x > anchor_x + INSERT_X_BUFFER {
@@ -490,10 +489,11 @@ fn find_best_insert_position<R: Random>(
                     };
                     debug_assert!(can_insert(pre, scheduled, schedule));
                     let tardiness = (scheduled.exit_time - block.due_date).max(0);
+                    let score_delta = problem.weights.w1 * tardiness as f64 + delta_obj23;
+
                     let candidate = InsertCandidate {
                         scheduled,
-                        tardiness,
-                        delta_obj23,
+                        score_delta,
                         orient_rank,
                     };
                     if best
@@ -522,12 +522,7 @@ fn find_best_insert_position<R: Random>(
 }
 
 fn insert_candidate_better(a: &InsertCandidate, b: &InsertCandidate) -> bool {
-    match a.tardiness.cmp(&b.tardiness) {
-        std::cmp::Ordering::Less => return true,
-        std::cmp::Ordering::Greater => return false,
-        std::cmp::Ordering::Equal => {}
-    }
-    match a.delta_obj23.total_cmp(&b.delta_obj23) {
+    match a.score_delta.total_cmp(&b.score_delta) {
         std::cmp::Ordering::Less => return true,
         std::cmp::Ordering::Greater => return false,
         std::cmp::Ordering::Equal => {}
