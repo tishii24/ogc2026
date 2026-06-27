@@ -18,6 +18,7 @@ macro_rules! log {
 }
 
 const RNG_SEED: u64 = 1;
+const MAX_WORKER_COUNT: usize = 4;
 
 const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
 const START_TEMP: f64 = 1e1;
@@ -62,7 +63,8 @@ struct InsertSearchParams {
 struct InsertCandidate {
     scheduled: ScheduledBlock,
     score_delta: f64,
-    orient_rank: usize,
+    bbox_right: f64,
+    bbox_top: f64,
 }
 
 struct AnnealingResult {
@@ -82,7 +84,7 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
 
     // let deadline = timelimit - LOCAL_SEARCH_TIME_BUFFER_SECONDS;
     let deadline = 0.;
-    let worker_count = rayon::current_num_threads().max(1);
+    let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
     log!(timer, "annealing workers: {}", worker_count);
     let worker_timers = vec![timer; worker_count];
     let results: Vec<_> = worker_timers
@@ -437,8 +439,6 @@ fn find_best_insert_position<R: Random>(
     let lo = block.release_time;
     let cur_max_exit = schedule.iter().map(|s| s.exit_time).max().unwrap_or(lo);
     let hi = cur_max_exit.max(lo);
-    debug_assert!(params.x_step > 0);
-    debug_assert!(params.y_step > 0);
 
     let current_obj2 = normalized_imbalance(pre, loads);
     let original_tardiness = (original.exit_time - block.due_date).max(0);
@@ -452,8 +452,7 @@ fn find_best_insert_position<R: Random>(
         let delta_obj3 = problem.weights.w3 * pre.pref_penalty[block_id][bay_id] as f64;
         let delta_obj23 = delta_obj2 + delta_obj3;
 
-        for (orient_rank, &orient_idx) in pre.orientation_order_by_bbox[block_id].iter().enumerate()
-        {
+        for &orient_idx in &pre.orientation_order_by_bbox[block_id] {
             let Some(range) = pre.collision.fit_range(bay_id, block_id, orient_idx) else {
                 continue;
             };
@@ -487,14 +486,15 @@ fn find_best_insert_position<R: Random>(
                         exit_time: entry_time + p,
                         ..tentative
                     };
-                    debug_assert!(can_insert(pre, scheduled, schedule));
                     let tardiness = (scheduled.exit_time - block.due_date).max(0);
                     let score_delta = problem.weights.w1 * tardiness as f64 + delta_obj23;
 
+                    let bounds = pre.orientation_bbox_bounds[block_id][orient_idx];
                     let candidate = InsertCandidate {
                         scheduled,
                         score_delta,
-                        orient_rank,
+                        bbox_right: scheduled.x as f64 + bounds.max_x,
+                        bbox_top: scheduled.y as f64 + bounds.max_y,
                     };
                     if best
                         .as_ref()
@@ -522,27 +522,13 @@ fn find_best_insert_position<R: Random>(
 }
 
 fn insert_candidate_better(a: &InsertCandidate, b: &InsertCandidate) -> bool {
-    match a.score_delta.total_cmp(&b.score_delta) {
-        std::cmp::Ordering::Less => return true,
-        std::cmp::Ordering::Greater => return false,
-        std::cmp::Ordering::Equal => {}
-    }
-    match a.scheduled.entry_time.cmp(&b.scheduled.entry_time) {
-        std::cmp::Ordering::Less => return true,
-        std::cmp::Ordering::Greater => return false,
-        std::cmp::Ordering::Equal => {}
-    }
-    match a.orient_rank.cmp(&b.orient_rank) {
-        std::cmp::Ordering::Less => return true,
-        std::cmp::Ordering::Greater => return false,
-        std::cmp::Ordering::Equal => {}
-    }
-    match a.scheduled.x.cmp(&b.scheduled.x) {
-        std::cmp::Ordering::Less => return true,
-        std::cmp::Ordering::Greater => return false,
-        std::cmp::Ordering::Equal => {}
-    }
-    a.scheduled.y < b.scheduled.y
+    a.score_delta
+        .total_cmp(&b.score_delta)
+        .then(a.scheduled.entry_time.cmp(&b.scheduled.entry_time))
+        .then(a.bbox_right.total_cmp(&b.bbox_right))
+        .then(a.bbox_top.total_cmp(&b.bbox_top))
+        .then(a.scheduled.block_id.cmp(&b.scheduled.block_id))
+        .is_lt()
 }
 
 fn clamp_interval(l: i64, r: i64, lo: i64, hi: i64) -> Option<Interval> {
@@ -838,7 +824,7 @@ fn normalized_imbalance(pre: &Precompute, loads: &[f64]) -> f64 {
     (max_value - min_value).floor()
 }
 
-fn can_insert(pre: &Precompute, new_block: ScheduledBlock, schedule: &[ScheduledBlock]) -> bool {
+fn _can_insert(pre: &Precompute, new_block: ScheduledBlock, schedule: &[ScheduledBlock]) -> bool {
     fn interval_overlaps(a0: i64, a1: i64, b0: i64, b1: i64) -> bool {
         a0 < b1 && b0 < a1
     }
