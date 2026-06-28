@@ -6,7 +6,7 @@ pub mod util;
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct Problem {
@@ -59,7 +59,19 @@ pub struct Block {
 
 #[derive(Debug, Deserialize)]
 pub struct Orientation {
+    #[serde(deserialize_with = "deserialize_non_empty_layers")]
     pub layers: Vec<Vec<[f64; 2]>>,
+}
+
+fn deserialize_non_empty_layers<'de, D>(deserializer: D) -> Result<Vec<Vec<[f64; 2]>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let layers = Vec::<Vec<[f64; 2]>>::deserialize(deserializer)?;
+    Ok(layers
+        .into_iter()
+        .filter(|layer| !layer.is_empty())
+        .collect())
 }
 
 #[derive(Debug, Serialize)]
