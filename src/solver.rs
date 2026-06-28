@@ -75,7 +75,6 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
     log!(timer, "precompute built");
 
     let deadline = timelimit - LOCAL_SEARCH_TIME_BUFFER_SECONDS;
-    // let deadline = 0.;
     let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
     log!(timer, "annealing workers: {}", worker_count);
     let worker_timers = vec![timer; worker_count];
@@ -233,7 +232,6 @@ fn try_move_neighbor<R: Random>(
     let idx = rng.gen_index(schedule.len());
     let old = schedule[idx];
     let block = &problem.blocks[old.block_id];
-    let p = block.processing_time;
 
     let mut base = Vec::with_capacity(schedule.len() - 1);
     for (i, &s) in schedule.iter().enumerate() {
@@ -245,7 +243,6 @@ fn try_move_neighbor<R: Random>(
     let range = pre
         .collision
         .fit_range(old.bay_id, old.block_id, old.orient_idx)?;
-
     let original_tardiness = (old.exit_time - block.due_date).max(0);
     let min_t = block.release_time;
     let max_t = i64::MAX;
@@ -256,12 +253,8 @@ fn try_move_neighbor<R: Random>(
 
         for abs_dx in min_abs_dx..=max_abs_dx {
             let abs_dy = dist - abs_dx;
-
-            let dx = -abs_dx;
-            let dy = -abs_dy;
-
-            let x = old.x + dx;
-            let y = old.y + dy;
+            let x = old.x - abs_dx;
+            let y = old.y - abs_dy;
             if !range.contains(x, y) {
                 continue;
             }
@@ -270,19 +263,17 @@ fn try_move_neighbor<R: Random>(
                 x,
                 y,
                 entry_time: 0,
-                exit_time: p,
+                exit_time: block.processing_time,
                 ..old
             };
 
-            let Some(entry_time) =
-                best_time_for_fixed_placement(pre, tentative, &base, min_t, max_t)
-            else {
+            let Some(entry_time) = get_insert_t(pre, tentative, &base, min_t, max_t) else {
                 continue;
             };
 
             let moved = ScheduledBlock {
                 entry_time,
-                exit_time: entry_time + p,
+                exit_time: entry_time + block.processing_time,
                 ..tentative
             };
             let new_tardiness = (moved.exit_time - block.due_date).max(0);
@@ -519,7 +510,7 @@ fn find_best_insert_position<R: Random>(
 ) -> Option<ScheduledBlock> {
     let block_id = original.block_id;
     let block = &problem.blocks[block_id];
-    let p = block.processing_time;
+    let process_t = block.processing_time;
     let min_t = block.release_time;
     let max_t = i64::MAX;
 
@@ -556,16 +547,15 @@ fn find_best_insert_position<R: Random>(
                         x,
                         y,
                         entry_time: 0,
-                        exit_time: p,
+                        exit_time: process_t,
                     };
-                    let Some(entry_time) =
-                        best_time_for_fixed_placement(pre, tentative, schedule, min_t, max_t)
+                    let Some(entry_time) = get_insert_t(pre, tentative, schedule, min_t, max_t)
                     else {
                         continue;
                     };
                     let scheduled = ScheduledBlock {
                         entry_time,
-                        exit_time: entry_time + p,
+                        exit_time: entry_time + process_t,
                         ..tentative
                     };
                     let tardiness = (scheduled.exit_time - block.due_date).max(0);
@@ -704,7 +694,7 @@ fn first_feasible_time(mut forbidden: Vec<Interval>, min_t: i64, max_t: i64) -> 
     if t <= max_t { Some(t) } else { None }
 }
 
-fn best_time_for_fixed_placement(
+fn get_insert_t(
     pre: &Precompute,
     new_block: ScheduledBlock,
     schedule: &[ScheduledBlock],

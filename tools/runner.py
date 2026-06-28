@@ -262,6 +262,7 @@ def run_case(
 
         module = load_myalgorithm(myalgorithm_path)
         solution = module.algorithm(prob_info, timelimit)
+        result = check_feasibility(prob_info, solution)
         elapsed = time.perf_counter() - started
 
         row.update(

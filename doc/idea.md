@@ -10,11 +10,8 @@ feasibilityのチェック:
   - stdinからmyalgorithmが計算したfeasibilityの結果を読み取り、feasibleでない場合はrollbackする
 
 局所探索:
-- 初期解
-  - 貪欲
 - 貪欲
   - insert_greedy(bay_id, block_id, bbox, orientation) -> (x, y, t)
-  - ブロックの挿入順序: `area x due-date x noise`
   - orientationは一様にシャッフルする
   - bboxに収まる(x,y)だけ試す
     - (min_x, max_x, min_y, max_y)をorientationごとに求める
@@ -47,6 +44,7 @@ feasibilityのチェック:
     - 同じ面積のbboxを選ぶ
     - そこに含まれるブロックを削除する
     - 削除したブロックのbbox+marginを候補として貪欲で挿入し直す
+      - ブロックの挿入順序: `area x due-date x noise`
     - bbox内で(x,y)が小さい順に試す
 - 操作
   - get_insert_t(bay_id, block_id, x, y, orientation) -> t
