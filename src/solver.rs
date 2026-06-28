@@ -41,6 +41,9 @@ const INSERT_PARAMS: InsertSearchParams = InsertSearchParams {
 const ORDER_SLACK_WEIGHT_MIN: f64 = 0.0;
 const ORDER_SLACK_WEIGHT_MAX: f64 = 4.0;
 
+const MOVE_MAX_SHIFT_X: i64 = 10;
+const MOVE_MAX_SHIFT_Y: i64 = 10;
+
 type Interval = (i64, i64);
 
 #[derive(Clone, Copy)]
@@ -153,41 +156,36 @@ fn run_annealing_worker(
         let progress = (elapsed / deadline).clamp(0.0, 1.0);
         let temp = START_TEMP * (END_TEMP / START_TEMP).powf(progress);
 
-        let k = rng
-            .gen_range(MIN_REMOVED_BLOCKS, MAX_REMOVED_BLOCKS + 1)
-            .min(problem.blocks.len());
-        let removed = choose_removed_blocks(problem, pre, &current, k, &mut rng);
-        if removed.is_empty() {
-            break;
-        }
+        let p = rng.nextf();
 
-        let order_slack_weight = sample_order_slack_weight(&mut rng);
-        if let Some(candidate) = try_remove_reinsert(
-            problem,
-            pre,
-            &current,
-            &removed,
-            order_slack_weight,
-            &mut rng,
-        ) {
-            let score = score_schedule(problem, pre, &candidate);
-            let delta = score - current_score;
-            if delta <= 0.0 || rng.nextf() < (-delta / temp).exp() {
-                current = candidate;
-                current_score = score;
-                accepted += 1;
+        let candidate = if p < 1. {
+            // large reconstruct
+            try_large_reconstruct(problem, pre, &current, &mut rng)
+        } else {
+            // move
+            try_move_neighbor(problem, pre, &current, &mut rng)
+        };
+        let Some(candidate) = candidate else {
+            continue;
+        };
 
-                if current_score + 1e-9 < best_score {
-                    log!(
-                        timer,
-                        "worker {} new best score: {:.3}",
-                        worker_id,
-                        current_score
-                    );
-                    best = current.clone();
-                    best_score = current_score;
-                    improved += 1;
-                }
+        let score = score_schedule(problem, pre, &candidate);
+        let delta = score - current_score;
+        if delta <= 0.0 || rng.nextf() < (-delta / temp).exp() {
+            current = candidate;
+            current_score = score;
+            accepted += 1;
+
+            if current_score + 1e-9 < best_score {
+                log!(
+                    timer,
+                    "worker {} new best score: {:.3}",
+                    worker_id,
+                    current_score
+                );
+                best = current.clone();
+                best_score = current_score;
+                improved += 1;
             }
         }
     }
@@ -201,6 +199,104 @@ fn run_annealing_worker(
         accepted,
         improved,
     }
+}
+
+fn try_large_reconstruct<R: Random>(
+    problem: &Problem,
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    rng: &mut R,
+) -> Option<Vec<ScheduledBlock>> {
+    let k = rng
+        .gen_range(MIN_REMOVED_BLOCKS, MAX_REMOVED_BLOCKS + 1)
+        .min(problem.blocks.len());
+
+    let removed = choose_removed_blocks(problem, pre, schedule, k, rng);
+    if removed.is_empty() {
+        return None;
+    }
+
+    let order_slack_weight = sample_order_slack_weight(rng);
+    try_remove_reinsert(problem, pre, schedule, &removed, order_slack_weight, rng)
+}
+
+fn try_move_neighbor<R: Random>(
+    problem: &Problem,
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    rng: &mut R,
+) -> Option<Vec<ScheduledBlock>> {
+    if schedule.is_empty() {
+        return None;
+    }
+
+    let idx = rng.gen_index(schedule.len());
+    let old = schedule[idx];
+    let block = &problem.blocks[old.block_id];
+    let p = block.processing_time;
+
+    let mut base = Vec::with_capacity(schedule.len() - 1);
+    for (i, &s) in schedule.iter().enumerate() {
+        if i != idx {
+            base.push(s);
+        }
+    }
+
+    let range = pre
+        .collision
+        .fit_range(old.bay_id, old.block_id, old.orient_idx)?;
+
+    let original_tardiness = (old.exit_time - block.due_date).max(0);
+    let min_t = block.release_time;
+    let max_t = i64::MAX;
+
+    for dist in (1..=MOVE_MAX_SHIFT_X + MOVE_MAX_SHIFT_Y).rev() {
+        let min_abs_dx = (dist - MOVE_MAX_SHIFT_Y).max(0);
+        let max_abs_dx = dist.min(MOVE_MAX_SHIFT_X);
+
+        for abs_dx in min_abs_dx..=max_abs_dx {
+            let abs_dy = dist - abs_dx;
+
+            let dx = -abs_dx;
+            let dy = -abs_dy;
+
+            let x = old.x + dx;
+            let y = old.y + dy;
+            if !range.contains(x, y) {
+                continue;
+            }
+
+            let tentative = ScheduledBlock {
+                x,
+                y,
+                entry_time: 0,
+                exit_time: p,
+                ..old
+            };
+
+            let Some(entry_time) =
+                best_time_for_fixed_placement(pre, tentative, &base, min_t, max_t)
+            else {
+                continue;
+            };
+
+            let moved = ScheduledBlock {
+                entry_time,
+                exit_time: entry_time + p,
+                ..tentative
+            };
+            let new_tardiness = (moved.exit_time - block.due_date).max(0);
+            if new_tardiness > original_tardiness {
+                continue;
+            }
+
+            let mut candidate = base;
+            candidate.push(moved);
+            return Some(candidate);
+        }
+    }
+
+    None
 }
 
 fn build_initial_schedule<R: Random>(
@@ -390,7 +486,6 @@ fn try_remove_reinsert<R: Random>(
             base.push(s);
         }
     }
-
     if removed.len() != removed_ids.len() {
         return None;
     }
@@ -425,9 +520,8 @@ fn find_best_insert_position<R: Random>(
     let block_id = original.block_id;
     let block = &problem.blocks[block_id];
     let p = block.processing_time;
-    let lo = block.release_time;
-    let cur_max_exit = schedule.iter().map(|s| s.exit_time).max().unwrap_or(lo);
-    let hi = cur_max_exit.max(lo) + 10;
+    let min_t = block.release_time;
+    let max_t = i64::MAX;
 
     let current_obj2 = normalized_imbalance(pre, loads);
     let original_tardiness = (original.exit_time - block.due_date).max(0);
@@ -465,7 +559,7 @@ fn find_best_insert_position<R: Random>(
                         exit_time: p,
                     };
                     let Some(entry_time) =
-                        best_time_for_fixed_placement(pre, tentative, schedule, lo, hi)
+                        best_time_for_fixed_placement(pre, tentative, schedule, min_t, max_t)
                     else {
                         continue;
                     };
@@ -514,9 +608,9 @@ fn insert_candidate_better(a: &InsertCandidate, b: &InsertCandidate) -> bool {
         .is_lt()
 }
 
-fn clamp_interval(l: i64, r: i64, lo: i64, hi: i64) -> Option<Interval> {
-    let l = l.max(lo);
-    let r = r.min(hi);
+fn clamp_interval(l: i64, r: i64, min_val: i64, max_val: i64) -> Option<Interval> {
+    let l = l.max(min_val);
+    let r = r.min(max_val);
     if l <= r { Some((l, r)) } else { None }
 }
 
@@ -524,15 +618,15 @@ fn add_forbidden_intervals_for_old(
     pre: &Precompute,
     new_block: ScheduledBlock,
     old: ScheduledBlock,
-    lo: i64,
-    hi: i64,
+    min_t: i64,
+    max_t: i64,
     forbidden: &mut Vec<Interval>,
 ) {
     let p = new_block.exit_time - new_block.entry_time;
     let a = old.entry_time;
     let b = old.exit_time;
 
-    let Some((ol, or)) = clamp_interval(a - p + 1, b - 1, lo, hi) else {
+    let Some((ol, or)) = clamp_interval(a - p + 1, b - 1, min_t, max_t) else {
         return;
     };
 
@@ -593,9 +687,9 @@ fn merge_intervals(intervals: &mut Vec<Interval>) {
     *intervals = merged;
 }
 
-fn first_feasible_time(mut forbidden: Vec<Interval>, lo: i64, hi: i64) -> Option<i64> {
+fn first_feasible_time(mut forbidden: Vec<Interval>, min_t: i64, max_t: i64) -> Option<i64> {
     merge_intervals(&mut forbidden);
-    let mut t = lo;
+    let mut t = min_t;
     for (l, r) in forbidden {
         if t < l {
             return Some(t);
@@ -603,25 +697,25 @@ fn first_feasible_time(mut forbidden: Vec<Interval>, lo: i64, hi: i64) -> Option
         if t <= r {
             t = r + 1;
         }
-        if t > hi {
+        if t > max_t {
             return None;
         }
     }
-    if t <= hi { Some(t) } else { None }
+    if t <= max_t { Some(t) } else { None }
 }
 
 fn best_time_for_fixed_placement(
     pre: &Precompute,
     new_block: ScheduledBlock,
     schedule: &[ScheduledBlock],
-    lo: i64,
-    hi: i64,
+    min_t: i64,
+    max_t: i64,
 ) -> Option<i64> {
     let mut forbidden = Vec::new();
     for &old in schedule.iter().filter(|old| old.bay_id == new_block.bay_id) {
-        add_forbidden_intervals_for_old(pre, new_block, old, lo, hi, &mut forbidden);
+        add_forbidden_intervals_for_old(pre, new_block, old, min_t, max_t, &mut forbidden);
     }
-    first_feasible_time(forbidden, lo, hi)
+    first_feasible_time(forbidden, min_t, max_t)
 }
 
 fn scheduled_center(pre: &Precompute, s: ScheduledBlock) -> (f64, f64) {

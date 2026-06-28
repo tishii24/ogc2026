@@ -1,3 +1,5 @@
+# type: ignore
+
 #!/usr/bin/env python3
 """Async Python supervisor for the Rust OGC 2026 solver."""
 

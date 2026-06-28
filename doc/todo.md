@@ -1,4 +1,4 @@
-- 空のlayerに対する処理を追加する
+- panicを排除する
 - annealingを改善する
 - safetyを追加する
 - 下界を求めて最適化

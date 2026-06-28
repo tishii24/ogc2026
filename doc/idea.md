@@ -12,7 +12,6 @@ feasibilityのチェック:
 局所探索:
 - 初期解
   - 貪欲
-  - TODO: 少し間引く？
 - 貪欲
   - insert_greedy(bay_id, block_id, bbox, orientation) -> (x, y, t)
   - ブロックの挿入順序: `area x due-date x noise`
@@ -21,11 +20,13 @@ feasibilityのチェック:
     - (min_x, max_x, min_y, max_y)をorientationごとに求める
   - (dx,dy,orientation)が小さい順に試して、tardinessが悪化しない(dx,dy)を見つければ終了
   - 見つからなければ、(tardiness,dx,dy)が最も小さい位置に挿入する
+  - TODO: 少し間引く？
 - 近傍
   - insert: 1個のブロックを移動する
     - 小さいブロックを選ぶ
     - insert_greedyで挿入する
     - TODO: (bay-id,bbox)を制限する
+    - TODO: 先に移動範囲のbboxの重なりを見て、干渉するブロックに絞って計算する
   - change-orient: 1個のブロックのorientationを変更する
     - bboxの重なりが大きい(orientation,dx,dy)を前計算する
       - orientation_neighbors[block_id][orient_id]: Vec<(orientation: usize, dx: i64, dy: i64)>
@@ -41,6 +42,7 @@ feasibilityのチェック:
     - dx=(-D..0),dy=(-D..0)を試す
     - |dx|+|dy|が大きい順に試す
     - TODO: 干渉するk個のブロックを一緒に動かす
+    - TODO: 先に移動範囲のbboxの重なりを見て、干渉するブロックに絞って計算する
   - reconstruct: 2つの領域に含まれるブロックの位置を入れ替える
     - 同じ面積のbboxを選ぶ
     - そこに含まれるブロックを削除する

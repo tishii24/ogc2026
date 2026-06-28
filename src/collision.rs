@@ -30,6 +30,12 @@ pub struct FitRange {
     pub max_y: i64,
 }
 
+impl FitRange {
+    pub fn contains(&self, x: i64, y: i64) -> bool {
+        self.min_x <= x && x <= self.max_x && self.min_y <= y && y <= self.max_y
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct BBox {
     min_x: f64,
