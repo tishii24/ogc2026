@@ -1,4 +1,5 @@
 - panicを排除する
+- boundsを統一する
 - annealingを改善する
 - safetyを追加する
 - 下界を求めて最適化

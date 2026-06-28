@@ -22,43 +22,15 @@ pub struct BlockPlacement {
     pub y: i64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FitRange {
-    pub min_x: i64,
-    pub max_x: i64,
-    pub min_y: i64,
-    pub max_y: i64,
-}
-
-impl FitRange {
-    pub fn contains(&self, x: i64, y: i64) -> bool {
-        self.min_x <= x && x <= self.max_x && self.min_y <= y && y <= self.max_y
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct BBox {
-    min_x: f64,
-    min_y: f64,
-    max_x: f64,
-    max_y: f64,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Point {
-    x: f64,
-    y: f64,
-}
-
 #[derive(Clone, Copy, Debug)]
 struct ConvexPart {
-    points: [Point; MAX_CONVEX_VERTS],
+    points: [Pointf; MAX_CONVEX_VERTS],
     len: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
 struct ConvexPolygon {
-    points: [Point; MAX_MINKOWSKI_POINTS],
+    points: [Pointf; MAX_MINKOWSKI_POINTS],
     len: usize,
 }
 
@@ -67,13 +39,13 @@ struct PolyLayer {
     #[cfg(test)]
     polygon: Polygon<f64>,
     parts: Vec<ConvexPart>,
-    bbox: BBox,
+    bbox: Boundsf,
 }
 
 #[derive(Clone, Debug)]
 struct ShapeGeom {
     layers: Vec<PolyLayer>,
-    bbox: BBox,
+    bbox: Boundsf,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -86,19 +58,13 @@ struct DeltaRange {
 
 #[derive(Clone, Debug)]
 struct CollisionGrid {
-    min_dx: i64,
-    max_dx: i64,
-    min_dy: i64,
-    max_dy: i64,
+    delta: DeltaRange,
     column_offsets: Vec<usize>,
     intervals: Vec<(i64, i64)>,
 }
 
 struct CollisionGridBuilder {
-    min_dx: i64,
-    max_dx: i64,
-    min_dy: i64,
-    max_dy: i64,
+    delta: DeltaRange,
     columns: Vec<Vec<(i64, i64)>>,
 }
 
@@ -117,7 +83,7 @@ struct BlockPairCollision {
 }
 
 pub struct CollisionPrecompute {
-    fit_ranges: Vec<Vec<Vec<Option<FitRange>>>>,
+    fit_ranges: Vec<Vec<Vec<Option<Boundsi>>>>,
     geoms: Vec<Vec<ShapeGeom>>,
     block_pair_index: Vec<Option<usize>>,
     block_pairs: Vec<BlockPairCollision>,
@@ -210,7 +176,7 @@ impl CollisionPrecompute {
         unsafe { &*ptr }
     }
 
-    pub fn fit_range(&self, bay_id: usize, block_id: usize, orient_idx: usize) -> Option<FitRange> {
+    pub fn fit_range(&self, bay_id: usize, block_id: usize, orient_idx: usize) -> Option<Boundsi> {
         self.fit_ranges
             .get(bay_id)?
             .get(block_id)?
@@ -256,11 +222,15 @@ impl Drop for OrientPairCache {
 
 impl CollisionGrid {
     fn get(&self, dx: i64, dy: i64) -> bool {
-        if dx < self.min_dx || self.max_dx < dx || dy < self.min_dy || self.max_dy < dy {
+        if dx < self.delta.min_dx
+            || self.delta.max_dx < dx
+            || dy < self.delta.min_dy
+            || self.delta.max_dy < dy
+        {
             return false;
         }
 
-        let col = (dx - self.min_dx) as usize;
+        let col = (dx - self.delta.min_dx) as usize;
         let begin = self.column_offsets[col];
         let end = self.column_offsets[col + 1];
         self.intervals[begin..end]
@@ -281,29 +251,31 @@ impl CollisionGridBuilder {
     fn new(range: DeltaRange) -> Self {
         let width = (range.max_dx - range.min_dx + 1) as usize;
         Self {
-            min_dx: range.min_dx,
-            max_dx: range.max_dx,
-            min_dy: range.min_dy,
-            max_dy: range.max_dy,
+            delta: DeltaRange {
+                min_dx: range.min_dx,
+                max_dx: range.max_dx,
+                min_dy: range.min_dy,
+                max_dy: range.max_dy,
+            },
             columns: vec![Vec::new(); width],
         }
     }
 
     fn add_interval(&mut self, dx: i64, min_dy: i64, max_dy: i64) {
-        if dx < self.min_dx || self.max_dx < dx {
+        if dx < self.delta.min_dx || self.delta.max_dx < dx {
             return;
         }
-        let min_dy = min_dy.max(self.min_dy);
-        let max_dy = max_dy.min(self.max_dy);
+        let min_dy = min_dy.max(self.delta.min_dy);
+        let max_dy = max_dy.min(self.delta.max_dy);
         if min_dy > max_dy {
             return;
         }
-        self.columns[(dx - self.min_dx) as usize].push((min_dy, max_dy));
+        self.columns[(dx - self.delta.min_dx) as usize].push((min_dy, max_dy));
     }
 
     fn add_grid(&mut self, grid: &CollisionGrid) {
-        for col in 0..(grid.max_dx - grid.min_dx + 1) as usize {
-            let dx = grid.min_dx + col as i64;
+        for col in 0..(grid.delta.max_dx - grid.delta.min_dx + 1) as usize {
+            let dx = grid.delta.min_dx + col as i64;
             let begin = grid.column_offsets[col];
             let end = grid.column_offsets[col + 1];
             for &(lo, hi) in &grid.intervals[begin..end] {
@@ -313,8 +285,8 @@ impl CollisionGridBuilder {
     }
 
     fn add_reversed_grid(&mut self, grid: &CollisionGrid) {
-        for col in 0..(grid.max_dx - grid.min_dx + 1) as usize {
-            let dx = grid.min_dx + col as i64;
+        for col in 0..(grid.delta.max_dx - grid.delta.min_dx + 1) as usize {
+            let dx = grid.delta.min_dx + col as i64;
             let begin = grid.column_offsets[col];
             let end = grid.column_offsets[col + 1];
             for &(lo, hi) in &grid.intervals[begin..end] {
@@ -345,10 +317,12 @@ impl CollisionGridBuilder {
         }
 
         CollisionGrid {
-            min_dx: self.min_dx,
-            max_dx: self.max_dx,
-            min_dy: self.min_dy,
-            max_dy: self.max_dy,
+            delta: DeltaRange {
+                min_dx: self.delta.min_dx,
+                max_dx: self.delta.max_dx,
+                min_dy: self.delta.min_dy,
+                max_dy: self.delta.max_dy,
+            },
             column_offsets,
             intervals,
         }
@@ -366,7 +340,7 @@ fn build_all_geoms(problem: &Problem) -> Vec<Vec<ShapeGeom>> {
 fn build_all_fit_ranges(
     problem: &Problem,
     geoms: &[Vec<ShapeGeom>],
-) -> Vec<Vec<Vec<Option<FitRange>>>> {
+) -> Vec<Vec<Vec<Option<Boundsi>>>> {
     problem
         .bays
         .iter()
@@ -386,7 +360,7 @@ fn build_all_fit_ranges(
 
 fn build_shape_geom(orientation: &Orientation) -> ShapeGeom {
     let mut layers = Vec::new();
-    let mut all_bbox: Option<BBox> = None;
+    let mut all_bbox: Option<Boundsf> = None;
 
     for layer in &orientation.layers {
         #[cfg(test)]
@@ -400,7 +374,7 @@ fn build_shape_geom(orientation: &Orientation) -> ShapeGeom {
             Polygon::new(LineString::from(coords), vec![])
         };
 
-        let points: Vec<Point> = layer.iter().map(|&[x, y]| Point { x, y }).collect();
+        let points: Vec<Pointf> = layer.iter().map(|&[x, y]| Pointf { x, y }).collect();
         let parts = build_convex_parts(&points);
         assert!(
             !parts.is_empty(),
@@ -421,7 +395,7 @@ fn build_shape_geom(orientation: &Orientation) -> ShapeGeom {
         });
     }
 
-    let bbox = all_bbox.unwrap_or(BBox {
+    let bbox = all_bbox.unwrap_or(Boundsf {
         min_x: 0.0,
         min_y: 0.0,
         max_x: 0.0,
@@ -430,7 +404,7 @@ fn build_shape_geom(orientation: &Orientation) -> ShapeGeom {
     ShapeGeom { layers, bbox }
 }
 
-fn build_convex_parts(points: &[Point]) -> Vec<ConvexPart> {
+fn build_convex_parts(points: &[Pointf]) -> Vec<ConvexPart> {
     if is_convex_polygon(points) {
         return vec![make_convex_part(points)];
     }
@@ -441,7 +415,7 @@ fn build_convex_parts(points: &[Point]) -> Vec<ConvexPart> {
         .collect()
 }
 
-fn is_convex_polygon(points: &[Point]) -> bool {
+fn is_convex_polygon(points: &[Pointf]) -> bool {
     if points.len() < 3 || points.len() > MAX_CONVEX_VERTS {
         return false;
     }
@@ -465,7 +439,7 @@ fn is_convex_polygon(points: &[Point]) -> bool {
     true
 }
 
-fn triangulate_polygon(points: &[Point]) -> Vec<[Point; 3]> {
+fn triangulate_polygon(points: &[Pointf]) -> Vec<[Pointf; 3]> {
     if points.len() < 3 || signed_area(points).abs() <= AREA_EPS {
         return Vec::new();
     }
@@ -532,7 +506,7 @@ fn triangulate_polygon(points: &[Point]) -> Vec<[Point; 3]> {
     triangles
 }
 
-fn polygon_area_abs_by_indices(points: &[Point], idx: &[usize]) -> f64 {
+fn polygon_area_abs_by_indices(points: &[Pointf], idx: &[usize]) -> f64 {
     let mut area = 0.0;
     for i in 0..idx.len() {
         let a = points[idx[i]];
@@ -542,7 +516,7 @@ fn polygon_area_abs_by_indices(points: &[Point], idx: &[usize]) -> f64 {
     (area * 0.5).abs()
 }
 
-fn diagonal_clear(points: &[Point], idx: &[usize], a_idx: usize, b_idx: usize) -> bool {
+fn diagonal_clear(points: &[Pointf], idx: &[usize], a_idx: usize, b_idx: usize) -> bool {
     let a = points[a_idx];
     let b = points[b_idx];
     for i in 0..idx.len() {
@@ -558,7 +532,7 @@ fn diagonal_clear(points: &[Point], idx: &[usize], a_idx: usize, b_idx: usize) -
     true
 }
 
-fn segments_intersect(a: Point, b: Point, c: Point, d: Point) -> bool {
+fn segments_intersect(a: Pointf, b: Pointf, c: Pointf, d: Pointf) -> bool {
     let ab_c = cross(a, b, c);
     let ab_d = cross(a, b, d);
     let cd_a = cross(c, d, a);
@@ -581,16 +555,16 @@ fn segments_intersect(a: Point, b: Point, c: Point, d: Point) -> bool {
         && ((cd_a > AREA_EPS && cd_b < -AREA_EPS) || (cd_a < -AREA_EPS && cd_b > AREA_EPS))
 }
 
-fn point_on_segment(p: Point, a: Point, b: Point) -> bool {
+fn point_on_segment(p: Pointf, a: Pointf, b: Pointf) -> bool {
     a.x.min(b.x) - AREA_EPS <= p.x
         && p.x <= a.x.max(b.x) + AREA_EPS
         && a.y.min(b.y) - AREA_EPS <= p.y
         && p.y <= a.y.max(b.y) + AREA_EPS
 }
 
-fn make_convex_part(points: &[Point]) -> ConvexPart {
+fn make_convex_part(points: &[Pointf]) -> ConvexPart {
     assert!(points.len() >= 3 && points.len() <= MAX_CONVEX_VERTS);
-    let mut part_points = [Point { x: 0.0, y: 0.0 }; MAX_CONVEX_VERTS];
+    let mut part_points = [Pointf { x: 0.0, y: 0.0 }; MAX_CONVEX_VERTS];
     let len = points.len();
     if signed_area(points) >= 0.0 {
         part_points[..len].copy_from_slice(points);
@@ -606,7 +580,7 @@ fn make_convex_part(points: &[Point]) -> ConvexPart {
     }
 }
 
-fn signed_area(points: &[Point]) -> f64 {
+fn signed_area(points: &[Pointf]) -> f64 {
     let mut area = 0.0;
     for i in 0..points.len() {
         let a = points[i];
@@ -616,19 +590,19 @@ fn signed_area(points: &[Point]) -> f64 {
     area * 0.5
 }
 
-fn cross(a: Point, b: Point, c: Point) -> f64 {
+fn cross(a: Pointf, b: Pointf, c: Pointf) -> f64 {
     (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
 }
 
-fn point_in_triangle_strict(p: Point, t: [Point; 3]) -> bool {
+fn point_in_triangle_strict(p: Pointf, t: [Pointf; 3]) -> bool {
     cross(t[0], t[1], p) > AREA_EPS
         && cross(t[1], t[2], p) > AREA_EPS
         && cross(t[2], t[0], p) > AREA_EPS
 }
 
 #[cfg(test)]
-fn bbox_of_point_slice(points: &[Point]) -> BBox {
-    let mut bbox = BBox {
+fn bbox_of_point_slice(points: &[Pointf]) -> Boundsf {
+    let mut bbox = Boundsf {
         min_x: f64::INFINITY,
         min_y: f64::INFINITY,
         max_x: f64::NEG_INFINITY,
@@ -645,8 +619,8 @@ fn bbox_of_point_slice(points: &[Point]) -> BBox {
     bbox
 }
 
-fn bbox_of_points(points: &[[f64; 2]]) -> BBox {
-    let mut bbox = BBox {
+fn bbox_of_points(points: &[[f64; 2]]) -> Boundsf {
+    let mut bbox = Boundsf {
         min_x: f64::INFINITY,
         min_y: f64::INFINITY,
         max_x: f64::NEG_INFINITY,
@@ -663,8 +637,8 @@ fn bbox_of_points(points: &[[f64; 2]]) -> BBox {
     bbox
 }
 
-fn merge_bbox(a: BBox, b: BBox) -> BBox {
-    BBox {
+fn merge_bbox(a: Boundsf, b: Boundsf) -> Boundsf {
+    Boundsf {
         min_x: a.min_x.min(b.min_x),
         min_y: a.min_y.min(b.min_y),
         max_x: a.max_x.max(b.max_x),
@@ -672,14 +646,14 @@ fn merge_bbox(a: BBox, b: BBox) -> BBox {
     }
 }
 
-fn build_fit_range(bay: &Bay, bbox: BBox) -> Option<FitRange> {
+fn build_fit_range(bay: &Bay, bbox: Boundsf) -> Option<Boundsi> {
     let min_x = (-bbox.min_x).ceil() as i64;
     let max_x = (bay.width as f64 - bbox.max_x).floor() as i64;
     let min_y = (-bbox.min_y).ceil() as i64;
     let max_y = (bay.height as f64 - bbox.max_y).floor() as i64;
 
     if min_x <= max_x && min_y <= max_y {
-        Some(FitRange {
+        Some(Boundsi {
             min_x,
             max_x,
             min_y,
@@ -746,8 +720,8 @@ fn rasterize_convex_pair(builder: &mut CollisionGridBuilder, a: ConvexPart, b: C
     }
     let min_dx = (min_x - AREA_EPS).ceil() as i64;
     let max_dx = (max_x + AREA_EPS).floor() as i64;
-    let min_dx = min_dx.max(builder.min_dx);
-    let max_dx = max_dx.min(builder.max_dx);
+    let min_dx = min_dx.max(builder.delta.min_dx);
+    let max_dx = max_dx.min(builder.delta.max_dx);
 
     for dx in min_dx..=max_dx {
         if let Some((min_dy, max_dy)) = vertical_slice_conservative(&hull, dx) {
@@ -757,9 +731,9 @@ fn rasterize_convex_pair(builder: &mut CollisionGridBuilder, a: ConvexPart, b: C
 }
 
 fn minkowski_difference_hull(a: ConvexPart, b: ConvexPart) -> ConvexPolygon {
-    let mut neg_b = [Point { x: 0.0, y: 0.0 }; MAX_CONVEX_VERTS];
+    let mut neg_b = [Pointf { x: 0.0, y: 0.0 }; MAX_CONVEX_VERTS];
     for (dst, src) in neg_b.iter_mut().zip(b.points.iter()).take(b.len) {
-        *dst = Point {
+        *dst = Pointf {
             x: -src.x,
             y: -src.y,
         };
@@ -767,9 +741,9 @@ fn minkowski_difference_hull(a: ConvexPart, b: ConvexPart) -> ConvexPolygon {
 
     let start_a = lowest_leftmost_index(&a.points, a.len);
     let start_b = lowest_leftmost_index(&neg_b, b.len);
-    let mut points = [Point { x: 0.0, y: 0.0 }; MAX_MINKOWSKI_POINTS];
+    let mut points = [Pointf { x: 0.0, y: 0.0 }; MAX_MINKOWSKI_POINTS];
     let mut len = 1;
-    let mut cur = Point {
+    let mut cur = Pointf {
         x: a.points[start_a].x + neg_b[start_b].x,
         y: a.points[start_a].y + neg_b[start_b].y,
     };
@@ -809,7 +783,7 @@ fn minkowski_difference_hull(a: ConvexPart, b: ConvexPart) -> ConvexPolygon {
     ConvexPolygon { points, len }
 }
 
-fn lowest_leftmost_index(points: &[Point], len: usize) -> usize {
+fn lowest_leftmost_index(points: &[Pointf], len: usize) -> usize {
     let mut best = 0;
     for i in 1..len {
         if points[i]
@@ -824,10 +798,10 @@ fn lowest_leftmost_index(points: &[Point], len: usize) -> usize {
     best
 }
 
-fn rotated_edge(points: &[Point], len: usize, start: usize, offset: usize) -> Point {
+fn rotated_edge(points: &[Pointf], len: usize, start: usize, offset: usize) -> Pointf {
     let i = (start + offset) % len;
     let j = (start + offset + 1) % len;
-    Point {
+    Pointf {
         x: points[j].x - points[i].x,
         y: points[j].y - points[i].y,
     }
@@ -863,7 +837,7 @@ fn vertical_slice_conservative(poly: &ConvexPolygon, dx: i64) -> Option<(i64, i6
     }
 }
 
-fn delta_range(moving: BBox, fixed: BBox) -> DeltaRange {
+fn delta_range(moving: Boundsf, fixed: Boundsf) -> DeltaRange {
     DeltaRange {
         min_dx: (moving.min_x - fixed.max_x).floor() as i64 - 1,
         max_dx: (moving.max_x - fixed.min_x).ceil() as i64 + 1,
@@ -1007,19 +981,19 @@ mod tests {
         true
     }
 
-    fn edge_normal(a: Point, b: Point) -> Point {
+    fn edge_normal(a: Pointf, b: Pointf) -> Pointf {
         let ex = b.x - a.x;
         let ey = b.y - a.y;
-        Point { x: -ey, y: ex }
+        Pointf { x: -ey, y: ex }
     }
 
-    fn project_convex_part(part: ConvexPart, axis: Point, dx: f64, dy: f64) -> (f64, f64) {
+    fn project_convex_part(part: ConvexPart, axis: Pointf, dx: f64, dy: f64) -> (f64, f64) {
         let (min, max) = project_point_slice(&part.points[..part.len], axis);
         let shift = dx * axis.x + dy * axis.y;
         (min + shift, max + shift)
     }
 
-    fn project_point_slice(points: &[Point], axis: Point) -> (f64, f64) {
+    fn project_point_slice(points: &[Pointf], axis: Pointf) -> (f64, f64) {
         let mut min = f64::INFINITY;
         let mut max = f64::NEG_INFINITY;
         for &p in points {
@@ -1030,11 +1004,11 @@ mod tests {
         (min, max)
     }
 
-    fn project_point(p: Point, axis: Point, dx: f64, dy: f64) -> f64 {
+    fn project_point(p: Pointf, axis: Pointf, dx: f64, dy: f64) -> f64 {
         (p.x + dx) * axis.x + (p.y + dy) * axis.y
     }
 
-    fn bbox_may_overlap(a: BBox, b: BBox, dx: i64, dy: i64) -> bool {
+    fn bbox_may_overlap(a: Boundsf, b: Boundsf, dx: i64, dy: i64) -> bool {
         let dx = dx as f64;
         let dy = dy as f64;
         let b_min_x = b.min_x + dx;
@@ -1668,7 +1642,7 @@ mod tests {
 
         assert_eq!(
             pre.fit_range(0, 0, 0),
-            Some(FitRange {
+            Some(Boundsi {
                 min_x: 1,
                 max_x: 7,
                 min_y: 1,

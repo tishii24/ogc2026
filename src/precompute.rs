@@ -1,14 +1,6 @@
 use crate::{collision::CollisionPrecompute, *};
 use std::cmp::Reverse;
 
-#[derive(Clone, Copy, Debug)]
-pub struct Bounds {
-    pub min_x: f64,
-    pub min_y: f64,
-    pub max_x: f64,
-    pub max_y: f64,
-}
-
 pub struct Precompute {
     pub collision: CollisionPrecompute,
     pub bay_load_scale: Vec<f64>,
@@ -16,11 +8,11 @@ pub struct Precompute {
     pub bay_order_by_pref: Vec<Vec<usize>>,
     pub orientation_order_by_bbox: Vec<Vec<usize>>,
     pub orientation_bbox_center: Vec<Vec<(f64, f64)>>,
-    pub orientation_bbox_bounds: Vec<Vec<Bounds>>,
+    pub orientation_bbox_bounds: Vec<Vec<Boundsf>>,
     pub block_area: Vec<f64>,
 }
 
-fn orientation_bbox_bounds(orientation: &Orientation) -> Bounds {
+fn orientation_bbox_bounds(orientation: &Orientation) -> Boundsf {
     let mut min_x = f64::INFINITY;
     let mut min_y = f64::INFINITY;
     let mut max_x = f64::NEG_INFINITY;
@@ -35,7 +27,7 @@ fn orientation_bbox_bounds(orientation: &Orientation) -> Bounds {
         }
     }
 
-    Bounds {
+    Boundsf {
         min_x,
         min_y,
         max_x,

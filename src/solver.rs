@@ -1,6 +1,5 @@
 use crate::{
     collision::{BlockPlacement, CollisionResult},
-    core::*,
     precompute::Precompute,
     util::{
         rand::{RandPcg64Mcg, Random},
@@ -41,8 +40,8 @@ const INSERT_PARAMS: InsertSearchParams = InsertSearchParams {
 const ORDER_SLACK_WEIGHT_MIN: f64 = 0.0;
 const ORDER_SLACK_WEIGHT_MAX: f64 = 4.0;
 
-const MOVE_MAX_SHIFT_X: i64 = 10;
-const MOVE_MAX_SHIFT_Y: i64 = 10;
+const MOVE_MAX_SHIFT_X: i64 = 5;
+const MOVE_MAX_SHIFT_Y: i64 = 5;
 
 const NEIGHBOR_KIND_COUNT: usize = 2;
 const NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
@@ -943,4 +942,32 @@ fn normalized_imbalance(pre: &Precompute, loads: &[f64]) -> f64 {
         max_value = max_value.max(normalized);
     }
     (max_value - min_value).floor()
+}
+
+fn schedule_to_solution(schedule: &[ScheduledBlock]) -> Solution {
+    let mut operations: BTreeMap<i64, Vec<Operation>> = BTreeMap::new();
+
+    for s in schedule {
+        operations.entry(s.exit_time).or_default().push(Operation {
+            op_type: "EXIT",
+            block_id: s.block_id,
+            bay_id: s.bay_id,
+            x: None,
+            y: None,
+            orient_idx: None,
+        });
+    }
+    for s in schedule {
+        operations.entry(s.entry_time).or_default().push(Operation {
+            op_type: "ENTRY",
+            block_id: s.block_id,
+            bay_id: s.bay_id,
+            x: Some(s.x),
+            y: Some(s.y),
+            orient_idx: Some(s.orient_idx),
+        });
+    }
+
+    operations.retain(|_, ops| !ops.is_empty());
+    Solution { operations }
 }

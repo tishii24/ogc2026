@@ -1,5 +1,4 @@
 pub mod collision;
-pub mod core;
 pub mod precompute;
 pub mod solver;
 pub mod util;
@@ -110,4 +109,32 @@ pub struct ScheduledBlock {
     y: i64,
     entry_time: i64,
     exit_time: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Boundsi {
+    pub min_x: i64,
+    pub max_x: i64,
+    pub min_y: i64,
+    pub max_y: i64,
+}
+
+impl Boundsi {
+    pub fn contains(&self, x: i64, y: i64) -> bool {
+        self.min_x <= x && x <= self.max_x && self.min_y <= y && y <= self.max_y
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Boundsf {
+    pub min_x: f64,
+    pub min_y: f64,
+    pub max_x: f64,
+    pub max_y: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Pointf {
+    pub x: f64,
+    pub y: f64,
 }

@@ -9,6 +9,7 @@ feasibilityのチェック:
   - annealingで解を探索して、一定周期で解をstdoutに書き出す
   - stdinからmyalgorithmが計算したfeasibilityの結果を読み取り、feasibleでない場合はrollbackする
 
+0. bboundsの整理
 1,2. insert-greedyの改善, reconstructの変更
 3. insertの追加
 4. change-orientの追加
@@ -17,9 +18,9 @@ feasibilityのチェック:
 
 局所探索:
 - 貪欲
-  - insert_greedy(bay_id, block_id, bbox, orientation) -> (x, y, t)
+  - insert_greedy(bay_id, block_id, bounds, orientation) -> (x, y, t)
   - orientationは一様にシャッフルする
-  - bboxに収まる(x,y)だけ試す
+  - boundsに収まる(x,y)だけ試す
     - (min_x, max_x, min_y, max_y)をorientationごとに求める
   - (dx,dy,orientation)が小さい順に試して、tardinessが悪化しない(dx,dy)を見つければ終了
   - 見つからなければ、(tardiness,dx,dy)が最も小さい位置に挿入する

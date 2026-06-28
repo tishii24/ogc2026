@@ -56,31 +56,3 @@ pub fn _can_insert(
     }
     true
 }
-
-pub fn schedule_to_solution(schedule: &[ScheduledBlock]) -> Solution {
-    let mut operations: BTreeMap<i64, Vec<Operation>> = BTreeMap::new();
-
-    for s in schedule {
-        operations.entry(s.exit_time).or_default().push(Operation {
-            op_type: "EXIT",
-            block_id: s.block_id,
-            bay_id: s.bay_id,
-            x: None,
-            y: None,
-            orient_idx: None,
-        });
-    }
-    for s in schedule {
-        operations.entry(s.entry_time).or_default().push(Operation {
-            op_type: "ENTRY",
-            block_id: s.block_id,
-            bay_id: s.bay_id,
-            x: Some(s.x),
-            y: Some(s.y),
-            orient_idx: Some(s.orient_idx),
-        });
-    }
-
-    operations.retain(|_, ops| !ops.is_empty());
-    Solution { operations }
-}
