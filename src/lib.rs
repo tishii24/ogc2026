@@ -1,4 +1,5 @@
 pub mod collision;
+pub mod core;
 pub mod precompute;
 pub mod solver;
 pub mod util;
@@ -86,4 +87,15 @@ pub struct Placement {
     pub orient_idx: usize,
     pub x: i64,
     pub y: i64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ScheduledBlock {
+    block_id: usize,
+    bay_id: usize,
+    orient_idx: usize,
+    x: i64,
+    y: i64,
+    entry_time: i64,
+    exit_time: i64,
 }

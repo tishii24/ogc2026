@@ -65,14 +65,3 @@ docker run --rm \
 (cd "solutions/$VERSION" && zip -r "../../$VERSION.zip" .)
 zipinfo "$VERSION.zip"
 ```
-
-## 衝突テスト
-
-```sh
-cargo build --release --bin check_collision
-
-python3 tools/check_collision.py \
-  --problem train/prob_1.json \
-  --checker target/release/check_collision \
-  --margin 1
-```

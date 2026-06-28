@@ -1,9 +1,4 @@
-- 前計算でpolygonごとにぎっしり詰められる組み合わせを求めておく
-  - 元のpolygonの凸包を作って、それが大きくならない組み合わせを求める
-- tardiness>0: tardinessを最小化するパターン
-- tardiness=0: でobj2,obj3を最小化する
-
-構造:
+feasibilityのチェック:
 - myalgorithm (python: 1 thread):
   - solverをsubprocessで起動する
   - stdinから解を読み取って、feasibilityを計算する
@@ -14,4 +9,42 @@
   - annealingで解を探索して、一定周期で解をstdoutに書き出す
   - stdinからmyalgorithmが計算したfeasibilityの結果を読み取り、feasibleでない場合はrollbackする
 
-- ファイル出力でも良いかも
+局所探索:
+- 初期解
+  - 貪欲
+  - TODO: 少し間引く？
+- 貪欲
+  - insert_greedy(bay_id, block_id, bbox, orientation) -> (x, y, t)
+  - ブロックの挿入順序: `area x due-date x noise`
+  - orientationは一様にシャッフルする
+  - bboxに収まる(x,y)だけ試す
+    - (min_x, max_x, min_y, max_y)をorientationごとに求める
+  - (dx,dy,orientation)が小さい順に試して、tardinessが悪化しない(dx,dy)を見つければ終了
+  - 見つからなければ、(tardiness,dx,dy)が最も小さい位置に挿入する
+- 近傍
+  - insert: 1個のブロックを移動する
+    - 小さいブロックを選ぶ
+    - insert_greedyで挿入する
+    - TODO: (bay-id,bbox)を制限する
+  - change-orient: 1個のブロックのorientationを変更する
+    - bboxの重なりが大きい(orientation,dx,dy)を前計算する
+      - orientation_neighbors[block_id][orient_id]: Vec<(orientation: usize, dx: i64, dy: i64)>
+    - dx'=dx+(-D..D),dy'=dy+(-D..D)を試す
+  - change-entry-t: 1個のブロックのentry-tを変更する
+    - get-insert-tを計算し直す
+    - TODO: 干渉するk個のブロックのtを変更する
+  - swap: 2個のブロックの位置を入れ替える
+    - bboxの重なりが大きい(orientation,dx,dy)を前計算する
+      - other_block_neighbors[block_id][orient_id]: Vec<(block_id: usize, orientation: usize, dx: i64, dy: i64)>
+    - dx'=dx+(-D..D),dy'=dy+(-D..D)を試す
+  - move: 1個のブロックの位置を連動して動かす
+    - dx=(-D..0),dy=(-D..0)を試す
+    - |dx|+|dy|が大きい順に試す
+    - TODO: 干渉するk個のブロックを一緒に動かす
+  - reconstruct: 2つの領域に含まれるブロックの位置を入れ替える
+    - 同じ面積のbboxを選ぶ
+    - そこに含まれるブロックを削除する
+    - 削除したブロックのbbox+marginを候補として貪欲で挿入し直す
+    - bbox内で(x,y)が小さい順に試す
+- 操作
+  - get_insert_t(bay_id, block_id, x, y, orientation) -> t
