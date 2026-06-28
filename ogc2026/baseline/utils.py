@@ -1,3 +1,5 @@
+# type: ignore
+
 """
 utils.py -- Bay/Block geometry and feasibility checking utilities
 
@@ -104,10 +106,10 @@ from typing import Optional
 from shapely.geometry import Polygon as ShapelyPolygon
 from shapely.ops import unary_union
 
-
 # -----------------------------------------------------------------------------
 # Internal geometry helpers
 # -----------------------------------------------------------------------------
+
 
 def _resolve_layers(raw_layers: list) -> list:
     """
@@ -221,6 +223,7 @@ def _bounding_box(verts: list) -> tuple[float, float, float, float]:
 # Bay
 # -----------------------------------------------------------------------------
 
+
 @dataclass
 class Bay:
     """
@@ -236,13 +239,16 @@ class Bay:
     height : Bay height in grid units (positive integer).
     id     : Bay identifier (0-based list index, assigned at load time).
     """
+
     width: int
     height: int
     id: int = 0
 
     def __post_init__(self):
         if self.width <= 0 or self.height <= 0:
-            raise ValueError(f"Bay dimensions must be positive integers: width={self.width}, height={self.height}")
+            raise ValueError(
+                f"Bay dimensions must be positive integers: width={self.width}, height={self.height}"
+            )
 
     @classmethod
     def from_dict(cls, d: dict, idx: int = 0) -> "Bay":
@@ -261,14 +267,14 @@ class Bay:
         """
         bb = block.bounding_rect()
         return (
-            bb[0] >= 0 and bb[1] >= 0
-            and bb[2] <= self.width and bb[3] <= self.height
+            bb[0] >= 0 and bb[1] >= 0 and bb[2] <= self.width and bb[3] <= self.height
         )
 
 
 # -----------------------------------------------------------------------------
 # Block
 # -----------------------------------------------------------------------------
+
 
 @dataclass
 class Block:
@@ -293,10 +299,11 @@ class Block:
       This avoids repeated translate calls during the many check_entry / check_exit
       evaluations that happen in Phase 1 and repair.
     """
-    block_id:   int
+
+    block_id: int
     block_data: dict
-    x:          int = 0
-    y:          int = 0
+    x: int = 0
+    y: int = 0
     orient_idx: int = 0
 
     def __post_init__(self):
@@ -308,11 +315,13 @@ class Block:
         layers = _resolve_layers(self.block_data["shape"][self.orient_idx]["layers"])
         if layers:
             ref_x, ref_y = layers[0][0] if layers[0] else (0.0, 0.0)
-            object.__setattr__(self, '_layers_cache',
-                               [_translate_verts(l, self.x - ref_x, self.y - ref_y)
-                                for l in layers])
+            object.__setattr__(
+                self,
+                "_layers_cache",
+                [_translate_verts(l, self.x - ref_x, self.y - ref_y) for l in layers],
+            )
         else:
-            object.__setattr__(self, '_layers_cache', [])
+            object.__setattr__(self, "_layers_cache", [])
 
     # -- Query properties -----------------------------------------------------
     @property
@@ -377,30 +386,40 @@ class Block:
         """
         layers = self.layers_at_pos()
         if not layers:
-            return (float(self.x), float(self.y),
-                    float(self.x) + 1.0, float(self.y) + 1.0)
+            return (
+                float(self.x),
+                float(self.y),
+                float(self.x) + 1.0,
+                float(self.y) + 1.0,
+            )
         all_verts = [v for layer in layers for v in layer]
         return _bounding_box(all_verts)
 
     # -- Convenience methods --------------------------------------------------
     @classmethod
-    def from_instance(cls, block_id: int, instance: dict,
-                      x: int = 0, y: int = 0, orient_idx: int = 0) -> "Block":
+    def from_instance(
+        cls, block_id: int, instance: dict, x: int = 0, y: int = 0, orient_idx: int = 0
+    ) -> "Block":
         """Create a Block directly from an instance JSON dict."""
         return cls(
             block_id=block_id,
             block_data=instance["blocks"][block_id],
-            x=x, y=y, orient_idx=orient_idx,
+            x=x,
+            y=y,
+            orient_idx=orient_idx,
         )
 
     def __repr__(self) -> str:
-        return (f"Block(id={self.block_id}, pos=({self.x},{self.y}), "
-                f"orient_idx={self.orientation_index})")
+        return (
+            f"Block(id={self.block_id}, pos=({self.x},{self.y}), "
+            f"orient_idx={self.orientation_index})"
+        )
 
 
 # -----------------------------------------------------------------------------
 # CollisionResult
 # -----------------------------------------------------------------------------
+
 
 @dataclass
 class CollisionResult:
@@ -423,11 +442,12 @@ class CollisionResult:
     area         : Area of the intersection polygon (auto-computed from
                    intersection in __post_init__).
     """
-    block_a:      Block
-    block_b:      Block
-    layer_index:  int
+
+    block_a: Block
+    block_b: Block
+    layer_index: int
     intersection: ShapelyPolygon
-    area:         float = field(init=False)
+    area: float = field(init=False)
 
     def __post_init__(self):
         self.area = self.intersection.area
@@ -445,8 +465,10 @@ class CollisionResult:
 # check_collisions -- core utility function
 # -----------------------------------------------------------------------------
 
-def _bb_overlap(a: tuple[float, float, float, float],
-                b: tuple[float, float, float, float]) -> bool:
+
+def _bb_overlap(
+    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
+) -> bool:
     """
     Return True if two axis-aligned bounding boxes overlap (strict interior).
 
@@ -458,8 +480,9 @@ def _bb_overlap(a: tuple[float, float, float, float],
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
 
-def check_collisions(bay: Bay, blocks: list[Block],
-                     layer_indices: Optional[set] = None) -> list[CollisionResult]:
+def check_collisions(
+    bay: Bay, blocks: list[Block], layer_indices: Optional[set] = None
+) -> list[CollisionResult]:
     """
     Check for spatial overlaps among all pairs of blocks at each layer.
 
@@ -503,7 +526,9 @@ def check_collisions(bay: Bay, blocks: list[Block],
     n = len(blocks)
 
     # Pre-compute per-block AABB and layer lists (avoid repeated computation)
-    bboxes:  list[tuple[float, float, float, float]] = [b.bounding_rect() for b in blocks]
+    bboxes: list[tuple[float, float, float, float]] = [
+        b.bounding_rect() for b in blocks
+    ]
     all_layers: list[list[list]] = [b.layers_at_pos() for b in blocks]
 
     for i in range(n):
@@ -533,12 +558,14 @@ def check_collisions(bay: Bay, blocks: list[Block],
                     continue
 
                 if not inter.is_empty and inter.area > 0:
-                    results.append(CollisionResult(
-                        block_a=ba,
-                        block_b=bb,
-                        layer_index=k,
-                        intersection=inter,
-                    ))
+                    results.append(
+                        CollisionResult(
+                            block_a=ba,
+                            block_b=bb,
+                            layer_index=k,
+                            intersection=inter,
+                        )
+                    )
 
     return results
 
@@ -546,6 +573,7 @@ def check_collisions(bay: Bay, blocks: list[Block],
 # -----------------------------------------------------------------------------
 # EntryObstruction / check_entry -- crane entry feasibility check
 # -----------------------------------------------------------------------------
+
 
 @dataclass
 class EntryObstruction:
@@ -576,11 +604,12 @@ class EntryObstruction:
                      False when j == k -- the obstruction is at the final
                      resting position of the new block (same-height collision).
     """
+
     existing_block: Block
-    new_layer:      int
-    exist_layer:    int
-    intersection:   ShapelyPolygon
-    area:           float = field(init=False)
+    new_layer: int
+    exist_layer: int
+    intersection: ShapelyPolygon
+    area: float = field(init=False)
 
     def __post_init__(self):
         self.area = self.intersection.area
@@ -600,9 +629,9 @@ class EntryObstruction:
         )
 
 
-def check_entry(bay: Bay, blocks: list[Block],
-                new_block: Block,
-                fast: bool = False) -> list[EntryObstruction]:
+def check_entry(
+    bay: Bay, blocks: list[Block], new_block: Block, fast: bool = False
+) -> list[EntryObstruction]:
     """
     Check whether the crane can lower new_block into the bay without obstruction.
 
@@ -660,27 +689,29 @@ def check_entry(bay: Bay, blocks: list[Block],
         # The result is stored as a sentinel EntryObstruction with
         # existing_block == new_block so callers can identify boundary violations.
         bb = new_block.bounding_rect()
-        bay_poly = _poly_from_verts([
-            [0, 0], [bay.width, 0], [bay.width, bay.height], [0, bay.height]
-        ])
-        new_poly = _poly_from_verts([
-            [bb[0], bb[1]], [bb[2], bb[1]], [bb[2], bb[3]], [bb[0], bb[3]]
-        ])
+        bay_poly = _poly_from_verts(
+            [[0, 0], [bay.width, 0], [bay.width, bay.height], [0, bay.height]]
+        )
+        new_poly = _poly_from_verts(
+            [[bb[0], bb[1]], [bb[2], bb[1]], [bb[2], bb[3]], [bb[0], bb[3]]]
+        )
         if bay_poly is not None and new_poly is not None:
             outside = new_poly.difference(bay_poly)
             if not outside.is_empty and outside.area > 0:
-                results.append(EntryObstruction(
-                    existing_block=new_block,  # self-reference sentinel for boundary violation
-                    new_layer=0,
-                    exist_layer=0,
-                    intersection=outside,
-                ))
+                results.append(
+                    EntryObstruction(
+                        existing_block=new_block,  # self-reference sentinel for boundary violation
+                        new_layer=0,
+                        exist_layer=0,
+                        intersection=outside,
+                    )
+                )
         return results
 
     # -- Conditions 2 & 3: crane-path collision against each existing block ---
     new_layers = new_block.layers_at_pos()
-    new_bbox   = new_block.bounding_rect()
-    n_new      = len(new_layers)
+    new_bbox = new_block.bounding_rect()
+    n_new = len(new_layers)
 
     for exist in blocks:
         # AABB pre-filter: skip blocks whose footprint bounding boxes don't overlap
@@ -688,7 +719,7 @@ def check_entry(bay: Bay, blocks: list[Block],
             continue
 
         exist_layers = exist.layers_at_pos()
-        n_exist      = len(exist_layers)
+        n_exist = len(exist_layers)
 
         # Build Shapely polygons for each new-block layer once and reuse across all j
         new_polys = [_poly_from_verts(new_layers[k]) for k in range(n_new)]
@@ -724,9 +755,9 @@ def check_entry(bay: Bay, blocks: list[Block],
     return results
 
 
-def check_exit(bay: Bay, blocks: list[Block],
-               target_block: Block,
-               fast: bool = False) -> list[EntryObstruction]:
+def check_exit(
+    bay: Bay, blocks: list[Block], target_block: Block, fast: bool = False
+) -> list[EntryObstruction]:
     """
     Check whether the crane can lift target_block out of the bay without obstruction.
 
@@ -772,8 +803,8 @@ def check_exit(bay: Bay, blocks: list[Block],
     results: list[EntryObstruction] = []
 
     target_layers = target_block.layers_at_pos()
-    target_bbox   = target_block.bounding_rect()
-    n_target      = len(target_layers)
+    target_bbox = target_block.bounding_rect()
+    n_target = len(target_layers)
 
     # Build Shapely polygons for each target layer once and reuse across all surrounding blocks
     target_polys = [_poly_from_verts(target_layers[k]) for k in range(n_target)]
@@ -788,7 +819,7 @@ def check_exit(bay: Bay, blocks: list[Block],
             continue
 
         exist_layers = exist.layers_at_pos()
-        n_exist      = len(exist_layers)
+        n_exist = len(exist_layers)
 
         for k in range(n_target):
             poly_target = target_polys[k]
@@ -824,9 +855,13 @@ def check_exit(bay: Bay, blocks: list[Block],
 # Convenience function: batch creation of Bay + Block list from instance JSON
 # -----------------------------------------------------------------------------
 
-def blocks_from_instance(instance: dict, bay_idx: int,
-                         positions: Optional[list[tuple[int, int]]] = None,
-                         orient_indices: Optional[list[int]] = None) -> list[Block]:
+
+def blocks_from_instance(
+    instance: dict,
+    bay_idx: int,
+    positions: Optional[list[tuple[int, int]]] = None,
+    orient_indices: Optional[list[int]] = None,
+) -> list[Block]:
     """
     Construct a list of Block objects for blocks whose highest bay preference is bay_idx.
 
@@ -880,7 +915,13 @@ def blocks_from_instance(instance: dict, bay_idx: int,
 
     result: list[Block] = []
     for seq, (bi, blk_data) in enumerate(selected):
-        oi = 0 if orient_indices is None else orient_indices[seq] if seq < len(orient_indices) else 0
+        oi = (
+            0
+            if orient_indices is None
+            else orient_indices[seq]
+            if seq < len(orient_indices)
+            else 0
+        )
 
         if positions is not None and seq < len(positions):
             px, py = positions[seq]
@@ -900,12 +941,15 @@ def blocks_from_instance(instance: dict, bay_idx: int,
             px = min(col * (bw + 2), bay_w - bw)
             py = min(row * (bh + 2), bay_h - bh)
 
-        result.append(Block(
-            block_id=bi,
-            block_data=blk_data,
-            x=int(px), y=int(py),
-            orient_idx=oi,
-        ))
+        result.append(
+            Block(
+                block_id=bi,
+                block_data=blk_data,
+                x=int(px),
+                y=int(py),
+                orient_idx=oi,
+            )
+        )
 
     return result
 
@@ -913,6 +957,7 @@ def blocks_from_instance(instance: dict, bay_idx: int,
 # -----------------------------------------------------------------------------
 # check_feasibility -- solution validity check + objective computation
 # -----------------------------------------------------------------------------
+
 
 def check_feasibility(prob_info: dict, solution: dict) -> dict:
     """
@@ -1001,32 +1046,47 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
         obj2       : float|None   -- Load-balance component; None if infeasible.
         obj3       : float|None   -- Bay-preference component; None if infeasible.
     """
-    _INFEASIBLE = {"feasible": False, "stage": 0, "violations": [],
-                   "objective": None, "obj1": None, "obj2": None, "obj3": None}
+    _INFEASIBLE = {
+        "feasible": False,
+        "stage": 0,
+        "violations": [],
+        "objective": None,
+        "obj1": None,
+        "obj2": None,
+        "obj3": None,
+    }
 
     # -- Argument safeguard ---------------------------------------------------
     if not isinstance(prob_info, dict):
-        return {**_INFEASIBLE, "violations": [
-            f"prob_info must be a dict, got {type(prob_info).__name__}"
-        ]}
+        return {
+            **_INFEASIBLE,
+            "violations": [f"prob_info must be a dict, got {type(prob_info).__name__}"],
+        }
     if not isinstance(solution, dict):
-        return {**_INFEASIBLE, "violations": [
-            f"solution must be a dict, got {type(solution).__name__}"
-        ]}
+        return {
+            **_INFEASIBLE,
+            "violations": [f"solution must be a dict, got {type(solution).__name__}"],
+        }
     for key in ("blocks", "bays"):
         if key not in prob_info:
-            return {**_INFEASIBLE, "violations": [f"prob_info missing required key '{key}'"]}
+            return {
+                **_INFEASIBLE,
+                "violations": [f"prob_info missing required key '{key}'"],
+            }
         if not isinstance(prob_info[key], list):
-            return {**_INFEASIBLE, "violations": [
-                f"prob_info['{key}'] must be a list, got {type(prob_info[key]).__name__}"
-            ]}
+            return {
+                **_INFEASIBLE,
+                "violations": [
+                    f"prob_info['{key}'] must be a list, got {type(prob_info[key]).__name__}"
+                ],
+            }
     if len(prob_info["bays"]) == 0:
         return {**_INFEASIBLE, "violations": ["prob_info['bays'] is empty"]}
 
     blocks_data = prob_info["blocks"]
-    bays_data   = prob_info["bays"]
-    n_blocks    = len(blocks_data)
-    n_bays      = len(bays_data)
+    bays_data = prob_info["bays"]
+    n_blocks = len(blocks_data)
+    n_bays = len(bays_data)
 
     # Reconstruct per-block assignment records from the flat operations dict.
     # ENTRY ops carry the placement data (bay_id, x, y, orient_idx, entry_time);
@@ -1034,9 +1094,12 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
     # exactly one ENTRY and one EXIT operation; duplicates are Stage-1 violations.
     raw_operations = solution.get("operations", {})
     if not isinstance(raw_operations, dict):
-        return {**_INFEASIBLE, "violations": [
-            f"solution['operations'] must be a dict, got {type(raw_operations).__name__}"
-        ]}
+        return {
+            **_INFEASIBLE,
+            "violations": [
+                f"solution['operations'] must be a dict, got {type(raw_operations).__name__}"
+            ],
+        }
 
     operations: dict = {}
     _asgn_tmp: dict[int, dict] = {}
@@ -1046,35 +1109,47 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
         try:
             _t = float(int(_t_str))
         except (ValueError, TypeError):
-            return {**_INFEASIBLE, "violations": [
-                f"operations key '{_t_str}' cannot be converted to an integer time"
-            ]}
+            return {
+                **_INFEASIBLE,
+                "violations": [
+                    f"operations key '{_t_str}' cannot be converted to an integer time"
+                ],
+            }
         if not isinstance(_ops_at_t, list):
-            return {**_INFEASIBLE, "violations": [
-                f"operations['{_t_str}'] must be a list, got {type(_ops_at_t).__name__}"
-            ]}
+            return {
+                **_INFEASIBLE,
+                "violations": [
+                    f"operations['{_t_str}'] must be a list, got {type(_ops_at_t).__name__}"
+                ],
+            }
         operations[_t_str] = _ops_at_t
         for _op in _ops_at_t:
             if not isinstance(_op, dict):
-                return {**_INFEASIBLE, "violations": [
-                    f"operations['{_t_str}'] contains a non-dict entry: {_op!r}"
-                ]}
+                return {
+                    **_INFEASIBLE,
+                    "violations": [
+                        f"operations['{_t_str}'] contains a non-dict entry: {_op!r}"
+                    ],
+                }
             for _req in ("type", "block_id", "bay_id"):
                 if _req not in _op:
-                    return {**_INFEASIBLE, "violations": [
-                        f"operations['{_t_str}']: op missing required key '{_req}': {_op!r}"
-                    ]}
+                    return {
+                        **_INFEASIBLE,
+                        "violations": [
+                            f"operations['{_t_str}']: op missing required key '{_req}': {_op!r}"
+                        ],
+                    }
             _bid = _op["block_id"]
             if _op["type"] == "ENTRY":
                 _entry_count[_bid] = _entry_count.get(_bid, 0) + 1
                 _asgn_tmp[_bid] = {
-                    "block_id":   _bid,
-                    "bay_id":     _op["bay_id"],
-                    "x":          _op.get("x", 0.0),
-                    "y":          _op.get("y", 0.0),
+                    "block_id": _bid,
+                    "bay_id": _op["bay_id"],
+                    "x": _op.get("x", 0.0),
+                    "y": _op.get("y", 0.0),
                     "orient_idx": _op.get("orient_idx", 0),
                     "entry_time": _t,
-                    "exit_time":  None,  # filled in when the EXIT op is encountered
+                    "exit_time": None,  # filled in when the EXIT op is encountered
                 }
             elif _op["type"] == "EXIT":
                 _exit_count[_bid] = _exit_count.get(_bid, 0) + 1
@@ -1097,8 +1172,15 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
                 f"Stage1: block {_bid} has {_cnt} EXIT operations (expected exactly 1)"
             )
     if violations:
-        return {"feasible": False, "stage": 1, "violations": violations,
-                "objective": None, "obj1": None, "obj2": None, "obj3": None}
+        return {
+            "feasible": False,
+            "stage": 1,
+            "violations": violations,
+            "objective": None,
+            "obj1": None,
+            "obj2": None,
+            "obj3": None,
+        }
 
     # Build the set of block_ids that appear in at least one ENTRY op.
     # Any block_id missing from this set was never placed, which is a violation.
@@ -1119,14 +1201,16 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
                 f"Stage1: block {a['block_id']} has invalid orient_idx {a['orient_idx']}"
             )
         if a["exit_time"] is None:
-            violations.append(
-                f"Stage1: block {a['block_id']} has no EXIT operation"
-            )
+            violations.append(f"Stage1: block {a['block_id']} has no EXIT operation")
             continue
-        ei, ai, pi = a["exit_time"], a["entry_time"], blocks_data[a["block_id"]]["processing_time"]
+        ei, ai, pi = (
+            a["exit_time"],
+            a["entry_time"],
+            blocks_data[a["block_id"]]["processing_time"],
+        )
         if ei - ai < pi - 1e-6:
             violations.append(
-                f"Stage1: block {a['block_id']} exit-entry={ei-ai:.2f} < processing_time={pi}"
+                f"Stage1: block {a['block_id']} exit-entry={ei - ai:.2f} < processing_time={pi}"
             )
         if ai < blocks_data[a["block_id"]]["release_time"] - 1e-6:
             violations.append(
@@ -1135,8 +1219,15 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
             )
 
     if violations:
-        return {"feasible": False, "stage": 1, "violations": violations,
-                "objective": None, "obj1": None, "obj2": None, "obj3": None}
+        return {
+            "feasible": False,
+            "stage": 1,
+            "violations": violations,
+            "objective": None,
+            "obj1": None,
+            "obj2": None,
+            "obj3": None,
+        }
 
     # Group assignments and their Block objects by bay index.
     # bay_asgns[j] / bay_blocks[j] are parallel lists: index k in both refers
@@ -1148,13 +1239,15 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
         j = a["bay_id"]
         bi = a["block_id"]
         bay_asgns[j].append(a)
-        bay_blocks[j].append(Block(
-            block_id=bi,
-            block_data=blocks_data[bi],
-            x=int(round(a["x"])),
-            y=int(round(a["y"])),
-            orient_idx=a["orient_idx"],
-        ))
+        bay_blocks[j].append(
+            Block(
+                block_id=bi,
+                block_data=blocks_data[bi],
+                x=int(round(a["x"])),
+                y=int(round(a["y"])),
+                orient_idx=a["orient_idx"],
+            )
+        )
 
     def _time_overlaps(a1: float, e1: float, a2: float, e2: float) -> bool:
         """True if intervals [a1, e1) and [a2, e2) overlap."""
@@ -1178,8 +1271,7 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
             present = [
                 bay_blocks[j][k]
                 for k, other in enumerate(bay_asgns[j])
-                if k != idx
-                and other["entry_time"] < ai < other["exit_time"]
+                if k != idx and other["entry_time"] < ai < other["exit_time"]
             ]
             obs = check_entry(bay, present, new_blk)
             if obs:
@@ -1199,8 +1291,15 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
                         )
 
     if violations:
-        return {"feasible": False, "stage": 2, "violations": violations,
-                "objective": None, "obj1": None, "obj2": None, "obj3": None}
+        return {
+            "feasible": False,
+            "stage": 2,
+            "violations": violations,
+            "objective": None,
+            "obj1": None,
+            "obj2": None,
+            "obj3": None,
+        }
 
     # -- Stage 3: crane exit feasibility at exit_time ------------------------
     # For each block, collect the blocks that were already present in the same
@@ -1237,8 +1336,15 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
                     )
 
     if violations:
-        return {"feasible": False, "stage": 3, "violations": violations,
-                "objective": None, "obj1": None, "obj2": None, "obj3": None}
+        return {
+            "feasible": False,
+            "stage": 3,
+            "violations": violations,
+            "objective": None,
+            "obj1": None,
+            "obj2": None,
+            "obj3": None,
+        }
 
     # -- Stage 4: no spatial collisions + all blocks within bay boundary -----
     for j in range(n_bays):
@@ -1269,11 +1375,11 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
         for p in range(n):
             for q in range(p + 1, n):
                 ap, aq = bay_asgns[j][p], bay_asgns[j][q]
-                if not _time_overlaps(ap["entry_time"], ap["exit_time"],
-                                      aq["entry_time"], aq["exit_time"]):
+                if not _time_overlaps(
+                    ap["entry_time"], ap["exit_time"], aq["entry_time"], aq["exit_time"]
+                ):
                     continue  # disjoint time intervals -> spatial collision impossible
-                results = check_collisions(bay,
-                                           [bay_blocks[j][p], bay_blocks[j][q]])
+                results = check_collisions(bay, [bay_blocks[j][p], bay_blocks[j][q]])
                 for r in results:
                     violations.append(
                         f"Stage4: block {ap['block_id']} and block {aq['block_id']} "
@@ -1282,8 +1388,15 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
                     )
 
     if violations:
-        return {"feasible": False, "stage": 4, "violations": violations,
-                "objective": None, "obj1": None, "obj2": None, "obj3": None}
+        return {
+            "feasible": False,
+            "stage": 4,
+            "violations": violations,
+            "objective": None,
+            "obj1": None,
+            "obj2": None,
+            "obj3": None,
+        }
 
     # -- Stage 5: operations sequential feasibility ---------------------------
     # Replay all operations in chronological order, maintaining a bay_present
@@ -1312,8 +1425,8 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
 
         for op in ops:
             kind = op["type"]
-            bid  = op["block_id"]
-            jay  = op["bay_id"]
+            bid = op["block_id"]
+            jay = op["bay_id"]
             if bid not in asgn_by_id:
                 violations.append(
                     f"Stage5: t={t_str}: operation references unassigned block {bid}"
@@ -1338,11 +1451,13 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
 
             if kind == "ENTRY":
                 present_blks = [
-                    Block(block_id=k,
-                          block_data=blocks_data[k],
-                          x=int(round(asgn_by_id[k]["x"])),
-                          y=int(round(asgn_by_id[k]["y"])),
-                          orient_idx=asgn_by_id[k]["orient_idx"])
+                    Block(
+                        block_id=k,
+                        block_data=blocks_data[k],
+                        x=int(round(asgn_by_id[k]["x"])),
+                        y=int(round(asgn_by_id[k]["y"])),
+                        orient_idx=asgn_by_id[k]["orient_idx"],
+                    )
                     for k in bay_present[jay]
                 ]
                 obs = check_entry(bay, present_blks, target_blk)
@@ -1371,11 +1486,13 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
                     )
                     continue
                 present_blks = [
-                    Block(block_id=k,
-                          block_data=blocks_data[k],
-                          x=int(round(asgn_by_id[k]["x"])),
-                          y=int(round(asgn_by_id[k]["y"])),
-                          orient_idx=asgn_by_id[k]["orient_idx"])
+                    Block(
+                        block_id=k,
+                        block_data=blocks_data[k],
+                        x=int(round(asgn_by_id[k]["x"])),
+                        y=int(round(asgn_by_id[k]["y"])),
+                        orient_idx=asgn_by_id[k]["orient_idx"],
+                    )
                     for k in bay_present[jay]
                 ]
                 obs = check_exit(bay, present_blks, target_blk)
@@ -1391,8 +1508,15 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
                     bay_present[jay].discard(bid)
 
     if violations:
-        return {"feasible": False, "stage": 5, "violations": violations,
-                "objective": None, "obj1": None, "obj2": None, "obj3": None}
+        return {
+            "feasible": False,
+            "stage": 5,
+            "violations": violations,
+            "objective": None,
+            "obj1": None,
+            "obj2": None,
+            "obj3": None,
+        }
 
     # -- Objective function computation ---------------------------------------
     # Weights default to 1.0 if not present in prob_info["weights"].
@@ -1400,9 +1524,9 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
     w2 = prob_info.get("weights", {}).get("w2", 1.0)
     w3 = prob_info.get("weights", {}).get("w3", 1.0)
 
-    obj1 = 0.0           # total tardiness: Sigma max(0, exit_time - due_date)
+    obj1 = 0.0  # total tardiness: Sigma max(0, exit_time - due_date)
     bay_loads = [0.0] * n_bays  # accumulated workload per bay for obj2
-    obj3 = 0.0           # preference penalty: Sigma (S_i_max - S_i_bay_i)
+    obj3 = 0.0  # preference penalty: Sigma (S_i_max - S_i_bay_i)
 
     for a in assignments:
         bi = a["block_id"]
@@ -1416,26 +1540,28 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
     # obj2: maximum normalized workload imbalance across all bay pairs.
     # u_j = avg_bay_area / (W_j * H_j) -- smaller u for larger bays (less congested).
     bay_areas = [bays_data[j]["width"] * bays_data[j]["height"] for j in range(n_bays)]
-    avg_area  = sum(bay_areas) / n_bays
+    avg_area = sum(bay_areas) / n_bays
     u = [avg_area / a for a in bay_areas]
     if n_bays >= 2:
-        obj2 = math.floor(max(
-            abs(u[j1] * bay_loads[j1] - u[j2] * bay_loads[j2])
-            for j1 in range(n_bays) for j2 in range(n_bays)
-            if j1 != j2
-        ))
+        obj2 = math.floor(
+            max(
+                abs(u[j1] * bay_loads[j1] - u[j2] * bay_loads[j2])
+                for j1 in range(n_bays)
+                for j2 in range(n_bays)
+                if j1 != j2
+            )
+        )
     else:
         obj2 = 0.0
 
     objective = w1 * obj1 + w2 * obj2 + w3 * obj3
 
     return {
-        "feasible":  True,
-        "stage":     5,
+        "feasible": True,
+        "stage": 5,
         "violations": [],
         "objective": objective,
-        "obj1":      obj1,
-        "obj2":      obj2,
-        "obj3":      obj3,
+        "obj1": obj1,
+        "obj2": obj2,
+        "obj3": obj3,
     }
-

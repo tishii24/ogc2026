@@ -18,7 +18,7 @@ macro_rules! log {
 }
 
 const RNG_SEED: u64 = 1;
-const MAX_WORKER_COUNT: usize = 4;
+const MAX_WORKER_COUNT: usize = 2;
 
 const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
 const START_TEMP: f64 = 1e1;
@@ -82,8 +82,8 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
     let pre = Precompute::build(problem);
     log!(timer, "precompute built");
 
-    // let deadline = timelimit - LOCAL_SEARCH_TIME_BUFFER_SECONDS;
-    let deadline = 0.;
+    let deadline = timelimit - LOCAL_SEARCH_TIME_BUFFER_SECONDS;
+    // let deadline = 0.;
     let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
     log!(timer, "annealing workers: {}", worker_count);
     let worker_timers = vec![timer; worker_count];
@@ -438,7 +438,7 @@ fn find_best_insert_position<R: Random>(
     let p = block.processing_time;
     let lo = block.release_time;
     let cur_max_exit = schedule.iter().map(|s| s.exit_time).max().unwrap_or(lo);
-    let hi = cur_max_exit.max(lo);
+    let hi = cur_max_exit.max(lo) + 10;
 
     let current_obj2 = normalized_imbalance(pre, loads);
     let original_tardiness = (original.exit_time - block.due_date).max(0);
@@ -456,7 +456,6 @@ fn find_best_insert_position<R: Random>(
             let Some(range) = pre.collision.fit_range(bay_id, block_id, orient_idx) else {
                 continue;
             };
-            let mut found_acceptable_in_orientation = false;
             let mut anchor_x: Option<i64> = None;
 
             for x in (range.min_x..=range.max_x).step_by(params.x_step as usize) {
@@ -507,14 +506,9 @@ fn find_best_insert_position<R: Random>(
                         if anchor_x.is_none() {
                             anchor_x = Some(x);
                         }
-                        found_acceptable_in_orientation = true;
                     }
                 }
             }
-
-            // if found_acceptable_in_orientation {
-            //     break;
-            // }
         }
     }
 
@@ -572,39 +566,26 @@ fn add_forbidden_intervals_for_old(
         return;
     }
 
-    let mut points = vec![ol, or + 1];
-
-    if let Some((l, r)) = clamp_interval(a + 1, b - p - 1, ol, or) {
-        points.push(l);
-        points.push(r + 1);
-    }
-    if let Some((l, r)) = clamp_interval(b - p + 1, a - 1, ol, or) {
-        points.push(l);
-        points.push(r + 1);
+    if !new_old_clear && !old_new_clear {
+        forbidden.push((ol, or));
+        return;
     }
 
-    points.sort_unstable();
-    points.dedup();
+    let (allow_l, allow_r) = if new_old_clear {
+        ((a + 1).max(ol), (b - p - 1).min(or))
+    } else {
+        ((b - p + 1).max(ol), (a - 1).min(or))
+    };
 
-    for window in points.windows(2) {
-        let l = window[0];
-        let r = window[1] - 1;
-        if l > r {
-            continue;
-        }
-
-        let t = l;
-        let ok = if a < t && t + p < b {
-            new_old_clear
-        } else if t < a && b < t + p {
-            old_new_clear
-        } else {
-            new_old_clear && old_new_clear
-        };
-
-        if !ok {
-            forbidden.push((l, r));
-        }
+    if allow_l > allow_r {
+        forbidden.push((ol, or));
+        return;
+    }
+    if ol < allow_l {
+        forbidden.push((ol, allow_l - 1));
+    }
+    if allow_r < or {
+        forbidden.push((allow_r + 1, or));
     }
 }
 

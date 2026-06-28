@@ -66,8 +66,13 @@ docker run --rm \
 zipinfo "$VERSION.zip"
 ```
 
-## 緩和ソルバー
+## 衝突テスト
 
-```bash
-cargo run --bin relaxed_score -- --timelimit 0 train
+```sh
+cargo build --release --bin check_collision
+
+python3 tools/check_collision.py \
+  --problem train/prob_1.json \
+  --checker target/release/check_collision \
+  --margin 1
 ```

@@ -1,5 +1,11 @@
+安全性を高める:
+- 常に少し間を空ける
+- feasibilityをチェックする
+
 precompute:
 - 怪しいものはpythonに返してshapelyで厳密に計算する
+- fallback
+- fit-rangeを安全にする
 - 高速化
 
 solver:
@@ -16,7 +22,6 @@ solver:
     - 辺の角度を求める
 - t-intervalをmergeして、候補tがなくなったら打ち切る
 - もっと再挿入近傍を軽くする
-- 今のコードで、問題の入力によって、例外を発生しうるところを全て列挙してください
 - 評価
   - bboxの右上
 - 初期解
@@ -53,6 +58,7 @@ stats:
 - ベストを一番下に表示
 
 other:
+- max-worker-count=1にして提出する
 - py側に複数返して、feasibilityを確認する
 - 難しいケースをaugmentationして評価
 - 時間を延ばして評価

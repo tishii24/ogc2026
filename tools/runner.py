@@ -264,7 +264,6 @@ def run_case(
         solution = module.algorithm(prob_info, timelimit)
         elapsed = time.perf_counter() - started
 
-        result = check_feasibility(prob_info, solution)
         row.update(
             {
                 "elapsed": f"{elapsed:.6f}",
