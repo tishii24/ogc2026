@@ -9,6 +9,12 @@ feasibilityのチェック:
   - annealingで解を探索して、一定周期で解をstdoutに書き出す
   - stdinからmyalgorithmが計算したfeasibilityの結果を読み取り、feasibleでない場合はrollbackする
 
+1,2. insert-greedyの改善, reconstructの変更
+3. insertの追加
+4. change-orientの追加
+5. swapの追加
+6. change-entry-tの追加
+
 局所探索:
 - 貪欲
   - insert_greedy(bay_id, block_id, bbox, orientation) -> (x, y, t)
