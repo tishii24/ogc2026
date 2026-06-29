@@ -9,8 +9,7 @@ feasibilityのチェック:
   - annealingで解を探索して、一定周期で解をstdoutに書き出す
   - stdinからmyalgorithmが計算したfeasibilityの結果を読み取り、feasibleでない場合はrollbackする
 
-0. bboundsの整理
-1,2. insert-greedyの改善, reconstructの変更
+1,2. small-reconstructの追加（insert-greedyの変更）
 3. insertの追加
 4. change-orientの追加
 5. swapの追加

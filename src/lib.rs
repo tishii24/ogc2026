@@ -66,11 +66,19 @@ fn deserialize_non_empty_layers<'de, D>(deserializer: D) -> Result<Vec<Vec<[f64;
 where
     D: Deserializer<'de>,
 {
-    let layers = Vec::<Vec<[f64; 2]>>::deserialize(deserializer)?;
-    Ok(layers
+    let mut layers: Vec<Vec<[f64; 2]>> = Vec::<Vec<[f64; 2]>>::deserialize(deserializer)?
         .into_iter()
         .filter(|layer| !layer.is_empty())
-        .collect())
+        .collect();
+    if let Some([ref_x, ref_y]) = layers.first().and_then(|layer| layer.first()).copied() {
+        for layer in &mut layers {
+            for [x, y] in layer {
+                *x -= ref_x;
+                *y -= ref_y;
+            }
+        }
+    }
+    Ok(layers)
 }
 
 #[derive(Debug, Serialize)]
@@ -137,4 +145,34 @@ pub struct Boundsf {
 pub struct Pointf {
     pub x: f64,
     pub y: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_layers_drops_empty_and_uses_first_resolved_vertex_as_reference() {
+        let input = r#"
+        {
+            "bays": [{"width": 10, "height": 10}],
+            "blocks": [{
+                "release_time": 0,
+                "due_date": 1,
+                "processing_time": 1,
+                "workload": 1,
+                "bay_preferences": [100],
+                "shape": [{
+                    "orientation": 0,
+                    "layers": [[], [[2.0, 3.0], [4.0, 3.0], [4.0, 5.0], [2.0, 5.0]]]
+                }]
+            }]
+        }
+        "#;
+        let problem: Problem = serde_json::from_str(input).unwrap();
+        let layers = &problem.blocks[0].shape[0].layers;
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0][0], [0.0, 0.0]);
+        assert_eq!(layers[0][2], [2.0, 2.0]);
+    }
 }
