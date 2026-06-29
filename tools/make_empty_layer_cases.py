@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_SEED = 20260628
-DEFAULT_PROB = 0.3
+DEFAULT_PROB = 0.1
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,8 +63,8 @@ def insert_empty_layers(data: dict[str, Any], rng: random.Random, prob: float) -
             if first_layers is None:
                 first_layers = layers
             if rng.random() < prob:
-                pos = rng.randrange(len(layers) + 1)
-                layers.insert(pos, [])
+                pos = rng.randrange(len(layers))
+                layers[pos] = []
                 inserted += 1
 
     if inserted == 0 and first_layers is not None:

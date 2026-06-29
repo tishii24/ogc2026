@@ -70,6 +70,7 @@ where
         .into_iter()
         .filter(|layer| !layer.is_empty())
         .collect();
+    // 空のレイヤーを除去し、最初のレイヤーの頂点を基準に座標を正規化
     if let Some([ref_x, ref_y]) = layers.first().and_then(|layer| layer.first()).copied() {
         for layer in &mut layers {
             for [x, y] in layer {

@@ -9,15 +9,15 @@ feasibilityのチェック:
   - annealingで解を探索して、一定周期で解をstdoutに書き出す
   - stdinからmyalgorithmが計算したfeasibilityの結果を読み取り、feasibleでない場合はrollbackする
 
-1,2. small-reconstructの追加（insert-greedyの変更）
-3. insertの追加
-4. change-orientの追加
-5. swapの追加
-6. change-entry-tの追加
+1. small-reconstructの追加（insert-greedy2の追加）
+2. insertの追加
+3. change-orientの追加
+4. swapの追加
+5. change-entry-tの追加
 
 局所探索:
 - 貪欲
-  - insert_greedy(bay_id, block_id, bounds, orientation) -> (x, y, t)
+  - insert_greedy2(bay_id, block_id, bounds, orientation) -> (x, y, t)
   - orientationは一様にシャッフルする
   - boundsに収まる(x,y)だけ試す
     - (min_x, max_x, min_y, max_y)をorientationごとに求める
@@ -46,11 +46,11 @@ feasibilityのチェック:
     - |dx|+|dy|が大きい順に試す
     - TODO: 干渉するk個のブロックを一緒に動かす
     - TODO: 先に移動範囲のbboxの重なりを見て、干渉するブロックに絞って計算する
-  - reconstruct: 2つの領域に含まれるブロックの位置を入れ替える
-    - 同じ面積のbboxを選ぶ
-    - そこに含まれるブロックを削除する
-    - 削除したブロックのbbox+marginを候補として貪欲で挿入し直す
+  - small-reconstruct: k個の領域に含まれるブロックの位置を入れ替える
+    - k個の領域 (bay_id, bounds) を選び、含まれるブロックを削除する
+    - 削除したブロックの全ての(bay_id,bounds+margin)を候補としてinsert-greedy2で挿入し直す
+      - boundsをmarginで少し広げる
       - ブロックの挿入順序: `area x due-date x noise`
-    - bbox内で(x,y)が小さい順に試す
+    - TODO: bay-idの割り当てを事前に最適化する
 - 操作
   - get_insert_t(bay_id, block_id, x, y, orientation) -> t

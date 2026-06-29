@@ -1,8 +1,7 @@
 - panicを排除する
-- boundsを統一する
 - annealingを改善する
+  - 焼きなまし過程の可視化
 - safetyを追加する
-- 下界を求めて最適化
 
 safety:
 - feasibilityをチェックする
@@ -38,7 +37,6 @@ solver:
   - 重なっている面積が少なくなる方に動かす
 - 同時刻の操作順を考慮する
 - 取り出す時刻を変えてABBA <->　ABABを入れ替える
-- 焼きなまし過程の可視化
 - 並列annealing
 
 stats:
