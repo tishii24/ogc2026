@@ -9,10 +9,10 @@ feasibilityのチェック:
   - annealingで解を探索して、一定周期で解をstdoutに書き出す
   - stdinからmyalgorithmが計算したfeasibilityの結果を読み取り、feasibleでない場合はrollbackする
 
-1. insertの追加
+1. moveの追加
 2. change-orientの追加
-3. swapの追加
-4. change-entry-tの追加
+3. change-entry-tの追加
+4. swapの追加
 5. reconstructの改善（insert-greedyの改善）
 
 局所探索:
@@ -25,7 +25,7 @@ feasibilityのチェック:
   - 見つからなければ、(tardiness,dx,dy)が最も小さい位置に挿入する
   - TODO: 少し間引く？
 - 近傍
-  - insert: 1個のブロックを移動する
+  - move: 1個のブロックを移動する
     - 小さいブロックを選ぶ
     - insert_greedyで挿入する
     - TODO: (bay-id,bbox)を制限する

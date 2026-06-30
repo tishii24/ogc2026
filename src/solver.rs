@@ -42,10 +42,12 @@ const ORDER_SLACK_WEIGHT_MAX: f64 = 4.0;
 
 const MOVE_MAX_SHIFT_X: i64 = 5;
 const MOVE_MAX_SHIFT_Y: i64 = 5;
+const MOVE_ONE_SAMPLE_BLOCKS: usize = 8;
 
-const NEIGHBOR_KIND_COUNT: usize = 2;
+const NEIGHBOR_KIND_COUNT: usize = 3;
 const NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
-    (NeighborKind::LargeReconstruct, 0.1),
+    (NeighborKind::LargeReconstruct, 0.2),
+    (NeighborKind::Shift, 0.8),
     (NeighborKind::Move, 0.8),
 ];
 
@@ -54,6 +56,7 @@ type Interval = (i64, i64);
 #[derive(Clone, Copy, Debug)]
 enum NeighborKind {
     LargeReconstruct,
+    Shift,
     Move,
 }
 
@@ -61,6 +64,7 @@ enum NeighborKind {
 struct NeighborStats {
     selected: usize,
     succeeded: usize,
+    improved: usize,
     accepted: usize,
 }
 
@@ -127,9 +131,9 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
     let mut best_score = f64::INFINITY;
     for result in results {
         let result = result?;
-        log!(
-            timer,
-            "[id={}] iter={}, best={:.3}, accepted={}, improved={}, current={:.3}, neighbors: {}",
+        eprintln!(
+            "[{:.4}] [id={}] iter={}, best={:.3}, accepted={}, improved={}, current={:.3}\nneighbor stats:\n{}",
+            timer.elapsed_seconds(),
             result.worker_id,
             result.iter,
             result.score,
@@ -184,6 +188,7 @@ fn run_annealing_worker(
             NeighborKind::LargeReconstruct => {
                 try_large_reconstruct(problem, pre, &current, &mut rng)
             }
+            NeighborKind::Shift => try_shift_neighbor(problem, pre, &current, &mut rng),
             NeighborKind::Move => try_move_neighbor(problem, pre, &current, &mut rng),
         };
         let Some(candidate) = candidate else {
@@ -193,6 +198,9 @@ fn run_annealing_worker(
 
         let score = score_schedule(problem, pre, &candidate);
         let delta = score - current_score;
+        if delta < -1e-9 {
+            neighbor_stats[neighbor_idx].improved += 1;
+        }
         if delta <= 0.0 || rng.nextf() < (-delta / temp).exp() {
             current = candidate;
             current_score = score;
@@ -228,13 +236,15 @@ fn run_annealing_worker(
 fn neighbor_index(kind: NeighborKind) -> usize {
     match kind {
         NeighborKind::LargeReconstruct => 0,
-        NeighborKind::Move => 1,
+        NeighborKind::Shift => 1,
+        NeighborKind::Move => 2,
     }
 }
 
 fn neighbor_name(kind: NeighborKind) -> &'static str {
     match kind {
         NeighborKind::LargeReconstruct => "large",
+        NeighborKind::Shift => "shift",
         NeighborKind::Move => "move",
     }
 }
@@ -253,21 +263,33 @@ fn sample_neighbor<R: Random>(rng: &mut R) -> NeighborKind {
     NEIGHBOR_PROBS.last().unwrap().0
 }
 
+fn ratio(num: usize, den: usize) -> f64 {
+    if den == 0 {
+        0.0
+    } else {
+        100.0 * num as f64 / den as f64
+    }
+}
+
 fn format_neighbor_stats(stats: &[NeighborStats; NEIGHBOR_KIND_COUNT]) -> String {
     NEIGHBOR_PROBS
         .iter()
         .map(|&(kind, _)| {
             let stat = stats[neighbor_index(kind)];
             format!(
-                "{}={}/{}/{}",
+                "  {:<8}: selected={:5}, succeeded={:5} ({:8.4}%), improved={:5} ({:8.4}%), accepted={:5} ({:8.4}%)",
                 neighbor_name(kind),
-                stat.accepted,
+                stat.selected,
                 stat.succeeded,
-                stat.selected
+                ratio(stat.succeeded, stat.selected),
+                stat.improved,
+                ratio(stat.improved, stat.succeeded),
+                stat.accepted,
+                ratio(stat.accepted, stat.succeeded),
             )
         })
         .collect::<Vec<_>>()
-        .join(",")
+        .join("\n")
 }
 
 fn try_large_reconstruct<R: Random>(
@@ -289,7 +311,7 @@ fn try_large_reconstruct<R: Random>(
     try_remove_reinsert(problem, pre, schedule, &removed, order_slack_weight, rng)
 }
 
-fn try_move_neighbor<R: Random>(
+fn try_shift_neighbor<R: Random>(
     problem: &Problem,
     pre: &Precompute,
     schedule: &[ScheduledBlock],
@@ -346,6 +368,9 @@ fn try_move_neighbor<R: Random>(
                 exit_time: entry_time + block.processing_time,
                 ..tentative
             };
+            if moved == old {
+                continue;
+            }
             let new_tardiness = (moved.exit_time - block.due_date).max(0);
             if new_tardiness > original_tardiness {
                 continue;
@@ -358,6 +383,45 @@ fn try_move_neighbor<R: Random>(
     }
 
     None
+}
+
+fn try_move_neighbor<R: Random>(
+    problem: &Problem,
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    rng: &mut R,
+) -> Option<Vec<ScheduledBlock>> {
+    if schedule.is_empty() {
+        return None;
+    }
+
+    let sample_count = MOVE_ONE_SAMPLE_BLOCKS.min(schedule.len());
+    let mut indices: Vec<usize> = (0..schedule.len()).collect();
+    rng.shuffle(&mut indices);
+    let idx = indices.into_iter().take(sample_count).min_by(|&a, &b| {
+        pre.block_area[schedule[a].block_id]
+            .total_cmp(&pre.block_area[schedule[b].block_id])
+            .then(schedule[a].block_id.cmp(&schedule[b].block_id))
+    })?;
+    let old = schedule[idx];
+
+    let mut base = Vec::with_capacity(schedule.len() - 1);
+    let mut loads = vec![0.0; problem.bays.len()];
+    for (i, &s) in schedule.iter().enumerate() {
+        if i == idx {
+            continue;
+        }
+        loads[s.bay_id] += problem.blocks[s.block_id].workload as f64;
+        base.push(s);
+    }
+
+    let scheduled = insert_greedy(problem, pre, old, &base, &loads, INSERT_PARAMS, rng)?;
+    if scheduled == old {
+        return None;
+    }
+
+    base.push(scheduled);
+    Some(base)
 }
 
 fn build_initial_schedule<R: Random>(

@@ -109,7 +109,7 @@ pub struct Placement {
     pub y: i64,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScheduledBlock {
     block_id: usize,
     bay_id: usize,
