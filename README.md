@@ -65,3 +65,11 @@ docker run --rm \
 (cd "solutions/$VERSION" && zip -r "../../$VERSION.zip" .)
 zipinfo "$VERSION.zip"
 ```
+
+## 焼きなまし過程の可視化
+
+```bash
+cargo run --release -- train/prob_40.json 90 --visualize log/vis/prob_1
+
+python3 tools/anneal_visualizer.py input.json log/vis/prob_1 --worker-id 0
+```

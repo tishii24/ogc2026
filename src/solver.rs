@@ -5,10 +5,11 @@ use crate::{
         rand::{RandPcg64Mcg, Random},
         time::Timer,
     },
+    vis::WorkerVisualizer,
     *,
 };
 use rayon::prelude::*;
-use std::{cmp::Reverse, time::Instant};
+use std::{cmp::Reverse, path::Path, time::Instant};
 
 macro_rules! log {
     ($timer:expr, $($arg:tt)*) => {
@@ -42,15 +43,18 @@ const ORDER_SLACK_WEIGHT_MAX: f64 = 4.0;
 
 const SHIFT_MAX_SHIFT_X: i64 = 5;
 const SHIFT_MAX_SHIFT_Y: i64 = 5;
+const ROTATE_MAX_SHIFT_DELTA: i64 = 2;
 
 const MOVE_SAMPLE_BLOCKS: usize = 16;
 const MOVE_SMALL_POOL_SIZE: usize = 8;
+const VISUALIZE_ACCEPTED_INTERVAL: usize = 1000;
 
-const NEIGHBOR_KIND_COUNT: usize = 3;
+const NEIGHBOR_KIND_COUNT: usize = 4;
 const NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
     (NeighborKind::LargeReconstruct, 0.2),
-    (NeighborKind::Shift, 0.8),
-    (NeighborKind::Move, 0.1),
+    (NeighborKind::Shift, 8.),
+    (NeighborKind::Move, 0.),
+    (NeighborKind::Rotate, 8.),
 ];
 
 type Interval = (i64, i64);
@@ -60,14 +64,16 @@ enum NeighborKind {
     LargeReconstruct,
     Shift,
     Move,
+    Rotate,
 }
 
 impl NeighborKind {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         match self {
             NeighborKind::LargeReconstruct => "Large",
             NeighborKind::Shift => "Shift",
             NeighborKind::Move => "Move",
+            NeighborKind::Rotate => "Rotate",
         }
     }
 
@@ -76,6 +82,7 @@ impl NeighborKind {
             NeighborKind::LargeReconstruct => 0,
             NeighborKind::Shift => 1,
             NeighborKind::Move => 2,
+            NeighborKind::Rotate => 3,
         }
     }
 }
@@ -115,7 +122,12 @@ struct AnnealingResult {
     neighbor_stats: [NeighborStats; NEIGHBOR_KIND_COUNT],
 }
 
-pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution, String> {
+pub fn solve(
+    problem: &Problem,
+    timelimit: f64,
+    timer: Timer,
+    visualize_dir: Option<&Path>,
+) -> Result<Solution, String> {
     log!(timer, "building precompute...");
     let pre = Precompute::build(problem);
     log!(timer, "precompute built");
@@ -146,6 +158,7 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
                 deadline,
                 worker_id,
                 worker_timer,
+                visualize_dir,
             ))
         })
         .collect::<Vec<Result<AnnealingResult, String>>>();
@@ -183,6 +196,7 @@ fn run_annealing_worker(
     deadline: f64,
     worker_id: usize,
     timer: Timer,
+    visualize_dir: Option<&Path>,
 ) -> AnnealingResult {
     let mut rng = RandPcg64Mcg::new(RNG_SEED.wrapping_add(worker_id as u64));
     let mut current = initial.to_vec();
@@ -193,6 +207,33 @@ fn run_annealing_worker(
     let mut accepted = 0usize;
     let mut improved = 0usize;
     let mut neighbor_stats = [NeighborStats::default(); NEIGHBOR_KIND_COUNT];
+    let mut visualizer =
+        visualize_dir.and_then(|dir| match WorkerVisualizer::create(dir, worker_id) {
+            Ok(visualizer) => Some(visualizer),
+            Err(err) => {
+                eprintln!("failed to create visualizer for worker {worker_id}: {err}");
+                None
+            }
+        });
+    if let Some(visualizer) = visualizer.as_mut() {
+        if let Err(err) = visualizer.write_snapshot(
+            "initial",
+            worker_id,
+            0,
+            timer.elapsed_seconds(),
+            None,
+            None,
+            false,
+            false,
+            initial_score,
+            current_score,
+            best_score,
+            None,
+            &current,
+        ) {
+            eprintln!("failed to write visualizer snapshot for worker {worker_id}: {err}");
+        }
+    }
 
     loop {
         let elapsed = timer.elapsed_seconds();
@@ -214,6 +255,7 @@ fn run_annealing_worker(
             }
             NeighborKind::Shift => try_shift_neighbor(problem, pre, &current, &mut rng),
             NeighborKind::Move => try_move_neighbor(problem, pre, &current, &mut rng),
+            NeighborKind::Rotate => try_rotate_neighbor(problem, pre, &current, &mut rng),
         };
         let Some(candidate) = candidate else {
             neighbor_stats[neighbor_idx].time_sec += neighbor_start.elapsed().as_secs_f64();
@@ -223,7 +265,8 @@ fn run_annealing_worker(
 
         let score = score_schedule(problem, pre, &candidate);
         let delta = score - current_score;
-        if delta < -1e-9 {
+        let improved_current = delta < -1e-9;
+        if improved_current {
             neighbor_stats[neighbor_idx].improved += 1;
             neighbor_stats[neighbor_idx].improved_delta_sum += -delta;
         }
@@ -233,6 +276,7 @@ fn run_annealing_worker(
             accepted += 1;
             neighbor_stats[neighbor_idx].accepted += 1;
 
+            let mut improved_best = false;
             if current_score + 1e-9 < best_score {
                 log!(
                     timer,
@@ -243,9 +287,60 @@ fn run_annealing_worker(
                 best = current.clone();
                 best_score = current_score;
                 improved += 1;
+                improved_best = true;
+            }
+
+            let reason = if improved_best {
+                Some("best")
+            } else if accepted % VISUALIZE_ACCEPTED_INTERVAL == 0 {
+                Some("periodic")
+            } else {
+                None
+            };
+            if let (Some(reason), Some(visualizer)) = (reason, visualizer.as_mut()) {
+                if let Err(err) = visualizer.write_snapshot(
+                    reason,
+                    worker_id,
+                    iter,
+                    elapsed,
+                    Some(neighbor.name()),
+                    Some(true),
+                    improved_current,
+                    improved_best,
+                    score,
+                    current_score,
+                    best_score,
+                    Some(delta),
+                    &current,
+                ) {
+                    eprintln!("failed to write visualizer snapshot for worker {worker_id}: {err}");
+                }
             }
         }
         neighbor_stats[neighbor_idx].time_sec += neighbor_start.elapsed().as_secs_f64();
+    }
+
+    if let Some(visualizer) = visualizer.as_mut() {
+        if let Err(err) = visualizer.write_snapshot(
+            "final",
+            worker_id,
+            iter,
+            timer.elapsed_seconds(),
+            None,
+            None,
+            false,
+            false,
+            best_score,
+            current_score,
+            best_score,
+            None,
+            &best,
+        ) {
+            eprintln!("failed to write visualizer snapshot for worker {worker_id}: {err}");
+        }
+        if let Err(err) = visualizer.flush() {
+            eprintln!("failed to flush visualizer for worker {worker_id}: {err}");
+        }
     }
 
     AnnealingResult {
@@ -414,7 +509,7 @@ fn try_shift_neighbor<R: Random>(
     let old = schedule[idx];
     let block = &problem.blocks[old.block_id];
 
-    let mut base = Vec::with_capacity(schedule.len() - 1);
+    let mut base = Vec::with_capacity(schedule.len());
     for (i, &s) in schedule.iter().enumerate() {
         if i != idx {
             base.push(s);
@@ -474,6 +569,102 @@ fn try_shift_neighbor<R: Random>(
     None
 }
 
+fn try_rotate_neighbor<R: Random>(
+    problem: &Problem,
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    rng: &mut R,
+) -> Option<Vec<ScheduledBlock>> {
+    if schedule.is_empty() {
+        return None;
+    }
+
+    let idx = rng.gen_index(schedule.len());
+    let old = schedule[idx];
+    let block = &problem.blocks[old.block_id];
+    if block.shape.len() <= 1 {
+        return None;
+    }
+
+    let mut base = Vec::with_capacity(schedule.len());
+    for (i, &s) in schedule.iter().enumerate() {
+        if i != idx {
+            base.push(s);
+        }
+    }
+
+    let mut orient_candidates = pre.orientation_neighbors[old.block_id][old.orient_idx].clone();
+    if orient_candidates.is_empty() {
+        return None;
+    }
+    rng.shuffle(&mut orient_candidates);
+
+    let mut delta_offsets = Vec::new();
+    for ddx in -ROTATE_MAX_SHIFT_DELTA..=ROTATE_MAX_SHIFT_DELTA {
+        for ddy in -ROTATE_MAX_SHIFT_DELTA..=ROTATE_MAX_SHIFT_DELTA {
+            delta_offsets.push((ddx, ddy));
+        }
+    }
+    rng.shuffle(&mut delta_offsets);
+
+    let min_t = block.release_time;
+    let max_t = i64::MAX;
+    let mut best: Option<(i64, i64, ScheduledBlock)> = None;
+
+    for (orient_idx, dx, dy) in orient_candidates {
+        let Some(range) = pre
+            .collision
+            .fit_range(old.bay_id, old.block_id, orient_idx)
+        else {
+            continue;
+        };
+
+        for &(ddx, ddy) in &delta_offsets {
+            let x = old.x + dx + ddx;
+            let y = old.y + dy + ddy;
+            if !range.contains(x, y) {
+                continue;
+            }
+
+            let tentative = ScheduledBlock {
+                orient_idx,
+                x,
+                y,
+                entry_time: 0,
+                exit_time: block.processing_time,
+                ..old
+            };
+
+            let Some(entry_time) = get_insert_t(pre, tentative, &base, min_t, max_t) else {
+                continue;
+            };
+
+            let rotated = ScheduledBlock {
+                entry_time,
+                exit_time: entry_time + block.processing_time,
+                ..tentative
+            };
+            if rotated == old {
+                continue;
+            }
+
+            let tardiness = (rotated.exit_time - block.due_date).max(0);
+            if best
+                .as_ref()
+                .map_or(true, |&(best_tardiness, best_entry_time, _)| {
+                    (tardiness, rotated.entry_time) < (best_tardiness, best_entry_time)
+                })
+            {
+                best = Some((tardiness, rotated.entry_time, rotated));
+            }
+        }
+    }
+
+    let rotated = best?.2;
+    base.push(rotated);
+    Some(base)
+}
+
 fn try_move_neighbor<R: Random>(
     problem: &Problem,
     pre: &Precompute,
@@ -511,7 +702,7 @@ fn try_move_neighbor<R: Random>(
     })?;
     let old = schedule[idx];
 
-    let mut base = Vec::with_capacity(schedule.len() - 1);
+    let mut base = Vec::with_capacity(schedule.len());
     let mut loads = vec![0.0; problem.bays.len()];
     for (i, &s) in schedule.iter().enumerate() {
         if i == idx {

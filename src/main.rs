@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::io::{self, Read};
+use std::path::PathBuf;
 use std::process;
 
 use ogc2026::{Problem, solver, util::time::Timer};
@@ -9,6 +10,7 @@ use ogc2026::{Problem, solver, util::time::Timer};
 struct Args {
     input_path: String,
     timelimit: f64,
+    visualize_dir: Option<PathBuf>,
 }
 
 fn main() {
@@ -35,7 +37,12 @@ fn run(timer: Timer) -> Result<(), String> {
     let problem: Problem = serde_json::from_str(&input)
         .map_err(|err| format!("failed to parse problem json: {err}"))?;
 
-    let solution = solver::solve(&problem, args.timelimit, timer)?;
+    let solution = solver::solve(
+        &problem,
+        args.timelimit,
+        timer,
+        args.visualize_dir.as_deref(),
+    )?;
     let output = serde_json::to_string(&solution)
         .map_err(|err| format!("failed to serialize solution json: {err}"))?;
     println!("{output}");
@@ -43,11 +50,13 @@ fn run(timer: Timer) -> Result<(), String> {
 }
 
 fn parse_args(args: Vec<String>) -> Result<Args, String> {
+    const USAGE: &str = "usage: ogc2026 <input.json> [timelimit] or ogc2026 --input <input.json> [--timelimit <sec>] [--visualize <dir>]";
     if args.is_empty() {
-        return Err("usage: ogc2026 <input.json> [timelimit] or ogc2026 --input <input.json> [--timelimit <sec>]".to_string());
+        return Err(USAGE.to_string());
     }
 
     let mut input_path: Option<String> = None;
+    let mut visualize_dir: Option<PathBuf> = None;
     let mut timelimit = 60.0;
     let mut positional = Vec::new();
     let mut i = 0;
@@ -69,8 +78,15 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
                     .parse::<f64>()
                     .map_err(|err| format!("invalid timelimit '{}': {err}", args[i]))?;
             }
+            "--visualize" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--visualize requires a directory".to_string());
+                }
+                visualize_dir = Some(PathBuf::from(&args[i]));
+            }
             "--help" | "-h" => {
-                return Err("usage: ogc2026 <input.json> [timelimit] or ogc2026 --input <input.json> [--timelimit <sec>]".to_string());
+                return Err(USAGE.to_string());
             }
             "-" => positional.push(args[i].clone()),
             other if other.starts_with('-') => {
@@ -100,5 +116,6 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
     Ok(Args {
         input_path,
         timelimit,
+        visualize_dir,
     })
 }

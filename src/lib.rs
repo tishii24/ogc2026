@@ -2,6 +2,7 @@ pub mod collision;
 pub mod precompute;
 pub mod solver;
 pub mod util;
+pub mod vis;
 
 use std::collections::BTreeMap;
 
@@ -109,15 +110,15 @@ pub struct Placement {
     pub y: i64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct ScheduledBlock {
-    block_id: usize,
-    bay_id: usize,
-    orient_idx: usize,
-    x: i64,
-    y: i64,
-    entry_time: i64,
-    exit_time: i64,
+    pub block_id: usize,
+    pub bay_id: usize,
+    pub orient_idx: usize,
+    pub x: i64,
+    pub y: i64,
+    pub entry_time: i64,
+    pub exit_time: i64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
