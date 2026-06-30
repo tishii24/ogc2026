@@ -40,24 +40,12 @@ const INSERT_PARAMS: InsertSearchParams = InsertSearchParams {
 const ORDER_SLACK_WEIGHT_MIN: f64 = 0.0;
 const ORDER_SLACK_WEIGHT_MAX: f64 = 4.0;
 
-const SMALL_RECONSTRUCT_AREA_COUNT_MIN: usize = 1;
-const SMALL_RECONSTRUCT_AREA_COUNT_MAX: usize = 3;
-const SMALL_RECONSTRUCT_REGION_WIDTH_RATIO_MIN: f64 = 0.02;
-const SMALL_RECONSTRUCT_REGION_WIDTH_RATIO_MAX: f64 = 0.2;
-const SMALL_RECONSTRUCT_REGION_HEIGHT_RATIO_MIN: f64 = 0.1;
-const SMALL_RECONSTRUCT_REGION_HEIGHT_RATIO_MAX: f64 = 0.5;
-const SMALL_RECONSTRUCT_INSERT_MARGIN_RATIO: f64 = 0.05;
-const SMALL_RECONSTRUCT_MIN_REMOVED: usize = 1;
-const SMALL_RECONSTRUCT_MAX_REMOVED: usize = 20;
-const SMALL_RECONSTRUCT_ORDER_NOISE: f64 = 0.3;
-
 const MOVE_MAX_SHIFT_X: i64 = 5;
 const MOVE_MAX_SHIFT_Y: i64 = 5;
 
-const NEIGHBOR_KIND_COUNT: usize = 3;
+const NEIGHBOR_KIND_COUNT: usize = 2;
 const NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
-    (NeighborKind::LargeReconstruct, 0.2),
-    (NeighborKind::SmallReconstruct, 0.),
+    (NeighborKind::LargeReconstruct, 0.1),
     (NeighborKind::Move, 0.8),
 ];
 
@@ -66,7 +54,6 @@ type Interval = (i64, i64);
 #[derive(Clone, Copy, Debug)]
 enum NeighborKind {
     LargeReconstruct,
-    SmallReconstruct,
     Move,
 }
 
@@ -197,9 +184,6 @@ fn run_annealing_worker(
             NeighborKind::LargeReconstruct => {
                 try_large_reconstruct(problem, pre, &current, &mut rng)
             }
-            NeighborKind::SmallReconstruct => {
-                try_small_reconstruct(problem, pre, &current, &mut rng)
-            }
             NeighborKind::Move => try_move_neighbor(problem, pre, &current, &mut rng),
         };
         let Some(candidate) = candidate else {
@@ -244,15 +228,13 @@ fn run_annealing_worker(
 fn neighbor_index(kind: NeighborKind) -> usize {
     match kind {
         NeighborKind::LargeReconstruct => 0,
-        NeighborKind::SmallReconstruct => 1,
-        NeighborKind::Move => 2,
+        NeighborKind::Move => 1,
     }
 }
 
 fn neighbor_name(kind: NeighborKind) -> &'static str {
     match kind {
         NeighborKind::LargeReconstruct => "large",
-        NeighborKind::SmallReconstruct => "small",
         NeighborKind::Move => "move",
     }
 }
@@ -305,156 +287,6 @@ fn try_large_reconstruct<R: Random>(
 
     let order_slack_weight = sample_order_slack_weight(rng);
     try_remove_reinsert(problem, pre, schedule, &removed, order_slack_weight, rng)
-}
-
-fn try_small_reconstruct<R: Random>(
-    problem: &Problem,
-    pre: &Precompute,
-    schedule: &[ScheduledBlock],
-    rng: &mut R,
-) -> Option<Vec<ScheduledBlock>> {
-    if schedule.is_empty() || problem.bays.is_empty() {
-        return None;
-    }
-
-    let area_count = rng.gen_range(
-        SMALL_RECONSTRUCT_AREA_COUNT_MIN,
-        SMALL_RECONSTRUCT_AREA_COUNT_MAX + 1,
-    );
-    let mut regions = Vec::with_capacity(area_count);
-
-    for _ in 0..area_count {
-        let bay_id = rng.gen_index(problem.bays.len());
-        let bay = &problem.bays[bay_id];
-        let width_min = ((bay.width as f64) * SMALL_RECONSTRUCT_REGION_WIDTH_RATIO_MIN)
-            .round()
-            .max(1.0) as i64;
-        let width_max = ((bay.width as f64) * SMALL_RECONSTRUCT_REGION_WIDTH_RATIO_MAX)
-            .round()
-            .max(width_min as f64) as i64;
-        let height_min = ((bay.height as f64) * SMALL_RECONSTRUCT_REGION_HEIGHT_RATIO_MIN)
-            .round()
-            .max(1.0) as i64;
-        let height_max = ((bay.height as f64) * SMALL_RECONSTRUCT_REGION_HEIGHT_RATIO_MAX)
-            .round()
-            .max(height_min as f64) as i64;
-        let width =
-            (rng.gen_range(width_min as usize, (width_max + 1) as usize) as i64).min(bay.width);
-        let height =
-            (rng.gen_range(height_min as usize, (height_max + 1) as usize) as i64).min(bay.height);
-        if width <= 0 || height <= 0 {
-            continue;
-        }
-
-        let min_x = rng.gen_range(0, (bay.width - width + 1) as usize) as i64;
-        let min_y = rng.gen_range(0, (bay.height - height + 1) as usize) as i64;
-        regions.push((
-            bay_id,
-            Boundsi {
-                min_x,
-                max_x: min_x + width,
-                min_y,
-                max_y: min_y + height,
-            },
-        ));
-    }
-
-    if regions.is_empty() {
-        return None;
-    }
-
-    let mut removed = Vec::new();
-    let mut base = Vec::with_capacity(schedule.len());
-    for &s in schedule {
-        let bbox = pre.orientation_bbox_bounds[s.block_id][s.orient_idx];
-        let block_min_x = s.x as f64 + bbox.min_x;
-        let block_max_x = s.x as f64 + bbox.max_x;
-        let block_min_y = s.y as f64 + bbox.min_y;
-        let block_max_y = s.y as f64 + bbox.max_y;
-        let intersects = regions.iter().any(|&(bay_id, bounds)| {
-            s.bay_id == bay_id
-                && block_min_x <= bounds.max_x as f64
-                && bounds.min_x as f64 <= block_max_x
-                && block_min_y <= bounds.max_y as f64
-                && bounds.min_y as f64 <= block_max_y
-        });
-
-        if intersects {
-            removed.push(s);
-        } else {
-            base.push(s);
-        }
-    }
-
-    eprintln!("removed: {:?}, regions: {:?}", removed.len(), regions);
-    if removed.len() < SMALL_RECONSTRUCT_MIN_REMOVED
-        || removed.len() > SMALL_RECONSTRUCT_MAX_REMOVED
-    {
-        return None;
-    }
-
-    let mut insert_regions = Vec::with_capacity(regions.len());
-    for &(bay_id, bounds) in &regions {
-        let bay = &problem.bays[bay_id];
-        let margin_x = ((bay.width as f64) * SMALL_RECONSTRUCT_INSERT_MARGIN_RATIO).round() as i64;
-        let margin_y = ((bay.height as f64) * SMALL_RECONSTRUCT_INSERT_MARGIN_RATIO).round() as i64;
-        let expanded = Boundsi {
-            min_x: (bounds.min_x - margin_x).max(0),
-            max_x: (bounds.max_x + margin_x).min(bay.width),
-            min_y: (bounds.min_y - margin_y).max(0),
-            max_y: (bounds.max_y + margin_y).min(bay.height),
-        };
-        if expanded.min_x <= expanded.max_x && expanded.min_y <= expanded.max_y {
-            insert_regions.push((bay_id, expanded));
-        }
-    }
-
-    let max_due = removed
-        .iter()
-        .map(|s| problem.blocks[s.block_id].due_date)
-        .max()
-        .unwrap_or(0);
-    let mut ordered_removed: Vec<(f64, ScheduledBlock)> = removed
-        .into_iter()
-        .map(|s| {
-            let due = (max_due - problem.blocks[s.block_id].due_date + 1).max(1) as f64;
-            let noise = 1.0 + SMALL_RECONSTRUCT_ORDER_NOISE * rng.nextf();
-            (pre.block_area[s.block_id] * due * noise, s)
-        })
-        .collect();
-    ordered_removed.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.block_id.cmp(&b.1.block_id)));
-
-    let mut cur = base;
-    for (_, old) in ordered_removed {
-        let block = &problem.blocks[old.block_id];
-        let old_tardiness = (old.exit_time - block.due_date).max(0);
-        let mut candidates = insert_regions.clone();
-        rng.shuffle(&mut candidates);
-
-        let mut best: Option<ScheduledBlock> = None;
-        for (bay_id, bounds) in candidates {
-            let Some(scheduled) = insert_greedy2(problem, pre, old, bay_id, bounds, &cur, rng)
-            else {
-                continue;
-            };
-            let tardiness = (scheduled.exit_time - block.due_date).max(0);
-            if tardiness <= old_tardiness {
-                best = Some(scheduled);
-                break;
-            }
-            if best.as_ref().map_or(true, |best| {
-                let best_tardiness = (best.exit_time - block.due_date).max(0);
-                tardiness < best_tardiness
-                    || (tardiness == best_tardiness && scheduled.entry_time < best.entry_time)
-            }) {
-                best = Some(scheduled);
-            }
-        }
-
-        cur.push(best?);
-    }
-
-    Some(cur)
 }
 
 fn try_move_neighbor<R: Random>(
@@ -833,122 +665,6 @@ fn insert_candidate_better(a: &InsertCandidate, b: &InsertCandidate) -> bool {
         .then(a.bbox_top.total_cmp(&b.bbox_top))
         .then(a.scheduled.block_id.cmp(&b.scheduled.block_id))
         .is_lt()
-}
-
-fn insert_greedy2<R: Random>(
-    problem: &Problem,
-    pre: &Precompute,
-    original: ScheduledBlock,
-    bay_id: usize,
-    bounds: Boundsi,
-    schedule: &[ScheduledBlock],
-    rng: &mut R,
-) -> Option<ScheduledBlock> {
-    let block_id = original.block_id;
-    let block = &problem.blocks[block_id];
-    let process_t = block.processing_time;
-    let min_t = block.release_time;
-    let max_t = i64::MAX;
-    let original_tardiness = (original.exit_time - block.due_date).max(0);
-
-    let mut orients: Vec<usize> = (0..block.shape.len()).collect();
-    rng.shuffle(&mut orients);
-
-    let mut orient_ranges = Vec::new();
-
-    for orient_idx in orients {
-        let Some(fit) = pre.collision.fit_range(bay_id, block_id, orient_idx) else {
-            continue;
-        };
-
-        let bbox = pre.orientation_bbox_bounds[block_id][orient_idx];
-
-        // x + bbox が bounds に入る条件
-        let min_x = fit
-            .min_x
-            .max((bounds.min_x as f64 - bbox.min_x).ceil() as i64);
-        let max_x = fit
-            .max_x
-            .min((bounds.max_x as f64 - bbox.max_x).floor() as i64);
-        let min_y = fit
-            .min_y
-            .max((bounds.min_y as f64 - bbox.min_y).ceil() as i64);
-        let max_y = fit
-            .max_y
-            .min((bounds.max_y as f64 - bbox.max_y).floor() as i64);
-
-        if min_x > max_x || min_y > max_y {
-            continue;
-        }
-
-        // bounds左下基準のoffset範囲
-        orient_ranges.push((
-            orient_idx,
-            min_x - bounds.min_x,
-            max_x - bounds.min_x,
-            min_y - bounds.min_y,
-            max_y - bounds.min_y,
-        ));
-    }
-
-    let max_sum = orient_ranges
-        .iter()
-        .map(|&(_, _, max_dx, _, max_dy)| max_dx + max_dy)
-        .max()?;
-
-    let mut best: Option<(i64, i64, i64, ScheduledBlock)> = None;
-
-    for sum in 0..=max_sum {
-        for dx in 0..=sum {
-            let dy = sum - dx;
-
-            for &(orient_idx, min_dx, max_dx, min_dy, max_dy) in &orient_ranges {
-                if dx < min_dx || max_dx < dx || dy < min_dy || max_dy < dy {
-                    continue;
-                }
-
-                let x = bounds.min_x + dx;
-                let y = bounds.min_y + dy;
-
-                let tentative = ScheduledBlock {
-                    block_id,
-                    bay_id,
-                    orient_idx,
-                    x,
-                    y,
-                    entry_time: 0,
-                    exit_time: process_t,
-                };
-
-                let Some(entry_time) = get_insert_t(pre, tentative, schedule, min_t, max_t) else {
-                    continue;
-                };
-
-                let scheduled = ScheduledBlock {
-                    entry_time,
-                    exit_time: entry_time + process_t,
-                    ..tentative
-                };
-
-                let tardiness = (scheduled.exit_time - block.due_date).max(0);
-
-                if tardiness <= original_tardiness {
-                    return Some(scheduled);
-                }
-
-                if best
-                    .as_ref()
-                    .map_or(true, |&(best_tardiness, best_dx, best_dy, _)| {
-                        (tardiness, dx, dy) < (best_tardiness, best_dx, best_dy)
-                    })
-                {
-                    best = Some((tardiness, dx, dy, scheduled));
-                }
-            }
-        }
-    }
-
-    best.map(|(_, _, _, scheduled)| scheduled)
 }
 
 fn clamp_interval(l: i64, r: i64, min_val: i64, max_val: i64) -> Option<Interval> {

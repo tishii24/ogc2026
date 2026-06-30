@@ -9,15 +9,15 @@ feasibilityのチェック:
   - annealingで解を探索して、一定周期で解をstdoutに書き出す
   - stdinからmyalgorithmが計算したfeasibilityの結果を読み取り、feasibleでない場合はrollbackする
 
-1. small-reconstructの追加（insert-greedy2の追加）
-2. insertの追加
-3. change-orientの追加
-4. swapの追加
-5. change-entry-tの追加
+1. insertの追加
+2. change-orientの追加
+3. swapの追加
+4. change-entry-tの追加
+5. reconstructの改善（insert-greedyの改善）
 
 局所探索:
 - 貪欲
-  - insert_greedy2(bay_id, block_id, bounds, orientation) -> (x, y, t)
+  - insert_greedy(bay_id, block_id, bounds, orientation) -> (x, y, t)
   - orientationは一様にシャッフルする
   - boundsに収まる(x,y)だけ試す
     - (min_x, max_x, min_y, max_y)をorientationごとに求める
