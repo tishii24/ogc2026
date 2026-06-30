@@ -9,12 +9,6 @@ feasibilityのチェック:
   - annealingで解を探索して、一定周期で解をstdoutに書き出す
   - stdinからmyalgorithmが計算したfeasibilityの結果を読み取り、feasibleでない場合はrollbackする
 
-1. moveの追加
-2. change-orientの追加
-3. change-entry-tの追加
-4. swapの追加
-5. reconstructの改善（insert-greedyの改善）
-
 局所探索:
 - 貪欲
   - insert_greedy(bay_id, block_id, bounds, orientation) -> (x, y, t)
@@ -28,9 +22,9 @@ feasibilityのチェック:
   - move: 1個のブロックを移動する
     - 小さいブロックを選ぶ
     - insert_greedyで挿入する
+    - TODO: areaで絞って、(-d_obj13,area)が小さい順に試す
     - TODO: (bay-id,bbox)を制限する
-    - TODO: 先に移動範囲のbboxの重なりを見て、干渉するブロックに絞って計算する
-  - change-orient: 1個のブロックのorientationを変更する
+  - rotate: 1個のブロックのorientationを変更する
     - bboxの重なりが大きい(orientation,dx,dy)を前計算する
       - orientation_neighbors[block_id][orient_id]: Vec<(orientation: usize, dx: i64, dy: i64)>
     - dx'=dx+(-D..D),dy'=dy+(-D..D)を試す

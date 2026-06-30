@@ -17,11 +17,13 @@ from typing import Any
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Summarize log/score.csv.")
     parser.add_argument(
+        "-m",
         "--matrix",
         action="store_true",
         help="Show a version/timelimit x testcase score matrix.",
     )
     parser.add_argument(
+        "-s",
         "--suite",
         help='Only summarize cases in suite JSON. Format: {"cases": ["train/prob_1.json", ...]}',
     )
@@ -182,6 +184,65 @@ def load_case_weights(root: Path, case: str) -> tuple[float, float, float]:
     )
 
 
+def compute_relative_scores(
+    rows: list[dict[str, str]], cases: list[str] | None = None
+) -> dict[tuple[str, float], float]:
+    row_keys = sorted(
+        {key for row in rows if (key := row_key(row)) is not None},
+        key=lambda key: (natural_key(key[0]), key[1]),
+    )
+    if cases is None:
+        cases = sorted(
+            {row.get("case", "") for row in rows if row.get("case", "")},
+            key=lambda case: natural_key(case_label(case)),
+        )
+    if not row_keys or not cases:
+        return {}
+
+    by_key = {
+        (key[0], key[1], row.get("case", "")): row
+        for row in rows
+        if (key := row_key(row)) is not None and row.get("case", "")
+    }
+
+    timelimits = sorted({key[1] for key in row_keys})
+    best_by_case: dict[tuple[float, str], float] = {}
+    for timelimit in timelimits:
+        for case in cases:
+            objectives = []
+            for version, tl in row_keys:
+                if tl != timelimit:
+                    continue
+                row = by_key.get((version, tl, case))
+                objective = parse_float(row.get("objective", "")) if row else None
+                if (
+                    row
+                    and parse_bool(row.get("feasible", ""))
+                    and objective is not None
+                ):
+                    objectives.append(objective)
+            if objectives:
+                best_by_case[(timelimit, case)] = min(objectives)
+
+    relative_scores = {key: 0.0 for key in row_keys}
+    for version, timelimit in row_keys:
+        for case in cases:
+            best = best_by_case.get((timelimit, case))
+            if best is None:
+                continue
+            row = by_key.get((version, timelimit, case))
+            objective = parse_float(row.get("objective", "")) if row else None
+            if (
+                row
+                and parse_bool(row.get("feasible", ""))
+                and objective is not None
+                and objective > 0
+            ):
+                relative_scores[(version, timelimit)] += best / objective
+
+    return relative_scores
+
+
 def compute_rank_scores(
     rows: list[dict[str, str]], cases: list[str] | None = None
 ) -> dict[tuple[str, float], int]:
@@ -236,6 +297,7 @@ def summarize(
 ) -> list[dict[str, Any]]:
     best_counts = compute_best_counts(rows)
     rank_scores = compute_rank_scores(rows, cases)
+    relative_scores = compute_relative_scores(rows, cases)
     groups: dict[tuple[str, float], dict[str, Any]] = {}
     weights_by_case: dict[str, tuple[float, float, float]] = {}
 
@@ -256,6 +318,7 @@ def summarize(
                 "failed": 0,
                 "best": 0,
                 "rank_score": 0,
+                "relative_score": 0.0,
                 "total_objective": 0.0,
                 "total_obj1": 0.0,
                 "total_obj2": 0.0,
@@ -293,6 +356,7 @@ def summarize(
     for key, group in groups.items():
         group["best"] = best_counts.get(key, 0)
         group["rank_score"] = rank_scores.get(key, 0)
+        group["relative_score"] = relative_scores.get(key, 0.0)
 
     return sorted(groups.values(), key=lambda g: g["version"])
 
@@ -320,6 +384,7 @@ def print_table(summaries: list[dict[str, Any]]) -> None:
         "failed",
         "best",
         "rank_score",
+        "relative_score",
         "total_objective",
         "total_obj1",
         "total_obj2",
@@ -337,6 +402,7 @@ def print_table(summaries: list[dict[str, Any]]) -> None:
                 str(item["failed"]),
                 str(item["best"]),
                 str(item["rank_score"]),
+                f"{item['relative_score']:.3f}",
                 format_number(item["total_objective"]),
                 format_number(item["total_obj1"]),
                 format_number(item["total_obj2"]),

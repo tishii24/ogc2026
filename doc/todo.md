@@ -1,25 +1,25 @@
-- panicを排除する
-- annealingを改善する
-  - 焼きなまし過程の可視化
+- 焼きなまし過程の可視化
 - safetyを追加する
+- panicを排除する
 
 safety:
 - feasibilityをチェックする
   - check-feasibilityの高速化
-- panicを排除する
-- 空のlayerに対する処理を追加する
+- 空のblockのチェック
 
 precompute:
 - 衝突判定の高速化
-- ブロックごとにIoUが大きい(orientation,dx,dy)を前計算
-  - bboxだけで良いかも
-- 2つのブロック間でIoUが大きい(orientation,dx,dy)を前計算
-  - (t,area)が似ているブロック間のみ
 - 2つのブロックの有望な隣接位置を計算する
   - 辺の角度を合わせる
   - 凸包を作って、面積が大きくならない組み合わせを求める
 
 solver:
+- 局所探索の改善
+  - moveの追加
+  - rotateの追加
+  - change-entry-tの追加
+  - swapの追加
+  - reconstructの改善（insert-greedyの改善）
 - 初期解を軽くする
 - 初期解のビームサーチ
 - 大域的最適化
@@ -27,15 +27,16 @@ solver:
 - t-intervalをmergeして、候補tがなくなったら打ち切る
 - 高速化
   - get-insert-tを差分評価する
-- 近傍を小さくする
-- 詰める順番を工夫する
-  - 縦長のbayでは上から詰める
+  - 先に移動範囲のbboxの重なりを見て、干渉するブロックに絞って計算する
+  - 候補範囲ごとを分割する
+- 元より悪化しない　or bestを探すの両方を試す
 - 強い最適化
   - insertを評価して、ベストなinsertを探す
   - packing-scoreの計算（bboxの重なりなど）
     - 置ける面積を具体的に計算
   - 重なっている面積が少なくなる方に動かす
 - 同時刻の操作順を考慮する
+- 縦長のbayでは上から詰める
 - 取り出す時刻を変えてABBA <->　ABABを入れ替える
 - 並列annealing
 
