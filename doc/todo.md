@@ -31,7 +31,7 @@ solver:
   - orderをhashしておいて重複除去
 - 並列annealing
   - best解の交換
-  - 温度調整
+  - worker-idごとに温度を変化
 - 大域的最適化
   - obj2,obj3の下界を求めて、それに合わせてbay-idを決める
 - t-intervalをmergeして、候補tがなくなったら打ち切る

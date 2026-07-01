@@ -23,6 +23,7 @@ const MAX_WORKER_COUNT: usize = 4;
 const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
 const START_TEMP: f64 = 1e1;
 const END_TEMP: f64 = 1e0;
+const BEST_EXCHANGE_INTERVAL: usize = 2_000;
 
 pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
@@ -57,6 +58,15 @@ const NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
 ];
 
 const VISUALIZE_ACCEPTED_INTERVAL: usize = 1000;
+
+fn get_temp_scale(worker_id: usize, worker_count: usize) -> f64 {
+    const WORKER_TEMP_SCALE: f64 = 10.;
+    if worker_count <= 1 {
+        return 1.0;
+    }
+    let ratio = worker_id as f64 / (worker_count - 1) as f64;
+    1. + WORKER_TEMP_SCALE * ratio.powf(2.)
+}
 
 fn sample_order_weights(rng: &mut impl Random) -> BlockOrderWeights {
     BlockOrderWeights {
@@ -177,6 +187,11 @@ struct OldTimeInfo {
     overlap_entry_time_max: i64,
 }
 
+struct State {
+    score: f64,
+    schedule: Vec<ScheduledBlock>,
+}
+
 struct AnnealingResult {
     worker_id: usize,
     schedule: Vec<ScheduledBlock>,
@@ -206,6 +221,10 @@ pub fn solve(
         search_initial_schedule(problem, &pre, timelimit, timer, worker_count)?;
     log!(timer, "best initial score: {:.3}", initial_score);
 
+    let state = Mutex::new(State {
+        score: initial_score,
+        schedule: initial.clone(),
+    });
     let worker_timers = vec![timer; worker_count];
     let results: Vec<_> = worker_timers
         .into_par_iter()
@@ -214,9 +233,11 @@ pub fn solve(
             run_annealing_worker(
                 problem,
                 &pre,
+                &state,
                 &initial,
                 deadline,
                 worker_id,
+                worker_count,
                 worker_timer,
                 visualize_dir,
             )
@@ -250,13 +271,16 @@ pub fn solve(
 fn run_annealing_worker(
     problem: &Problem,
     pre: &Precompute,
+    state: &Mutex<State>,
     initial: &[ScheduledBlock],
     deadline: f64,
     worker_id: usize,
+    worker_count: usize,
     timer: Timer,
     visualize_dir: Option<&Path>,
 ) -> AnnealingResult {
     let mut rng = RandPcg64Mcg::new(RNG_SEED.wrapping_add(worker_id as u64));
+    let temp_scale = get_temp_scale(worker_id, worker_count);
     let mut current = initial.to_vec();
     let mut current_score = score_schedule(problem, pre, &current);
     let mut best = current.clone();
@@ -299,8 +323,20 @@ fn run_annealing_worker(
             break;
         }
         iter += 1;
+        if iter % BEST_EXCHANGE_INTERVAL == 0 {
+            let shared = state.lock().unwrap();
+            if shared.score + 1e-9 < current_score {
+                current = shared.schedule.clone();
+                current_score = shared.score;
+                if shared.score + 1e-9 < best_score {
+                    best = current.clone();
+                    best_score = current_score;
+                }
+            }
+        }
+
         let progress = (elapsed / deadline).clamp(0.0, 1.0);
-        let temp = START_TEMP * (END_TEMP / START_TEMP).powf(progress);
+        let temp = temp_scale * START_TEMP * (END_TEMP / START_TEMP).powf(progress);
 
         let neighbor = sample_neighbor(&mut rng);
         let neighbor_idx = neighbor.index();
@@ -347,6 +383,12 @@ fn run_annealing_worker(
                 best_score = current_score;
                 improved += 1;
                 improved_best = true;
+
+                let mut shared = state.lock().unwrap();
+                if current_score + 1e-9 < shared.score {
+                    shared.score = current_score;
+                    shared.schedule = current.clone();
+                }
             }
 
             let reason = if improved_best {
