@@ -44,18 +44,21 @@ const RECONSTRUCT_ORDER_SLACK_WEIGHT_MAX: f64 = 4.0;
 const SHIFT_MAX_SHIFT_X: i64 = 5;
 const SHIFT_MAX_SHIFT_Y: i64 = 5;
 const ROTATE_MAX_SHIFT_DELTA: i64 = 2;
-
+const SWAP_NEIGHBOR_TOP_K: usize = 32;
+const SWAP_MAX_SHIFT_DELTA: i64 = 2;
 const MOVE_SAMPLE_BLOCKS: usize = 16;
 const MOVE_SMALL_POOL_SIZE: usize = 8;
-const VISUALIZE_ACCEPTED_INTERVAL: usize = 1000;
 
-const NEIGHBOR_KIND_COUNT: usize = 4;
+const NEIGHBOR_KIND_COUNT: usize = 5;
 const NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
     (NeighborKind::LargeReconstruct, 0.2),
     (NeighborKind::Shift, 8.),
     (NeighborKind::Move, 0.),
     (NeighborKind::Rotate, 8.),
+    (NeighborKind::Swap, 3.),
 ];
+
+const VISUALIZE_ACCEPTED_INTERVAL: usize = 1000;
 
 type Interval = (i64, i64);
 
@@ -65,6 +68,7 @@ enum NeighborKind {
     Shift,
     Move,
     Rotate,
+    Swap,
 }
 
 impl NeighborKind {
@@ -74,6 +78,7 @@ impl NeighborKind {
             NeighborKind::Shift => "Shift",
             NeighborKind::Move => "Move",
             NeighborKind::Rotate => "Rotate",
+            NeighborKind::Swap => "Swap",
         }
     }
 
@@ -83,6 +88,7 @@ impl NeighborKind {
             NeighborKind::Shift => 1,
             NeighborKind::Move => 2,
             NeighborKind::Rotate => 3,
+            NeighborKind::Swap => 4,
         }
     }
 }
@@ -306,6 +312,7 @@ fn run_annealing_worker(
             NeighborKind::Shift => try_shift_neighbor(problem, pre, &current, &mut rng),
             NeighborKind::Move => try_move_neighbor(problem, pre, &current, &mut rng),
             NeighborKind::Rotate => try_rotate_neighbor(problem, pre, &current, &mut rng),
+            NeighborKind::Swap => try_swap_neighbor(problem, pre, &current, &mut rng),
         };
         let Some(candidate) = candidate else {
             neighbor_stats[neighbor_idx].time_sec += neighbor_start.elapsed().as_secs_f64();
@@ -677,6 +684,130 @@ fn try_rotate_neighbor<R: Random>(
     let rotated = best?.2;
     base.push(rotated);
     Some(base)
+}
+
+fn try_swap_place(
+    problem: &Problem,
+    pre: &Precompute,
+    old: ScheduledBlock,
+    schedule: &[ScheduledBlock],
+    bay_id: usize,
+    orient_idx: usize,
+    base_x: i64,
+    base_y: i64,
+) -> Option<ScheduledBlock> {
+    let block = &problem.blocks[old.block_id];
+    let range = pre.collision.fit_range(bay_id, old.block_id, orient_idx)?;
+    let min_t = block.release_time;
+    let max_t = i64::MAX;
+    let mut best: Option<(i64, i64, ScheduledBlock)> = None;
+
+    for ddx in -SWAP_MAX_SHIFT_DELTA..=SWAP_MAX_SHIFT_DELTA {
+        for ddy in -SWAP_MAX_SHIFT_DELTA..=SWAP_MAX_SHIFT_DELTA {
+            let x = base_x + ddx;
+            let y = base_y + ddy;
+            if !range.contains(x, y) {
+                continue;
+            }
+
+            let tentative = ScheduledBlock {
+                block_id: old.block_id,
+                bay_id,
+                orient_idx,
+                x,
+                y,
+                entry_time: 0,
+                exit_time: block.processing_time,
+            };
+
+            let Some(entry_time) = get_insert_t(pre, tentative, schedule, min_t, max_t) else {
+                continue;
+            };
+
+            let scheduled = ScheduledBlock {
+                entry_time,
+                exit_time: entry_time + block.processing_time,
+                ..tentative
+            };
+
+            let tardiness = (scheduled.exit_time - block.due_date).max(0);
+
+            if best
+                .as_ref()
+                .map_or(true, |&(best_tardiness, best_entry_time, _)| {
+                    (tardiness, scheduled.entry_time) < (best_tardiness, best_entry_time)
+                })
+            {
+                best = Some((tardiness, scheduled.entry_time, scheduled));
+            }
+        }
+    }
+
+    Some(best?.2)
+}
+
+fn try_swap_neighbor<R: Random>(
+    problem: &Problem,
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    rng: &mut R,
+) -> Option<Vec<ScheduledBlock>> {
+    if schedule.len() < 2 {
+        return None;
+    }
+
+    let a_idx = rng.gen_index(schedule.len());
+    let a_old = schedule[a_idx];
+    let candidates = &pre.other_block_neighbors[a_old.block_id][a_old.orient_idx];
+    if candidates.is_empty() {
+        return None;
+    }
+    let candidate_count = SWAP_NEIGHBOR_TOP_K.min(candidates.len());
+    let candidate = candidates[rng.gen_index(candidate_count)];
+    let b_idx = schedule
+        .iter()
+        .position(|s| s.block_id == candidate.block_id)?;
+    if a_idx == b_idx {
+        return None;
+    }
+    let b_old = schedule[b_idx];
+
+    let mut cur = Vec::with_capacity(schedule.len());
+    for (idx, &s) in schedule.iter().enumerate() {
+        if idx != a_idx && idx != b_idx {
+            cur.push(s);
+        }
+    }
+
+    let a_base_x = b_old.x - candidate.dx;
+    let a_base_y = b_old.y - candidate.dy;
+    let a_new = try_swap_place(
+        problem,
+        pre,
+        a_old,
+        &cur,
+        b_old.bay_id,
+        a_old.orient_idx,
+        a_base_x,
+        a_base_y,
+    )?;
+    cur.push(a_new);
+
+    let b_base_x = a_old.x + candidate.dx;
+    let b_base_y = a_old.y + candidate.dy;
+    let b_new = try_swap_place(
+        problem,
+        pre,
+        b_old,
+        &cur,
+        a_old.bay_id,
+        candidate.orient_idx,
+        b_base_x,
+        b_base_y,
+    )?;
+    cur.push(b_new);
+
+    Some(cur)
 }
 
 fn try_move_neighbor<R: Random>(
@@ -1462,7 +1593,7 @@ fn format_neighbor_stats(stats: &[NeighborStats; NEIGHBOR_KIND_COUNT]) -> String
         .map(|&(kind, _)| {
             let stat = stats[kind.index()];
             format!(
-                "  {:<8}: selected={:5}, succeeded={:5} ({:7.3}%), improved={:5} ({:7.3}%, avg={:10.2}), accepted={:5} ({:7.3}%), time={:7.3}s, avg={:7.3}ms",
+                "  {:<8}: selected={:7}, succeeded={:7} ({:7.3}%), improved={:7} ({:7.3}%, avg={:10.2}), accepted={:7} ({:7.3}%), time={:7.3}s, avg={:7.3}ms",
                 kind.name(),
                 stat.selected,
                 stat.succeeded,
