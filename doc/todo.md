@@ -1,6 +1,3 @@
-- 並列annealing
-- 高速化
-
 safety:
 - 定期的にpy側でfeasibilityをチェックする
   - check-feasibilityの高速化
@@ -21,23 +18,24 @@ solver:
 - 局所探索の改善
   - reconstructの改善
   - 小さい近傍の追加
-  - dx,dyをnon-positiveに限定する
+  - 重複除去
 - 初期解の改善
-  - 順番を変える
+  - (loadsが大きい順、面積が大きい順、偏りが大きい順、締切が早い) の重みを探索する
+  - 重みをランダムにサンプリングして探索する
+  - 良いスコアとなったパラメータを保持しておき、たまにそこからサンプリングして、その重みをブラして再度探索する
+  - 外側でorderを構築して、orderを与えるようにする
+  - orderをhashしておいて重複除去
+  - note:
     - tardinessが大きいケースは小さい順に入れる
     - tardinessが発生することが確定しているブロックよりも、発生しないブロックを優先する
-    - (loadsが大きい順、面積が大きい順、偏りが大きい順、締切が早い) の重みを探索する
-  - 良いパラメータを保持しておいて、ブラして再度探索する
-  - orderをhashしておいて重複除去
-- 並列annealing
-  - best解の交換
-  - worker-idごとに温度を変化
 - 大域的最適化
   - obj2,obj3の下界を求めて、それに合わせてbay-idを決める
-- t-intervalをmergeして、候補tがなくなったら打ち切る
 - 高速化
   - insert-greedyのチューニング
-  - 移動してもスコアが良くならないbay-idは試さない
+- 調整
+  - start-temp,end-tempの推定
+  - dx,dyをnon-positiveに限定する
+  - パラメータ
 - 強い最適化
   - packing-scoreの計算（bboxの重なりなど）
   - 重なっている面積が少なくなる方に動かす
@@ -50,5 +48,6 @@ stats:
 - ベストを一番下に表示
 
 other:
-- 難しいケースをaugmentationして評価
+- 全てのケースで評価
+- ケースをaugmentationして評価
 - 時間を延ばして評価

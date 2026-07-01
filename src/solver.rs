@@ -9,7 +9,7 @@ use crate::{
     *,
 };
 use rayon::prelude::*;
-use std::{cmp::Reverse, path::Path, sync::Mutex, time::Instant};
+use std::{cmp::Reverse, collections::HashSet, path::Path, sync::Mutex, time::Instant};
 
 macro_rules! log {
     ($timer:expr, $($arg:tt)*) => {
@@ -21,7 +21,7 @@ const RNG_SEED: u64 = 1;
 const MAX_WORKER_COUNT: usize = 4;
 
 const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
-const START_TEMP: f64 = 1e1;
+const START_TEMP: f64 = 1e3;
 const END_TEMP: f64 = 1e0;
 const BEST_EXCHANGE_INTERVAL: usize = 2_000;
 
@@ -31,6 +31,9 @@ pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
 
 const MAX_INITIAL_SEARCH_SECONDS: f64 = 30.;
 const BASE_INITIAL_SEARCH_TIME_RATIO: f64 = 0.3;
+const INITIAL_GOOD_WEIGHT_POOL_SIZE: usize = 32;
+const INITIAL_EXPLOIT_PROB: f64 = 0.25;
+const INITIAL_WEIGHT_MUTATION_SCALE: f64 = 0.2;
 
 const MIN_REMOVED_BLOCKS: usize = 1;
 const MAX_REMOVED_BLOCKS: usize = 13;
@@ -75,6 +78,21 @@ fn sample_order_weights(rng: &mut impl Random) -> BlockOrderWeights {
         pref_spread: rng.gen_rangef(0.0, 0.1),
         due_urgency: rng.gen_rangef(0.0, 1.0),
         slack_urgency: rng.gen_rangef(0.0, 1.0),
+    }
+}
+
+fn mutate_order_weights(weights: BlockOrderWeights, rng: &mut impl Random) -> BlockOrderWeights {
+    fn mutate(value: f64, min_value: f64, max_value: f64, rng: &mut impl Random) -> f64 {
+        let width = (max_value - min_value) * INITIAL_WEIGHT_MUTATION_SCALE;
+        (value + rng.gen_rangef(-width, width)).clamp(min_value, max_value)
+    }
+
+    BlockOrderWeights {
+        workload: mutate(weights.workload, 0.0, 0.1, rng),
+        area: mutate(weights.area, 0.0, 0.2, rng),
+        pref_spread: mutate(weights.pref_spread, 0.0, 0.1, rng),
+        due_urgency: mutate(weights.due_urgency, 0.0, 1.0, rng),
+        slack_urgency: mutate(weights.slack_urgency, 0.0, 1.0, rng),
     }
 }
 
@@ -190,6 +208,12 @@ struct OldTimeInfo {
 struct State {
     score: f64,
     schedule: Vec<ScheduledBlock>,
+}
+
+struct InitialSearchState {
+    best: Option<(f64, Vec<ScheduledBlock>)>,
+    good_weights: Vec<(f64, BlockOrderWeights)>,
+    seen_order_hashes: HashSet<u64>,
 }
 
 struct AnnealingResult {
@@ -467,24 +491,40 @@ fn search_initial_schedule(
     let search_deadline = timer.elapsed_seconds() + search_seconds;
     log!(timer, "initial search seconds: {:.3}", search_seconds);
 
-    let best = Mutex::new(None::<(f64, Vec<ScheduledBlock>)>);
+    let initial_state = Mutex::new(InitialSearchState {
+        best: None,
+        good_weights: Vec::with_capacity(INITIAL_GOOD_WEIGHT_POOL_SIZE),
+        seen_order_hashes: HashSet::new(),
+    });
     (0..worker_count).into_par_iter().for_each(|worker_id| {
         let mut trial = 0;
         let mut rng =
             RandPcg64Mcg::new(RNG_SEED.wrapping_add(10_000).wrapping_add(worker_id as u64));
 
         loop {
-            if timer.elapsed_seconds() >= search_deadline && best.lock().unwrap().is_some() {
+            if timer.elapsed_seconds() >= search_deadline
+                && initial_state.lock().unwrap().best.is_some()
+            {
                 break;
             }
 
-            let weights = sample_order_weights(&mut rng);
-            let Ok(schedule) = build_initial_schedule(problem, pre, weights) else {
+            let weights = sample_initial_search_weights(&mut rng, &initial_state);
+            let order = build_initial_order(problem, pre, weights);
+            let order_hash = hash_order(&order);
+            {
+                let mut state = initial_state.lock().unwrap();
+                if !state.seen_order_hashes.insert(order_hash) {
+                    continue;
+                }
+            }
+
+            let Some(schedule) = build_initial_schedule_with_order(problem, pre, &order) else {
                 continue;
             };
             let score = score_schedule(problem, pre, &schedule);
-            let mut best_guard = best.lock().unwrap();
-            if best_guard
+            let mut state = initial_state.lock().unwrap();
+            if state
+                .best
                 .as_ref()
                 .map_or(true, |(best_score, _)| score + 1e-9 < *best_score)
             {
@@ -494,8 +534,9 @@ fn search_initial_schedule(
                     worker_id,
                     score
                 );
-                *best_guard = Some((score, schedule));
+                state.best = Some((score, schedule));
             }
+            update_good_weight_pool(&mut state.good_weights, score, weights);
 
             trial += 1;
         }
@@ -503,23 +544,84 @@ fn search_initial_schedule(
         log!(timer, "worker {} trial {:4}", worker_id, trial);
     });
 
-    let Some((score, schedule)) = best.into_inner().unwrap() else {
+    let Some((score, schedule)) = initial_state.into_inner().unwrap().best else {
         return Err("failed to build initial schedule".to_string());
     };
     Ok((schedule, score))
 }
 
-fn build_initial_schedule(
+fn sample_initial_search_weights(
+    rng: &mut impl Random,
+    state: &Mutex<InitialSearchState>,
+) -> BlockOrderWeights {
+    if rng.nextf() < INITIAL_EXPLOIT_PROB {
+        let base = {
+            let state = state.lock().unwrap();
+            if state.good_weights.is_empty() {
+                None
+            } else {
+                Some(state.good_weights[rng.gen_index(state.good_weights.len())].1)
+            }
+        };
+        if let Some(base) = base {
+            return mutate_order_weights(base, rng);
+        }
+    }
+    sample_order_weights(rng)
+}
+
+fn update_good_weight_pool(
+    pool: &mut Vec<(f64, BlockOrderWeights)>,
+    score: f64,
+    weights: BlockOrderWeights,
+) {
+    if pool.len() < INITIAL_GOOD_WEIGHT_POOL_SIZE {
+        pool.push((score, weights));
+        return;
+    }
+
+    let mut worst_idx = 0;
+    let mut worst_score = pool[0].0;
+    for (idx, &(candidate_score, _)) in pool.iter().enumerate().skip(1) {
+        if candidate_score > worst_score {
+            worst_idx = idx;
+            worst_score = candidate_score;
+        }
+    }
+
+    if score + 1e-9 < worst_score {
+        pool[worst_idx] = (score, weights);
+    }
+}
+
+fn build_initial_order(
     problem: &Problem,
     pre: &Precompute,
     weights: BlockOrderWeights,
-) -> Result<Vec<ScheduledBlock>, String> {
-    let mut schedule = Vec::with_capacity(problem.blocks.len());
-    let mut loads = vec![0.0; problem.bays.len()];
+) -> Vec<usize> {
     let mut order: Vec<usize> = (0..problem.blocks.len()).collect();
     sort_block_order(problem, pre, &mut order, weights);
+    order
+}
 
-    for block_id in order {
+fn hash_order(order: &[usize]) -> u64 {
+    let mut hash = 1469598103934665603u64;
+    for &block_id in order {
+        hash ^= block_id as u64;
+        hash = hash.wrapping_mul(1099511628211);
+    }
+    hash
+}
+
+fn build_initial_schedule_with_order(
+    problem: &Problem,
+    pre: &Precompute,
+    order: &[usize],
+) -> Option<Vec<ScheduledBlock>> {
+    let mut schedule = Vec::with_capacity(problem.blocks.len());
+    let mut loads = vec![0.0; problem.bays.len()];
+
+    for &block_id in order {
         let block = &problem.blocks[block_id];
         let original = ScheduledBlock {
             block_id,
@@ -530,13 +632,12 @@ fn build_initial_schedule(
             entry_time: block.release_time,
             exit_time: block.release_time + block.processing_time,
         };
-        let scheduled = insert_greedy(problem, pre, original, &schedule, &loads, INSERT_PARAMS)
-            .ok_or_else(|| format!("failed to place block {block_id} in initial schedule"))?;
+        let scheduled = insert_greedy(problem, pre, original, &schedule, &loads, INSERT_PARAMS)?;
         loads[scheduled.bay_id] += block.workload as f64;
         schedule.push(scheduled);
     }
 
-    Ok(schedule)
+    Some(schedule)
 }
 
 fn try_large_reconstruct<R: Random>(
