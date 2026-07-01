@@ -1,5 +1,5 @@
 use crate::{
-    collision::{BlockPlacement, CollisionResult},
+    collision::{BlockOrient, BlockPlacement, CollisionResult},
     precompute::Precompute,
     util::{
         rand::{RandPcg64Mcg, Random},
@@ -103,6 +103,41 @@ struct InsertCandidate {
     score_delta: f64,
     bbox_right: f64,
     bbox_top: f64,
+}
+
+#[derive(Clone, Copy)]
+enum HitDir {
+    NewOld,
+    OldNew,
+}
+
+#[derive(Clone, Copy)]
+struct YEvent {
+    y: i64,
+    old_idx: usize,
+    dir: HitDir,
+    delta: i8,
+}
+
+#[derive(Clone, Copy, Default)]
+struct HitState {
+    new_old: u16,
+    old_new: u16,
+}
+
+impl HitState {
+    fn is_active(self) -> bool {
+        self.new_old > 0 || self.old_new > 0
+    }
+}
+
+#[derive(Clone, Copy)]
+struct OldTimeInfo {
+    old_entry_time: i64,
+    old_exit_time: i64,
+    new_process_time: i64,
+    overlap_entry_time_min: i64,
+    overlap_entry_time_max: i64,
 }
 
 struct AnnealingResult {
@@ -424,16 +459,8 @@ fn build_initial_schedule<R: Random>(
             entry_time: block.release_time,
             exit_time: block.release_time + block.processing_time,
         };
-        let scheduled = insert_greedy(
-            problem,
-            pre,
-            original,
-            &schedule,
-            &loads,
-            INSERT_PARAMS,
-            rng,
-        )
-        .ok_or_else(|| format!("failed to place block {block_id} in initial schedule"))?;
+        let scheduled = insert_greedy(problem, pre, original, &schedule, &loads, INSERT_PARAMS)
+            .ok_or_else(|| format!("failed to place block {block_id} in initial schedule"))?;
         loads[scheduled.bay_id] += block.workload as f64;
         schedule.push(scheduled);
     }
@@ -481,7 +508,7 @@ fn try_large_reconstruct<R: Random>(
     }
 
     for old in removed {
-        let scheduled = insert_greedy(problem, pre, old, &cur, &loads, INSERT_PARAMS, rng)?;
+        let scheduled = insert_greedy(problem, pre, old, &cur, &loads, INSERT_PARAMS)?;
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
         cur.push(scheduled);
     }
@@ -706,7 +733,7 @@ fn try_move_neighbor<R: Random>(
         base.push(s);
     }
 
-    let scheduled = insert_greedy(problem, pre, old, &base, &loads, INSERT_PARAMS, rng)?;
+    let scheduled = insert_greedy(problem, pre, old, &base, &loads, INSERT_PARAMS)?;
     if scheduled == old {
         return None;
     }
@@ -907,14 +934,13 @@ fn sort_by_area_slack(
     });
 }
 
-fn insert_greedy<R: Random>(
+fn insert_greedy(
     problem: &Problem,
     pre: &Precompute,
     original: ScheduledBlock,
     schedule: &[ScheduledBlock],
     loads: &[f64],
     params: InsertSearchParams,
-    _rng: &mut R,
 ) -> Option<ScheduledBlock> {
     fn insert_candidate_better(a: &InsertCandidate, b: &InsertCandidate) -> bool {
         a.score_delta
@@ -937,6 +963,21 @@ fn insert_greedy<R: Random>(
     let mut best: Option<InsertCandidate> = None;
 
     for bay_id in 0..problem.bays.len() {
+        let bay_old_blocks: Vec<ScheduledBlock> = schedule
+            .iter()
+            .copied()
+            .filter(|old| old.bay_id == bay_id)
+            .collect();
+        let old_time_infos: Vec<Option<OldTimeInfo>> = bay_old_blocks
+            .iter()
+            .map(|&old| old_time_info(old, process_t, min_t, max_t))
+            .collect();
+        let mut events = Vec::with_capacity(bay_old_blocks.len() * 4);
+        let mut states = vec![HitState::default(); bay_old_blocks.len()];
+        let mut active_old_ids = Vec::with_capacity(bay_old_blocks.len());
+        let mut active_pos = vec![None; bay_old_blocks.len()];
+        let mut forbidden = Vec::with_capacity(16);
+
         let mut next_loads = loads.to_vec();
         next_loads[bay_id] += block.workload as f64;
         let delta_obj23 = problem.weights.w2
@@ -947,6 +988,11 @@ fn insert_greedy<R: Random>(
             let Some(range) = pre.collision.fit_range(bay_id, block_id, orient_idx) else {
                 continue;
             };
+            let new_orient = BlockOrient {
+                block_id,
+                orient_idx,
+            };
+            let bounds = pre.orientation_bbox_bounds[block_id][orient_idx];
             let mut anchor_x: Option<i64> = None;
 
             for x in range.min_x..=range.max_x {
@@ -956,46 +1002,115 @@ fn insert_greedy<R: Random>(
                     }
                 }
 
-                for y in range.min_y..=range.max_y {
-                    let tentative = ScheduledBlock {
-                        block_id,
-                        bay_id,
-                        orient_idx,
-                        x,
-                        y,
-                        entry_time: 0,
-                        exit_time: process_t,
-                    };
-                    let Some(entry_time) = get_insert_t(pre, tentative, schedule, min_t, max_t)
-                    else {
-                        continue;
-                    };
-                    let scheduled = ScheduledBlock {
-                        entry_time,
-                        exit_time: entry_time + process_t,
-                        ..tentative
-                    };
-                    let tardiness = (scheduled.exit_time - block.due_date).max(0);
-                    let score_delta = problem.weights.w1 * tardiness as f64 + delta_obj23;
+                events.clear();
+                states.fill(HitState::default());
+                active_old_ids.clear();
+                active_pos.fill(None);
 
-                    let bounds = pre.orientation_bbox_bounds[block_id][orient_idx];
-                    let candidate = InsertCandidate {
-                        scheduled,
-                        score_delta,
-                        bbox_right: scheduled.x as f64 + bounds.max_x,
-                        bbox_top: scheduled.y as f64 + bounds.max_y,
-                    };
-                    if best
-                        .as_ref()
-                        .map_or(true, |best| insert_candidate_better(&candidate, best))
-                    {
-                        best = Some(candidate);
+                for (old_idx, &old) in bay_old_blocks.iter().enumerate() {
+                    if old_time_infos[old_idx].is_none() {
+                        continue;
                     }
 
-                    if tardiness <= original_tardiness {
-                        if anchor_x.is_none() {
+                    let old_orient = BlockOrient {
+                        block_id: old.block_id,
+                        orient_idx: old.orient_idx,
+                    };
+
+                    for &(lo, hi) in
+                        pre.collision
+                            .crane_dy_intervals(new_orient, old_orient, old.x - x)
+                    {
+                        push_y_event(
+                            old.y - hi,
+                            old.y - lo,
+                            old_idx,
+                            HitDir::NewOld,
+                            range.min_y,
+                            range.max_y,
+                            &mut events,
+                        );
+                    }
+                    for &(lo, hi) in
+                        pre.collision
+                            .crane_dy_intervals(old_orient, new_orient, x - old.x)
+                    {
+                        push_y_event(
+                            old.y + lo,
+                            old.y + hi,
+                            old_idx,
+                            HitDir::OldNew,
+                            range.min_y,
+                            range.max_y,
+                            &mut events,
+                        );
+                    }
+                }
+
+                events.sort_unstable_by_key(|event| event.y);
+                let mut event_pos = 0;
+                let mut y = range.min_y;
+                loop {
+                    while event_pos < events.len() && events[event_pos].y == y {
+                        apply_y_event(
+                            events[event_pos],
+                            &mut states,
+                            &mut active_old_ids,
+                            &mut active_pos,
+                        );
+                        event_pos += 1;
+                    }
+
+                    forbidden.clear();
+                    for &old_idx in &active_old_ids {
+                        let Some(info) = old_time_infos[old_idx] else {
+                            continue;
+                        };
+                        let state = states[old_idx];
+                        add_forbidden_from_hit_state(
+                            info,
+                            state.new_old > 0,
+                            state.old_new > 0,
+                            &mut forbidden,
+                        );
+                    }
+
+                    if let Some(entry_time) = first_feasible_time_small(&forbidden, min_t, max_t) {
+                        let scheduled = ScheduledBlock {
+                            block_id,
+                            bay_id,
+                            orient_idx,
+                            x,
+                            y,
+                            entry_time,
+                            exit_time: entry_time + process_t,
+                        };
+                        let tardiness = (scheduled.exit_time - block.due_date).max(0);
+                        let score_delta = problem.weights.w1 * tardiness as f64 + delta_obj23;
+                        let candidate = InsertCandidate {
+                            scheduled,
+                            score_delta,
+                            bbox_right: scheduled.x as f64 + bounds.max_x,
+                            bbox_top: scheduled.y as f64 + bounds.max_y,
+                        };
+                        if best
+                            .as_ref()
+                            .map_or(true, |best| insert_candidate_better(&candidate, best))
+                        {
+                            best = Some(candidate);
+                        }
+
+                        if tardiness <= original_tardiness && anchor_x.is_none() {
                             anchor_x = Some(x);
                         }
+                    }
+
+                    if event_pos >= events.len() {
+                        break;
+                    }
+                    y = events[event_pos].y;
+                    if y > range.max_y {
+                        break;
                     }
                 }
             }
@@ -1003,6 +1118,169 @@ fn insert_greedy<R: Random>(
     }
 
     best.map(|candidate| candidate.scheduled)
+}
+
+fn old_time_info(
+    old: ScheduledBlock,
+    process_t: i64,
+    min_t: i64,
+    max_t: i64,
+) -> Option<OldTimeInfo> {
+    let a = old.entry_time;
+    let b = old.exit_time;
+    let ol = (a - process_t + 1).max(min_t);
+    let or = (b - 1).min(max_t);
+    if ol <= or {
+        Some(OldTimeInfo {
+            old_entry_time: a,
+            old_exit_time: b,
+            new_process_time: process_t,
+            overlap_entry_time_min: ol,
+            overlap_entry_time_max: or,
+        })
+    } else {
+        None
+    }
+}
+
+fn push_y_event(
+    l: i64,
+    r: i64,
+    old_idx: usize,
+    dir: HitDir,
+    min_y: i64,
+    max_y: i64,
+    events: &mut Vec<YEvent>,
+) {
+    let l = l.max(min_y);
+    let r = r.min(max_y);
+    if l > r {
+        return;
+    }
+
+    events.push(YEvent {
+        y: l,
+        old_idx,
+        dir,
+        delta: 1,
+    });
+    if let Some(y) = r.checked_add(1) {
+        events.push(YEvent {
+            y,
+            old_idx,
+            dir,
+            delta: -1,
+        });
+    }
+}
+
+fn apply_y_event(
+    event: YEvent,
+    states: &mut [HitState],
+    active_old_ids: &mut Vec<usize>,
+    active_pos: &mut [Option<usize>],
+) {
+    let old_idx = event.old_idx;
+    let was_active = states[old_idx].is_active();
+
+    match event.dir {
+        HitDir::NewOld => {
+            if event.delta > 0 {
+                states[old_idx].new_old += 1;
+            } else {
+                debug_assert!(states[old_idx].new_old > 0);
+                states[old_idx].new_old -= 1;
+            }
+        }
+        HitDir::OldNew => {
+            if event.delta > 0 {
+                states[old_idx].old_new += 1;
+            } else {
+                debug_assert!(states[old_idx].old_new > 0);
+                states[old_idx].old_new -= 1;
+            }
+        }
+    }
+
+    let is_active = states[old_idx].is_active();
+    if !was_active && is_active {
+        active_pos[old_idx] = Some(active_old_ids.len());
+        active_old_ids.push(old_idx);
+    } else if was_active && !is_active {
+        let pos = active_pos[old_idx].take().unwrap();
+        let last = active_old_ids.pop().unwrap();
+        if pos < active_old_ids.len() {
+            active_old_ids[pos] = last;
+            active_pos[last] = Some(pos);
+        }
+    }
+}
+
+fn add_forbidden_from_hit_state(
+    info: OldTimeInfo,
+    new_old_hit: bool,
+    old_new_hit: bool,
+    forbidden: &mut Vec<Interval>,
+) {
+    let new_old_clear = !new_old_hit;
+    let old_new_clear = !old_new_hit;
+    if new_old_clear && old_new_clear {
+        return;
+    }
+
+    let ol = info.overlap_entry_time_min;
+    let or = info.overlap_entry_time_max;
+    if !new_old_clear && !old_new_clear {
+        forbidden.push((ol, or));
+        return;
+    }
+
+    let (allow_l, allow_r) = if new_old_clear {
+        (
+            (info.old_entry_time + 1).max(ol),
+            (info.old_exit_time - info.new_process_time - 1).min(or),
+        )
+    } else {
+        (
+            (info.old_exit_time - info.new_process_time + 1).max(ol),
+            (info.old_entry_time - 1).min(or),
+        )
+    };
+
+    if allow_l > allow_r {
+        forbidden.push((ol, or));
+        return;
+    }
+    if ol < allow_l {
+        forbidden.push((ol, allow_l - 1));
+    }
+    if allow_r < or {
+        forbidden.push((allow_r + 1, or));
+    }
+}
+
+/// TODO: sort版も試す
+fn first_feasible_time_small(forbidden: &[Interval], min_t: i64, max_t: i64) -> Option<i64> {
+    let mut t = min_t;
+    loop {
+        let mut next_t = t;
+        for &(l, r) in forbidden {
+            if l <= t && t <= r {
+                if r == i64::MAX {
+                    return None;
+                }
+                next_t = next_t.max(r + 1);
+            }
+        }
+
+        if next_t == t {
+            return Some(t);
+        }
+        if next_t > max_t {
+            return None;
+        }
+        t = next_t;
+    }
 }
 
 fn add_forbidden_intervals_for_old(
