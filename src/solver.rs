@@ -169,9 +169,7 @@ pub fn solve(
         .into_par_iter()
         .enumerate()
         .map(|(worker_id, worker_timer)| {
-            let mut initial_rng = RandPcg64Mcg::new(RNG_SEED.wrapping_add(worker_id as u64));
-            let initial =
-                build_initial_schedule(problem, &pre, worker_id, worker_count, &mut initial_rng)?;
+            let initial = build_initial_schedule(problem, &pre, worker_id, worker_count)?;
             let initial_score = score_schedule(problem, &pre, &initial);
             log!(
                 worker_timer,
@@ -384,12 +382,11 @@ fn run_annealing_worker(
     }
 }
 
-fn build_initial_schedule<R: Random>(
+fn build_initial_schedule(
     problem: &Problem,
     pre: &Precompute,
     worker_id: usize,
     worker_count: usize,
-    rng: &mut R,
 ) -> Result<Vec<ScheduledBlock>, String> {
     fn initial_order_score(
         problem: &Problem,
@@ -749,6 +746,27 @@ fn choose_removed_blocks<R: Random>(
     k: usize,
     rng: &mut R,
 ) -> Vec<usize> {
+    fn scheduled_center(pre: &Precompute, s: ScheduledBlock) -> (f64, f64) {
+        let (cx, cy) = pre.orientation_bbox_center[s.block_id][s.orient_idx];
+        (s.x as f64 + cx, s.y as f64 + cy)
+    }
+
+    fn most_loaded_bay(pre: &Precompute, loads: &[f64]) -> Option<usize> {
+        if loads.is_empty() {
+            return None;
+        }
+        let mut best = 0;
+        let mut best_load = f64::NEG_INFINITY;
+        for (bay_id, &load) in loads.iter().enumerate() {
+            let normalized = load * pre.bay_load_scale[bay_id];
+            if normalized > best_load {
+                best_load = normalized;
+                best = bay_id;
+            }
+        }
+        Some(best)
+    }
+
     let n = schedule.len();
     if n == 0 || k == 0 {
         return Vec::new();
@@ -1075,7 +1093,7 @@ fn insert_greedy(
                         );
                     }
 
-                    if let Some(entry_time) = first_feasible_time_small(&forbidden, min_t, max_t) {
+                    if let Some(entry_time) = first_feasible_time(&forbidden, min_t, max_t) {
                         let scheduled = ScheduledBlock {
                             block_id,
                             bay_id,
@@ -1260,7 +1278,7 @@ fn add_forbidden_from_hit_state(
 }
 
 /// TODO: sort版も試す
-fn first_feasible_time_small(forbidden: &[Interval], min_t: i64, max_t: i64) -> Option<i64> {
+fn first_feasible_time(forbidden: &[Interval], min_t: i64, max_t: i64) -> Option<i64> {
     let mut t = min_t;
     loop {
         let mut next_t = t;
@@ -1283,102 +1301,6 @@ fn first_feasible_time_small(forbidden: &[Interval], min_t: i64, max_t: i64) -> 
     }
 }
 
-fn add_forbidden_intervals_for_old(
-    pre: &Precompute,
-    new_block: ScheduledBlock,
-    old: ScheduledBlock,
-    min_t: i64,
-    max_t: i64,
-    forbidden: &mut Vec<Interval>,
-) {
-    fn clamp_interval(l: i64, r: i64, min_val: i64, max_val: i64) -> Option<Interval> {
-        let l = l.max(min_val);
-        let r = r.min(max_val);
-        if l <= r { Some((l, r)) } else { None }
-    }
-
-    let p = new_block.exit_time - new_block.entry_time;
-    let a = old.entry_time;
-    let b = old.exit_time;
-
-    let Some((ol, or)) = clamp_interval(a - p + 1, b - 1, min_t, max_t) else {
-        return;
-    };
-
-    let new_place = BlockPlacement {
-        block_id: new_block.block_id,
-        orient_idx: new_block.orient_idx,
-        x: new_block.x,
-        y: new_block.y,
-    };
-    let old_place = BlockPlacement {
-        block_id: old.block_id,
-        orient_idx: old.orient_idx,
-        x: old.x,
-        y: old.y,
-    };
-
-    let new_old_clear = pre.collision.crane(new_place, old_place) == CollisionResult::Clear;
-    let old_new_clear = pre.collision.crane(old_place, new_place) == CollisionResult::Clear;
-    if new_old_clear && old_new_clear {
-        return;
-    }
-
-    if !new_old_clear && !old_new_clear {
-        forbidden.push((ol, or));
-        return;
-    }
-
-    let (allow_l, allow_r) = if new_old_clear {
-        ((a + 1).max(ol), (b - p - 1).min(or))
-    } else {
-        ((b - p + 1).max(ol), (a - 1).min(or))
-    };
-
-    if allow_l > allow_r {
-        forbidden.push((ol, or));
-        return;
-    }
-    if ol < allow_l {
-        forbidden.push((ol, allow_l - 1));
-    }
-    if allow_r < or {
-        forbidden.push((allow_r + 1, or));
-    }
-}
-
-fn merge_intervals(intervals: &mut Vec<Interval>) {
-    intervals.sort_unstable_by_key(|&(l, r)| (l, r));
-    let mut merged: Vec<Interval> = Vec::new();
-    for &(l, r) in intervals.iter() {
-        if let Some(last) = merged.last_mut() {
-            if l <= last.1 + 1 {
-                last.1 = last.1.max(r);
-                continue;
-            }
-        }
-        merged.push((l, r));
-    }
-    *intervals = merged;
-}
-
-fn first_feasible_time(mut forbidden: Vec<Interval>, min_t: i64, max_t: i64) -> Option<i64> {
-    merge_intervals(&mut forbidden);
-    let mut t = min_t;
-    for (l, r) in forbidden {
-        if t < l {
-            return Some(t);
-        }
-        if t <= r {
-            t = r + 1;
-        }
-        if t > max_t {
-            return None;
-        }
-    }
-    if t <= max_t { Some(t) } else { None }
-}
-
 fn get_insert_t(
     pre: &Precompute,
     new_block: ScheduledBlock,
@@ -1386,32 +1308,31 @@ fn get_insert_t(
     min_t: i64,
     max_t: i64,
 ) -> Option<i64> {
-    let mut forbidden = Vec::new();
+    let mut forbidden = Vec::with_capacity(16);
     for &old in schedule.iter().filter(|old| old.bay_id == new_block.bay_id) {
-        add_forbidden_intervals_for_old(pre, new_block, old, min_t, max_t, &mut forbidden);
-    }
-    first_feasible_time(forbidden, min_t, max_t)
-}
+        let process_t = new_block.exit_time - new_block.entry_time;
+        let Some(info) = old_time_info(old, process_t, min_t, max_t) else {
+            continue;
+        };
 
-fn scheduled_center(pre: &Precompute, s: ScheduledBlock) -> (f64, f64) {
-    let (cx, cy) = pre.orientation_bbox_center[s.block_id][s.orient_idx];
-    (s.x as f64 + cx, s.y as f64 + cy)
-}
+        let new_place = BlockPlacement {
+            block_id: new_block.block_id,
+            orient_idx: new_block.orient_idx,
+            x: new_block.x,
+            y: new_block.y,
+        };
+        let old_place = BlockPlacement {
+            block_id: old.block_id,
+            orient_idx: old.orient_idx,
+            x: old.x,
+            y: old.y,
+        };
 
-fn most_loaded_bay(pre: &Precompute, loads: &[f64]) -> Option<usize> {
-    if loads.is_empty() {
-        return None;
+        let new_old_hit = pre.collision.crane(new_place, old_place) == CollisionResult::Hit;
+        let old_new_hit = pre.collision.crane(old_place, new_place) == CollisionResult::Hit;
+        add_forbidden_from_hit_state(info, new_old_hit, old_new_hit, &mut forbidden);
     }
-    let mut best = 0;
-    let mut best_load = f64::NEG_INFINITY;
-    for (bay_id, &load) in loads.iter().enumerate() {
-        let normalized = load * pre.bay_load_scale[bay_id];
-        if normalized > best_load {
-            best_load = normalized;
-            best = bay_id;
-        }
-    }
-    Some(best)
+    first_feasible_time(&forbidden, min_t, max_t)
 }
 
 fn score_schedule(problem: &Problem, pre: &Precompute, schedule: &[ScheduledBlock]) -> f64 {
