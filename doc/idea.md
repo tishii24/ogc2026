@@ -34,6 +34,7 @@ feasibilityのチェック:
   - swap: 2個のブロックの位置を入れ替える
     - bboxの重なりが大きい(orientation,dx,dy)を前計算する
       - other_block_neighbors[block_id][orient_id]: Vec<(block_id: usize, orientation: usize, dx: i64, dy: i64)>
+      - block-idのペアは、block-idごとにbboxの面積が近いtop-kに絞る（kは定数として外側から与える）
     - dx'=dx+(-D..D),dy'=dy+(-D..D)を試す
   - move: 1個のブロックの位置を連動して動かす
     - dx=(-D..0),dy=(-D..0)を試す

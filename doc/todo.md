@@ -1,15 +1,18 @@
-- insert-greedyの高速化
-- 初期解の改善
 - 近傍の追加
+- TODOの消化
+- 再度時間を延ばして実行する
+- 初期解の改善
 - reconstructの改善
 - safetyを追加する
-- panicを排除する
 
 safety:
-- feasibilityをチェックする
+- 定期的にpy側でfeasibilityをチェックする
   - check-feasibilityの高速化
 - 空のblockのチェック
 - 縦長のbayではxとyを入れ替える
+- AIチェック
+  - panicを排除する
+  - fallback
 
 precompute:
 - 衝突判定の高速化
@@ -19,7 +22,6 @@ precompute:
 
 solver:
 - 局所探索の改善
-  - change-entry-tの追加
   - swapの追加
   - reconstructの改善（insert-greedyの改善）
 - get-insert-tの高速化
@@ -33,11 +35,12 @@ solver:
   - obj2,obj3の下界を求めて、それに合わせてbay-idを決める
 - t-intervalをmergeして、候補tがなくなったら打ち切る
 - 高速化
-  - get-insert-tを差分評価する
-  - 先に移動範囲のbboxの重なりを見て、干渉するブロックに絞って計算する
-  - 候補範囲ごとを分割する
+  - insert-greedyのチューニング
   - 移動してもスコアが良くならないbay-idは試さない
 - 元より悪化しない　or bestを探すの両方を試す
+- 温度調整
+- reannealing
+- 並列annealing
 - 強い最適化
   - insertを評価して、ベストなinsertを探す
   - packing-scoreの計算（bboxの重なりなど）
@@ -45,7 +48,7 @@ solver:
   - 重なっている面積が少なくなる方に動かす
 - 同時刻の操作順を考慮する
 - 取り出す時刻を変えてABBA <->　ABABを入れ替える
-- 並列annealing
+  - change-entry-tの追加
 
 stats:
 - グループ化して平均を表示

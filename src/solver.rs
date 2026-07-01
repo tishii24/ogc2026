@@ -34,8 +34,12 @@ const REMOVE_SEED_COUNT: usize = 3;
 const REMOVE_RANDOM_SEED_COUNT: usize = 1;
 const REMOVE_NEIGHBOR_POOL_FACTOR: usize = 4;
 const INSERT_PARAMS: InsertSearchParams = InsertSearchParams { x_buffer: 10 };
-const ORDER_SLACK_WEIGHT_MIN: f64 = 0.0;
-const ORDER_SLACK_WEIGHT_MAX: f64 = 4.0;
+const RECONSTRUCT_ORDER_WORKLOAD_WEIGHT: f64 = 0.0;
+const RECONSTRUCT_ORDER_AREA_WEIGHT: f64 = 1.0;
+const RECONSTRUCT_ORDER_PREF_SPREAD_WEIGHT: f64 = 0.0;
+const RECONSTRUCT_ORDER_DUE_WEIGHT: f64 = 0.0;
+const RECONSTRUCT_ORDER_SLACK_WEIGHT_MIN: f64 = 0.0;
+const RECONSTRUCT_ORDER_SLACK_WEIGHT_MAX: f64 = 4.0;
 
 const SHIFT_MAX_SHIFT_X: i64 = 5;
 const SHIFT_MAX_SHIFT_Y: i64 = 5;
@@ -96,6 +100,25 @@ struct NeighborStats {
 #[derive(Clone, Copy)]
 struct InsertSearchParams {
     x_buffer: i64,
+}
+
+#[derive(Clone, Copy)]
+struct BlockOrderWeights {
+    workload: f64,
+    area: f64,
+    pref_spread: f64,
+    due_urgency: f64,
+    slack_urgency: f64,
+}
+
+struct BlockOrderContext {
+    max_workload: f64,
+    max_area: f64,
+    max_pref_spread: f64,
+    max_due: i64,
+    due_span: f64,
+    max_slack: i64,
+    slack_span: f64,
 }
 
 struct InsertCandidate {
@@ -388,62 +411,24 @@ fn build_initial_schedule(
     worker_id: usize,
     worker_count: usize,
 ) -> Result<Vec<ScheduledBlock>, String> {
-    fn initial_order_score(
-        problem: &Problem,
-        pre: &Precompute,
-        block_id: usize,
-        max_area: f64,
-        max_due: i64,
-        due_span: f64,
-        area_weight: f64,
-    ) -> f64 {
-        let area_norm = pre.block_area[block_id] / max_area;
-        let due_urgency = (max_due - problem.blocks[block_id].due_date) as f64 / due_span;
-        due_urgency + area_weight * area_norm
-    }
-
-    fn sort_initial_order(
-        problem: &Problem,
-        pre: &Precompute,
-        order: &mut [usize],
-        worker_id: usize,
-        worker_count: usize,
-    ) {
-        let max_area = pre.block_area.iter().copied().fold(0.0, f64::max).max(1.0);
-        let min_due = problem
-            .blocks
-            .iter()
-            .map(|block| block.due_date)
-            .min()
-            .unwrap_or(0);
-        let max_due = problem
-            .blocks
-            .iter()
-            .map(|block| block.due_date)
-            .max()
-            .unwrap_or(min_due);
-        let due_span = (max_due - min_due).max(1) as f64;
-        let w = worker_id as f64 / (worker_count - 1).max(1) as f64;
-        let area_weight =
-            INITIAL_AREA_WEIGHT_MIN + (INITIAL_AREA_WEIGHT_MAX - INITIAL_AREA_WEIGHT_MIN) * w;
-
-        order.sort_by(|&a, &b| {
-            let score_a =
-                initial_order_score(problem, pre, a, max_area, max_due, due_span, area_weight);
-            let score_b =
-                initial_order_score(problem, pre, b, max_area, max_due, due_span, area_weight);
-            score_b
-                .total_cmp(&score_a)
-                .then(problem.blocks[a].due_date.cmp(&problem.blocks[b].due_date))
-                .then(pre.block_area[b].total_cmp(&pre.block_area[a]))
-                .then(a.cmp(&b))
-        });
-    }
-
     let mut schedule = Vec::with_capacity(problem.blocks.len());
     let mut loads = vec![0.0; problem.bays.len()];
     let mut order: Vec<usize> = (0..problem.blocks.len()).collect();
-    sort_initial_order(problem, pre, &mut order, worker_id, worker_count);
+    let w = worker_id as f64 / (worker_count - 1).max(1) as f64;
+    let area_weight =
+        INITIAL_AREA_WEIGHT_MIN + (INITIAL_AREA_WEIGHT_MAX - INITIAL_AREA_WEIGHT_MIN) * w;
+    sort_block_order(
+        problem,
+        pre,
+        &mut order,
+        BlockOrderWeights {
+            workload: 0.0,
+            area: area_weight,
+            pref_spread: 0.0,
+            due_urgency: 1.0,
+            slack_urgency: 0.0,
+        },
+    );
 
     for block_id in order {
         let block = &problem.blocks[block_id];
@@ -475,28 +460,36 @@ fn try_large_reconstruct<R: Random>(
         .gen_range(MIN_REMOVED_BLOCKS, MAX_REMOVED_BLOCKS + 1)
         .min(problem.blocks.len());
 
-    let removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng);
+    let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng);
     if removed_ids.is_empty() {
         return None;
     }
+    let slack_weight = rng.gen_rangef(
+        RECONSTRUCT_ORDER_SLACK_WEIGHT_MIN,
+        RECONSTRUCT_ORDER_SLACK_WEIGHT_MAX,
+    );
+    sort_block_order(
+        problem,
+        pre,
+        &mut removed_ids,
+        BlockOrderWeights {
+            workload: RECONSTRUCT_ORDER_WORKLOAD_WEIGHT,
+            area: RECONSTRUCT_ORDER_AREA_WEIGHT,
+            pref_spread: RECONSTRUCT_ORDER_PREF_SPREAD_WEIGHT,
+            due_urgency: RECONSTRUCT_ORDER_DUE_WEIGHT,
+            slack_urgency: slack_weight,
+        },
+    );
 
-    let order_slack_weight =
-        ORDER_SLACK_WEIGHT_MIN + (ORDER_SLACK_WEIGHT_MAX - ORDER_SLACK_WEIGHT_MIN) * rng.nextf();
-
-    let mut removed = Vec::with_capacity(removed_ids.len());
+    let mut removed_ordered = vec![None; removed_ids.len()];
     let mut base = Vec::with_capacity(schedule.len() - removed_ids.len());
     for &s in schedule {
-        if removed_ids.contains(&s.block_id) {
-            removed.push(s);
+        if let Some(pos) = removed_ids.iter().position(|&id| id == s.block_id) {
+            removed_ordered[pos] = Some(s);
         } else {
             base.push(s);
         }
     }
-    if removed.len() != removed_ids.len() {
-        return None;
-    }
-
-    sort_by_area_slack(problem, pre, &mut removed, order_slack_weight);
 
     let mut cur = base;
     let mut loads = vec![0.0; problem.bays.len()];
@@ -504,7 +497,8 @@ fn try_large_reconstruct<R: Random>(
         loads[s.bay_id] += problem.blocks[s.block_id].workload as f64;
     }
 
-    for old in removed {
+    for old in removed_ordered {
+        let old = old?;
         let scheduled = insert_greedy(problem, pre, old, &cur, &loads, INSERT_PARAMS)?;
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
         cur.push(scheduled);
@@ -553,6 +547,7 @@ fn try_shift_neighbor<R: Random>(
                 continue;
             }
 
+            // TODO: 共通化
             let tentative = ScheduledBlock {
                 x,
                 y,
@@ -617,6 +612,7 @@ fn try_rotate_neighbor<R: Random>(
     }
     rng.shuffle(&mut orient_candidates);
 
+    // TODO: ddx,ddyが小さい順に試す
     let mut delta_offsets = Vec::new();
     for ddx in -ROTATE_MAX_SHIFT_DELTA..=ROTATE_MAX_SHIFT_DELTA {
         for ddy in -ROTATE_MAX_SHIFT_DELTA..=ROTATE_MAX_SHIFT_DELTA {
@@ -878,77 +874,109 @@ fn choose_removed_blocks<R: Random>(
     selected
 }
 
-fn sort_by_area_slack(
+fn block_pref_spread(problem: &Problem, block_id: usize) -> i64 {
+    let prefs = &problem.blocks[block_id].bay_preferences;
+    let min_pref = prefs.iter().copied().min().unwrap_or(0);
+    let max_pref = prefs.iter().copied().max().unwrap_or(min_pref);
+    max_pref - min_pref
+}
+
+fn block_slack(problem: &Problem, block_id: usize) -> i64 {
+    let block = &problem.blocks[block_id];
+    block.due_date - block.release_time - block.processing_time
+}
+
+fn build_block_order_context(
     problem: &Problem,
     pre: &Precompute,
-    blocks: &mut [ScheduledBlock],
-    slack_weight: f64,
-) {
-    fn block_slack(problem: &Problem, block_id: usize) -> i64 {
-        let block = &problem.blocks[block_id];
-        block.due_date - block.release_time - block.processing_time
-    }
-
-    fn insert_order_score(
-        problem: &Problem,
-        pre: &Precompute,
-        s: ScheduledBlock,
-        max_area: f64,
-        max_slack: i64,
-        slack_span: f64,
-        slack_weight: f64,
-    ) -> f64 {
-        let area_norm = pre.block_area[s.block_id] / max_area;
-        let slack_urgency = (max_slack - block_slack(problem, s.block_id)) as f64 / slack_span;
-        area_norm + slack_weight * slack_urgency
-    }
-
-    let max_area = blocks
+    order: &[usize],
+) -> BlockOrderContext {
+    let max_workload = order
         .iter()
-        .map(|s| pre.block_area[s.block_id])
+        .map(|&block_id| problem.blocks[block_id].workload as f64)
         .fold(0.0, f64::max)
         .max(1.0);
-    let min_slack = blocks
+    let max_area = order
         .iter()
-        .map(|s| block_slack(problem, s.block_id))
+        .map(|&block_id| pre.block_area[block_id])
+        .fold(0.0, f64::max)
+        .max(1.0);
+    let max_pref_spread = order
+        .iter()
+        .map(|&block_id| block_pref_spread(problem, block_id) as f64)
+        .fold(0.0, f64::max)
+        .max(1.0);
+    let min_due = order
+        .iter()
+        .map(|&block_id| problem.blocks[block_id].due_date)
         .min()
         .unwrap_or(0);
-    let max_slack = blocks
+    let max_due = order
         .iter()
-        .map(|s| block_slack(problem, s.block_id))
+        .map(|&block_id| problem.blocks[block_id].due_date)
+        .max()
+        .unwrap_or(min_due);
+    let min_slack = order
+        .iter()
+        .map(|&block_id| block_slack(problem, block_id))
+        .min()
+        .unwrap_or(0);
+    let max_slack = order
+        .iter()
+        .map(|&block_id| block_slack(problem, block_id))
         .max()
         .unwrap_or(min_slack);
-    let slack_span = (max_slack - min_slack).max(1) as f64;
 
-    blocks.sort_by(|a, b| {
-        let score_a = insert_order_score(
-            problem,
-            pre,
-            *a,
-            max_area,
-            max_slack,
-            slack_span,
-            slack_weight,
-        );
-        let score_b = insert_order_score(
-            problem,
-            pre,
-            *b,
-            max_area,
-            max_slack,
-            slack_span,
-            slack_weight,
-        );
+    BlockOrderContext {
+        max_workload,
+        max_area,
+        max_pref_spread,
+        max_due,
+        due_span: (max_due - min_due).max(1) as f64,
+        max_slack,
+        slack_span: (max_slack - min_slack).max(1) as f64,
+    }
+}
+
+fn block_order_score(
+    problem: &Problem,
+    pre: &Precompute,
+    ctx: &BlockOrderContext,
+    weights: BlockOrderWeights,
+    block_id: usize,
+) -> f64 {
+    let block = &problem.blocks[block_id];
+    let workload_norm = block.workload as f64 / ctx.max_workload;
+    let area_norm = pre.block_area[block_id] / ctx.max_area;
+    let pref_spread_norm = block_pref_spread(problem, block_id) as f64 / ctx.max_pref_spread;
+    let due_urgency = (ctx.max_due - block.due_date) as f64 / ctx.due_span;
+    let slack_urgency = (ctx.max_slack - block_slack(problem, block_id)) as f64 / ctx.slack_span;
+
+    weights.workload * workload_norm
+        + weights.area * area_norm
+        + weights.pref_spread * pref_spread_norm
+        + weights.due_urgency * due_urgency
+        + weights.slack_urgency * slack_urgency
+}
+
+fn sort_block_order(
+    problem: &Problem,
+    pre: &Precompute,
+    order: &mut [usize],
+    weights: BlockOrderWeights,
+) {
+    let ctx = build_block_order_context(problem, pre, order);
+    order.sort_by(|&a, &b| {
+        let score_a = block_order_score(problem, pre, &ctx, weights, a);
+        let score_b = block_order_score(problem, pre, &ctx, weights, b);
         score_b
             .total_cmp(&score_a)
-            .then(block_slack(problem, a.block_id).cmp(&block_slack(problem, b.block_id)))
-            .then(pre.block_area[b.block_id].total_cmp(&pre.block_area[a.block_id]))
-            .then(
-                problem.blocks[a.block_id]
-                    .due_date
-                    .cmp(&problem.blocks[b.block_id].due_date),
-            )
-            .then(a.block_id.cmp(&b.block_id))
+            .then(block_slack(problem, a).cmp(&block_slack(problem, b)))
+            .then(problem.blocks[a].due_date.cmp(&problem.blocks[b].due_date))
+            .then(pre.block_area[b].total_cmp(&pre.block_area[a]))
+            .then(problem.blocks[b].workload.cmp(&problem.blocks[a].workload))
+            .then(block_pref_spread(problem, b).cmp(&block_pref_spread(problem, a)))
+            .then(a.cmp(&b))
     });
 }
 
