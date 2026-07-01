@@ -1,9 +1,9 @@
 use crate::{collision::CollisionPrecompute, *};
 use std::cmp::Reverse;
 
-const ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
-const OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
-const OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
+pub const ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
+pub const OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
+pub const OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
 
 #[derive(Clone, Copy, Debug)]
 pub struct OtherBlockNeighbor {

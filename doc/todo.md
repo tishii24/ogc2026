@@ -1,5 +1,5 @@
-- swap近傍の追加
 - best更新の共通化
+- precomputeのconstを移す
 - TODOの消化
 - 再度時間を延ばして実行する
 - 初期解の改善

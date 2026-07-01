@@ -514,6 +514,51 @@ fn try_large_reconstruct<R: Random>(
     Some(cur)
 }
 
+fn try_place_block(
+    problem: &Problem,
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    block_id: usize,
+    bay_id: usize,
+    orient_idx: usize,
+    x: i64,
+    y: i64,
+) -> Option<ScheduledBlock> {
+    let block = &problem.blocks[block_id];
+    let tentative = ScheduledBlock {
+        block_id,
+        bay_id,
+        orient_idx,
+        x,
+        y,
+        entry_time: 0,
+        exit_time: block.processing_time,
+    };
+    let entry_time = get_insert_t(pre, tentative, schedule, block.release_time, i64::MAX)?;
+    Some(ScheduledBlock {
+        entry_time,
+        exit_time: entry_time + block.processing_time,
+        ..tentative
+    })
+}
+
+fn update_best_by_tardiness_entry(
+    problem: &Problem,
+    best: &mut Option<(i64, i64, ScheduledBlock)>,
+    candidate: ScheduledBlock,
+) {
+    let block = &problem.blocks[candidate.block_id];
+    let tardiness = (candidate.exit_time - block.due_date).max(0);
+    if best
+        .as_ref()
+        .map_or(true, |&(best_tardiness, best_entry_time, _)| {
+            (tardiness, candidate.entry_time) < (best_tardiness, best_entry_time)
+        })
+    {
+        *best = Some((tardiness, candidate.entry_time, candidate));
+    }
+}
+
 fn try_shift_neighbor<R: Random>(
     problem: &Problem,
     pre: &Precompute,
@@ -526,7 +571,6 @@ fn try_shift_neighbor<R: Random>(
 
     let idx = rng.gen_index(schedule.len());
     let old = schedule[idx];
-    let block = &problem.blocks[old.block_id];
 
     let mut base = Vec::with_capacity(schedule.len());
     for (i, &s) in schedule.iter().enumerate() {
@@ -538,9 +582,7 @@ fn try_shift_neighbor<R: Random>(
     let range = pre
         .collision
         .fit_range(old.bay_id, old.block_id, old.orient_idx)?;
-    let original_tardiness = (old.exit_time - block.due_date).max(0);
-    let min_t = block.release_time;
-    let max_t = i64::MAX;
+    let mut best: Option<(i64, i64, ScheduledBlock)> = None;
 
     for dist in (1..=SHIFT_MAX_SHIFT_X + SHIFT_MAX_SHIFT_Y).rev() {
         let min_abs_dx = (dist - SHIFT_MAX_SHIFT_Y).max(0);
@@ -554,39 +596,28 @@ fn try_shift_neighbor<R: Random>(
                 continue;
             }
 
-            // TODO: 共通化
-            let tentative = ScheduledBlock {
+            let Some(moved) = try_place_block(
+                problem,
+                pre,
+                &base,
+                old.block_id,
+                old.bay_id,
+                old.orient_idx,
                 x,
                 y,
-                entry_time: 0,
-                exit_time: block.processing_time,
-                ..old
-            };
-
-            let Some(entry_time) = get_insert_t(pre, tentative, &base, min_t, max_t) else {
+            ) else {
                 continue;
-            };
-
-            let moved = ScheduledBlock {
-                entry_time,
-                exit_time: entry_time + block.processing_time,
-                ..tentative
             };
             if moved == old {
                 continue;
             }
-            let new_tardiness = (moved.exit_time - block.due_date).max(0);
-            if new_tardiness > original_tardiness {
-                continue;
-            }
-
-            let mut candidate = base;
-            candidate.push(moved);
-            return Some(candidate);
+            update_best_by_tardiness_entry(problem, &mut best, moved);
         }
     }
 
-    None
+    let moved = best?.2;
+    base.push(moved);
+    Some(base)
 }
 
 fn try_rotate_neighbor<R: Random>(
@@ -628,8 +659,6 @@ fn try_rotate_neighbor<R: Random>(
     }
     rng.shuffle(&mut delta_offsets);
 
-    let min_t = block.release_time;
-    let max_t = i64::MAX;
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
 
     for (orient_idx, dx, dy) in orient_candidates {
@@ -647,37 +676,23 @@ fn try_rotate_neighbor<R: Random>(
                 continue;
             }
 
-            let tentative = ScheduledBlock {
+            let Some(rotated) = try_place_block(
+                problem,
+                pre,
+                &base,
+                old.block_id,
+                old.bay_id,
                 orient_idx,
                 x,
                 y,
-                entry_time: 0,
-                exit_time: block.processing_time,
-                ..old
-            };
-
-            let Some(entry_time) = get_insert_t(pre, tentative, &base, min_t, max_t) else {
+            ) else {
                 continue;
-            };
-
-            let rotated = ScheduledBlock {
-                entry_time,
-                exit_time: entry_time + block.processing_time,
-                ..tentative
             };
             if rotated == old {
                 continue;
             }
 
-            let tardiness = (rotated.exit_time - block.due_date).max(0);
-            if best
-                .as_ref()
-                .map_or(true, |&(best_tardiness, best_entry_time, _)| {
-                    (tardiness, rotated.entry_time) < (best_tardiness, best_entry_time)
-                })
-            {
-                best = Some((tardiness, rotated.entry_time, rotated));
-            }
+            update_best_by_tardiness_entry(problem, &mut best, rotated);
         }
     }
 
@@ -696,10 +711,7 @@ fn try_swap_place(
     base_x: i64,
     base_y: i64,
 ) -> Option<ScheduledBlock> {
-    let block = &problem.blocks[old.block_id];
     let range = pre.collision.fit_range(bay_id, old.block_id, orient_idx)?;
-    let min_t = block.release_time;
-    let max_t = i64::MAX;
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
 
     for ddx in -SWAP_MAX_SHIFT_DELTA..=SWAP_MAX_SHIFT_DELTA {
@@ -710,36 +722,19 @@ fn try_swap_place(
                 continue;
             }
 
-            let tentative = ScheduledBlock {
-                block_id: old.block_id,
+            let Some(scheduled) = try_place_block(
+                problem,
+                pre,
+                schedule,
+                old.block_id,
                 bay_id,
                 orient_idx,
                 x,
                 y,
-                entry_time: 0,
-                exit_time: block.processing_time,
-            };
-
-            let Some(entry_time) = get_insert_t(pre, tentative, schedule, min_t, max_t) else {
+            ) else {
                 continue;
             };
-
-            let scheduled = ScheduledBlock {
-                entry_time,
-                exit_time: entry_time + block.processing_time,
-                ..tentative
-            };
-
-            let tardiness = (scheduled.exit_time - block.due_date).max(0);
-
-            if best
-                .as_ref()
-                .map_or(true, |&(best_tardiness, best_entry_time, _)| {
-                    (tardiness, scheduled.entry_time) < (best_tardiness, best_entry_time)
-                })
-            {
-                best = Some((tardiness, scheduled.entry_time, scheduled));
-            }
+            update_best_by_tardiness_entry(problem, &mut best, scheduled);
         }
     }
 
