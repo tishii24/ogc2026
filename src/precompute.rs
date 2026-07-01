@@ -1,9 +1,12 @@
-use crate::{collision::CollisionPrecompute, *};
+use crate::{
+    collision::CollisionPrecompute,
+    solver::{
+        PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT, PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA,
+        PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K,
+    },
+    *,
+};
 use std::cmp::Reverse;
-
-pub const ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
-pub const OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
-pub const OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
 
 #[derive(Clone, Copy, Debug)]
 pub struct OtherBlockNeighbor {
@@ -134,7 +137,7 @@ fn orientation_neighbors_for_block(bboxes: &[Boundsf]) -> Vec<Vec<(usize, i64, i
                 .then(a.3.cmp(&b.3))
         });
         candidates.dedup_by_key(|(to_orient, _, _, _)| *to_orient);
-        candidates.truncate(ORIENTATION_NEIGHBOR_LIMIT);
+        candidates.truncate(PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT);
         result[from_orient] = candidates
             .into_iter()
             .map(|(to_orient, _, dx, dy)| (to_orient, dx, dy))
@@ -163,7 +166,7 @@ fn area_neighbor_blocks(block_area: &[f64], from_block: usize) -> Vec<usize> {
             .total_cmp(&(from_area - block_area[b]).abs())
             .then(a.cmp(&b))
     });
-    order.truncate(OTHER_BLOCK_NEIGHBOR_AREA_TOP_K.min(order.len()));
+    order.truncate(PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K.min(order.len()));
     order
 }
 
@@ -176,11 +179,11 @@ fn best_bbox_neighbor_offset(from: Boundsf, to: Boundsf) -> Option<(f64, i64, i6
     let base_dy = (from_cy - to_cy).round() as i64;
 
     let mut best: Option<(f64, i64, i64)> = None;
-    for dx in
-        base_dx - OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA..=base_dx + OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA
+    for dx in base_dx - PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA
+        ..=base_dx + PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA
     {
-        for dy in
-            base_dy - OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA..=base_dy + OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA
+        for dy in base_dy - PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA
+            ..=base_dy + PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA
         {
             let iou = bbox_iou(from, to, dx, dy);
             if iou <= 0.0 {

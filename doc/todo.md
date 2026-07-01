@@ -1,10 +1,8 @@
-- best更新の共通化
-- precomputeのconstを移す
-- TODOの消化
-- 再度時間を延ばして実行する
+- 時間を延ばして実行する
 - 初期解の改善
 - reconstructの改善
 - safetyを追加する
+- パラメータ調整
 
 safety:
 - 定期的にpy側でfeasibilityをチェックする
@@ -23,7 +21,6 @@ precompute:
 
 solver:
 - 局所探索の改善
-  - swapの追加
   - reconstructの改善（insert-greedyの改善）
 - get-insert-tの高速化
 - 初期解の改善

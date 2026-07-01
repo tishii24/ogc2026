@@ -24,6 +24,10 @@ const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
 const START_TEMP: f64 = 1e1;
 const END_TEMP: f64 = 1e0;
 
+pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
+pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
+pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
+
 const INITIAL_AREA_WEIGHT_MIN: f64 = 0.0;
 const INITIAL_AREA_WEIGHT_MAX: f64 = 2.0;
 
@@ -542,7 +546,7 @@ fn try_place_block(
     })
 }
 
-fn update_best_by_tardiness_entry(
+fn update_best(
     problem: &Problem,
     best: &mut Option<(i64, i64, ScheduledBlock)>,
     candidate: ScheduledBlock,
@@ -611,7 +615,7 @@ fn try_shift_neighbor<R: Random>(
             if moved == old {
                 continue;
             }
-            update_best_by_tardiness_entry(problem, &mut best, moved);
+            update_best(problem, &mut best, moved);
         }
     }
 
@@ -644,24 +648,8 @@ fn try_rotate_neighbor<R: Random>(
         }
     }
 
-    let mut orient_candidates = pre.orientation_neighbors[old.block_id][old.orient_idx].clone();
-    if orient_candidates.is_empty() {
-        return None;
-    }
-    rng.shuffle(&mut orient_candidates);
-
-    // TODO: ddx,ddyが小さい順に試す
-    let mut delta_offsets = Vec::new();
-    for ddx in -ROTATE_MAX_SHIFT_DELTA..=ROTATE_MAX_SHIFT_DELTA {
-        for ddy in -ROTATE_MAX_SHIFT_DELTA..=ROTATE_MAX_SHIFT_DELTA {
-            delta_offsets.push((ddx, ddy));
-        }
-    }
-    rng.shuffle(&mut delta_offsets);
-
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
-
-    for (orient_idx, dx, dy) in orient_candidates {
+    for &(orient_idx, dx, dy) in &pre.orientation_neighbors[old.block_id][old.orient_idx] {
         let Some(range) = pre
             .collision
             .fit_range(old.bay_id, old.block_id, orient_idx)
@@ -669,30 +657,32 @@ fn try_rotate_neighbor<R: Random>(
             continue;
         };
 
-        for &(ddx, ddy) in &delta_offsets {
-            let x = old.x + dx + ddx;
-            let y = old.y + dy + ddy;
-            if !range.contains(x, y) {
-                continue;
-            }
+        for ddx in -ROTATE_MAX_SHIFT_DELTA..=ROTATE_MAX_SHIFT_DELTA {
+            for ddy in -ROTATE_MAX_SHIFT_DELTA..=ROTATE_MAX_SHIFT_DELTA {
+                let x = old.x + dx + ddx;
+                let y = old.y + dy + ddy;
+                if !range.contains(x, y) {
+                    continue;
+                }
 
-            let Some(rotated) = try_place_block(
-                problem,
-                pre,
-                &base,
-                old.block_id,
-                old.bay_id,
-                orient_idx,
-                x,
-                y,
-            ) else {
-                continue;
-            };
-            if rotated == old {
-                continue;
-            }
+                let Some(rotated) = try_place_block(
+                    problem,
+                    pre,
+                    &base,
+                    old.block_id,
+                    old.bay_id,
+                    orient_idx,
+                    x,
+                    y,
+                ) else {
+                    continue;
+                };
+                if rotated == old {
+                    continue;
+                }
 
-            update_best_by_tardiness_entry(problem, &mut best, rotated);
+                update_best(problem, &mut best, rotated);
+            }
         }
     }
 
@@ -734,7 +724,7 @@ fn try_swap_place(
             ) else {
                 continue;
             };
-            update_best_by_tardiness_entry(problem, &mut best, scheduled);
+            update_best(problem, &mut best, scheduled);
         }
     }
 
