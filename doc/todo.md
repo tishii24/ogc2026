@@ -1,6 +1,5 @@
-- tabu search
+- 高速化
 - reconstructの改善
-  - 高速化
 - safety
 - チューニング
 
@@ -28,6 +27,8 @@ solver:
 - 初期解の改善
 - 大域的最適化
   - obj2,obj3の下界を求めて、それに合わせてbay-idを決める
+  - bay-idの割り当てを事前に山登りする
+  - obj2は最後でだけ気にする
 - 高速化
   - insert-greedy
 - 調整

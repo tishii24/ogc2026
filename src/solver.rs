@@ -29,7 +29,7 @@ const RNG_SEED: u64 = 1;
 const MAX_WORKER_COUNT: usize = 4;
 
 const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
-const START_TEMP: f64 = 1e3;
+const START_TEMP: f64 = 1e2;
 const END_TEMP: f64 = 1e0;
 const WORKER_TEMP_SCALE: f64 = 10.;
 const BEST_EXCHANGE_INTERVAL: usize = 2_000;
@@ -1351,10 +1351,10 @@ fn insert_greedy(
     let original_tardiness = (original.exit_time - block.due_date).max(0);
     let mut best: Option<InsertCandidate> = None;
 
-    // TODO: 良いbay-idから試す
-    for bay_id in 0..problem.bays.len() {
+    for &bay_id in &pre.bay_order_by_pref[block_id] {
         let mut next_loads = loads.to_vec();
         next_loads[bay_id] += block.workload as f64;
+        // TODO: obj2は最後の方でだけ気にする
         let delta_obj23 = problem.weights.w2
             * (normalized_imbalance(pre, &next_loads) - current_obj2)
             + problem.weights.w3 * pre.pref_penalty[block_id][bay_id] as f64;
