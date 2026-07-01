@@ -23,7 +23,6 @@ solver:
 - 局所探索の改善
   - reconstructの改善
   - 小さい近傍の追加
-  - tabu search
 - 初期解の改善
 - 大域的最適化
   - obj2,obj3の下界を求めて、それに合わせてbay-idを決める
