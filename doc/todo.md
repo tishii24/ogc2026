@@ -1,7 +1,6 @@
-- 時間を延ばして実行する
-- 初期解の改善
-  - 029-1: INITIAL_AREA_WEIGHT=(0.0..0.2)
 - reconstructの改善
+- 初期解の改善
+- 並列annealing
 - safetyを追加する
 - パラメータ調整
 
@@ -22,23 +21,23 @@ precompute:
 
 solver:
 - 局所探索の改善
-  - reconstructの改善（insert-greedyの改善）
-- get-insert-tの高速化
+  - reconstructの改善
+  - shift-k
 - 初期解の改善
   - 順番を変える
     - tardinessが大きいケースは小さい順に入れる
     - tardinessが発生することが確定しているブロックよりも、発生しないブロックを優先する
     - (loadsが大きい順、面積が大きい順、偏りが大きい順、締切が早い) の重みを探索する
   - 多点スタートする
+  - ベストなパラメータを少しブラして実行する
 - 大域的最適化
   - obj2,obj3の下界を求めて、それに合わせてbay-idを決める
 - t-intervalをmergeして、候補tがなくなったら打ち切る
 - 高速化
   - insert-greedyのチューニング
   - 移動してもスコアが良くならないbay-idは試さない
-- 元より悪化しない　or bestを探すの両方を試す
 - 温度調整
-- reannealing
+  - reannealing
 - 並列annealing
 - 強い最適化
   - insertを評価して、ベストなinsertを探す
@@ -51,7 +50,6 @@ solver:
   - change-entry-tの追加
 
 stats:
-- グループ化して平均を表示
 - ベストを一番下に表示
 
 other:

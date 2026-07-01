@@ -28,8 +28,6 @@ pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
 
-const INITIAL_AREA_WEIGHT_MIN: f64 = 0.0;
-const INITIAL_AREA_WEIGHT_MAX: f64 = 0.2;
 
 const MIN_REMOVED_BLOCKS: usize = 1;
 const MAX_REMOVED_BLOCKS: usize = 13;
@@ -38,12 +36,6 @@ const REMOVE_SEED_COUNT: usize = 3;
 const REMOVE_RANDOM_SEED_COUNT: usize = 1;
 const REMOVE_NEIGHBOR_POOL_FACTOR: usize = 4;
 const INSERT_PARAMS: InsertSearchParams = InsertSearchParams { x_buffer: 10 };
-const RECONSTRUCT_ORDER_WORKLOAD_WEIGHT: f64 = 0.0;
-const RECONSTRUCT_ORDER_AREA_WEIGHT: f64 = 1.0;
-const RECONSTRUCT_ORDER_PREF_SPREAD_WEIGHT: f64 = 0.0;
-const RECONSTRUCT_ORDER_DUE_WEIGHT: f64 = 0.0;
-const RECONSTRUCT_ORDER_SLACK_WEIGHT_MIN: f64 = 0.0;
-const RECONSTRUCT_ORDER_SLACK_WEIGHT_MAX: f64 = 4.0;
 
 const SHIFT_MAX_SHIFT_X: i64 = 5;
 const SHIFT_MAX_SHIFT_Y: i64 = 5;
@@ -63,6 +55,16 @@ const NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
 ];
 
 const VISUALIZE_ACCEPTED_INTERVAL: usize = 1000;
+
+fn sample_order_weights(rng: &mut impl Random) -> BlockOrderWeights {
+    BlockOrderWeights {
+        workload: rng.gen_rangef(0.0, 0.1),
+        area: rng.gen_rangef(0.0, 0.2),
+        pref_spread: rng.gen_rangef(0.0, 0.1),
+        due_urgency: rng.gen_rangef(0.0, 1.0),
+        slack_urgency: rng.gen_rangef(0.0, 1.0),
+    }
+}
 
 type Interval = (i64, i64);
 
@@ -214,7 +216,6 @@ pub fn solve(
                 problem,
                 &pre,
                 &initial,
-                initial_score,
                 deadline,
                 worker_id,
                 worker_timer,
@@ -252,7 +253,6 @@ fn run_annealing_worker(
     problem: &Problem,
     pre: &Precompute,
     initial: &[ScheduledBlock],
-    initial_score: f64,
     deadline: f64,
     worker_id: usize,
     timer: Timer,
@@ -260,7 +260,7 @@ fn run_annealing_worker(
 ) -> AnnealingResult {
     let mut rng = RandPcg64Mcg::new(RNG_SEED.wrapping_add(worker_id as u64));
     let mut current = initial.to_vec();
-    let mut current_score = initial_score;
+    let mut current_score = score_schedule(problem, pre, &current);
     let mut best = current.clone();
     let mut best_score = current_score;
     let mut iter = 0usize;
@@ -475,22 +475,8 @@ fn try_large_reconstruct<R: Random>(
     if removed_ids.is_empty() {
         return None;
     }
-    let slack_weight = rng.gen_rangef(
-        RECONSTRUCT_ORDER_SLACK_WEIGHT_MIN,
-        RECONSTRUCT_ORDER_SLACK_WEIGHT_MAX,
-    );
-    sort_block_order(
-        problem,
-        pre,
-        &mut removed_ids,
-        BlockOrderWeights {
-            workload: RECONSTRUCT_ORDER_WORKLOAD_WEIGHT,
-            area: RECONSTRUCT_ORDER_AREA_WEIGHT,
-            pref_spread: RECONSTRUCT_ORDER_PREF_SPREAD_WEIGHT,
-            due_urgency: RECONSTRUCT_ORDER_DUE_WEIGHT,
-            slack_urgency: slack_weight,
-        },
-    );
+    let w = sample_order_weights(rng);
+    sort_block_order(problem, pre, &mut removed_ids, w);
 
     let mut removed_ordered = vec![None; removed_ids.len()];
     let mut base = Vec::with_capacity(schedule.len() - removed_ids.len());
