@@ -9,7 +9,13 @@ use crate::{
     *,
 };
 use rayon::prelude::*;
-use std::{cmp::Reverse, collections::HashSet, path::Path, sync::Mutex, time::Instant};
+use std::{
+    cmp::Reverse,
+    collections::{HashSet, VecDeque},
+    path::Path,
+    sync::Mutex,
+    time::Instant,
+};
 
 macro_rules! log {
     ($timer:expr, $($arg:tt)*) => {
@@ -17,13 +23,17 @@ macro_rules! log {
     };
 }
 
+const VISUALIZE_ACCEPTED_INTERVAL: usize = 1000;
+
 const RNG_SEED: u64 = 1;
 const MAX_WORKER_COUNT: usize = 4;
 
 const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
 const START_TEMP: f64 = 1e3;
 const END_TEMP: f64 = 1e0;
+const WORKER_TEMP_SCALE: f64 = 10.;
 const BEST_EXCHANGE_INTERVAL: usize = 2_000;
+const TABU_SIZE: usize = 4_096;
 
 pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
@@ -60,10 +70,13 @@ const NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
     (NeighborKind::Swap, 3.),
 ];
 
-const VISUALIZE_ACCEPTED_INTERVAL: usize = 1000;
+const WORKLOAD_WEIGHT_MAX: f64 = 0.1;
+const AREA_WEIGHT_MAX: f64 = 0.2;
+const PREF_SPREAD_WEIGHT_MAX: f64 = 0.1;
+const DUE_URGENCY_WEIGHT_MAX: f64 = 1.;
+const SLACK_URGENCY_WEIGHT_MAX: f64 = 1.;
 
 fn get_temp_scale(worker_id: usize, worker_count: usize) -> f64 {
-    const WORKER_TEMP_SCALE: f64 = 10.;
     if worker_count <= 1 {
         return 1.0;
     }
@@ -73,11 +86,11 @@ fn get_temp_scale(worker_id: usize, worker_count: usize) -> f64 {
 
 fn sample_order_weights(rng: &mut impl Random) -> BlockOrderWeights {
     BlockOrderWeights {
-        workload: rng.gen_rangef(0.0, 0.1),
-        area: rng.gen_rangef(0.0, 0.2),
-        pref_spread: rng.gen_rangef(0.0, 0.1),
-        due_urgency: rng.gen_rangef(0.0, 1.0),
-        slack_urgency: rng.gen_rangef(0.0, 1.0),
+        workload: rng.gen_rangef(0.0, WORKLOAD_WEIGHT_MAX),
+        area: rng.gen_rangef(0.0, AREA_WEIGHT_MAX),
+        pref_spread: rng.gen_rangef(0.0, PREF_SPREAD_WEIGHT_MAX),
+        due_urgency: rng.gen_rangef(0.0, DUE_URGENCY_WEIGHT_MAX),
+        slack_urgency: rng.gen_rangef(0.0, SLACK_URGENCY_WEIGHT_MAX),
     }
 }
 
@@ -88,11 +101,11 @@ fn mutate_order_weights(weights: BlockOrderWeights, rng: &mut impl Random) -> Bl
     }
 
     BlockOrderWeights {
-        workload: mutate(weights.workload, 0.0, 0.1, rng),
-        area: mutate(weights.area, 0.0, 0.2, rng),
-        pref_spread: mutate(weights.pref_spread, 0.0, 0.1, rng),
-        due_urgency: mutate(weights.due_urgency, 0.0, 1.0, rng),
-        slack_urgency: mutate(weights.slack_urgency, 0.0, 1.0, rng),
+        workload: mutate(weights.workload, 0.0, WORKLOAD_WEIGHT_MAX, rng),
+        area: mutate(weights.area, 0.0, AREA_WEIGHT_MAX, rng),
+        pref_spread: mutate(weights.pref_spread, 0.0, PREF_SPREAD_WEIGHT_MAX, rng),
+        due_urgency: mutate(weights.due_urgency, 0.0, DUE_URGENCY_WEIGHT_MAX, rng),
+        slack_urgency: mutate(weights.slack_urgency, 0.0, SLACK_URGENCY_WEIGHT_MAX, rng),
     }
 }
 
@@ -309,6 +322,9 @@ fn run_annealing_worker(
     let mut current_score = score_schedule(problem, pre, &current);
     let mut best = current.clone();
     let mut best_score = current_score;
+    let mut tabu_queue = VecDeque::with_capacity(TABU_SIZE);
+    let mut tabu_set = HashSet::with_capacity(TABU_SIZE * 2);
+    push_tabu(hash_schedule(&current), &mut tabu_queue, &mut tabu_set);
     let mut iter = 0usize;
     let mut accepted = 0usize;
     let mut improved = 0usize;
@@ -352,6 +368,7 @@ fn run_annealing_worker(
             if shared.score + 1e-9 < current_score {
                 current = shared.schedule.clone();
                 current_score = shared.score;
+                push_tabu(hash_schedule(&current), &mut tabu_queue, &mut tabu_set);
                 if shared.score + 1e-9 < best_score {
                     best = current.clone();
                     best_score = current_score;
@@ -382,7 +399,14 @@ fn run_annealing_worker(
         };
         neighbor_stats[neighbor_idx].succeeded += 1;
 
+        let candidate_hash = hash_schedule(&candidate);
+        let tabu = tabu_set.contains(&candidate_hash);
         let score = score_schedule(problem, pre, &candidate);
+        if tabu && score + 1e-9 >= best_score {
+            neighbor_stats[neighbor_idx].time_sec += neighbor_start.elapsed().as_secs_f64();
+            continue;
+        }
+
         let delta = score - current_score;
         let improved_current = delta < -1e-9;
         if improved_current {
@@ -392,6 +416,7 @@ fn run_annealing_worker(
         if delta <= 0.0 || rng.nextf() < (-delta / temp).exp() {
             current = candidate;
             current_score = score;
+            push_tabu(candidate_hash, &mut tabu_queue, &mut tabu_set);
             accepted += 1;
             neighbor_stats[neighbor_idx].accepted += 1;
 
@@ -611,6 +636,43 @@ fn hash_order(order: &[usize]) -> u64 {
         hash = hash.wrapping_mul(1099511628211);
     }
     hash
+}
+
+fn mix_hash(mut hash: u64, value: u64) -> u64 {
+    hash ^= value;
+    hash = hash.wrapping_mul(1099511628211);
+    hash
+}
+
+fn hash_scheduled_block(s: ScheduledBlock) -> u64 {
+    let mut hash = 1469598103934665603u64;
+    hash = mix_hash(hash, s.block_id as u64);
+    hash = mix_hash(hash, s.bay_id as u64);
+    hash = mix_hash(hash, s.orient_idx as u64);
+    hash = mix_hash(hash, s.x as u64);
+    hash = mix_hash(hash, s.y as u64);
+    hash = mix_hash(hash, s.entry_time as u64);
+    mix_hash(hash, s.exit_time as u64)
+}
+
+fn hash_schedule(schedule: &[ScheduledBlock]) -> u64 {
+    let mut hash = mix_hash(1469598103934665603u64, schedule.len() as u64);
+    for &s in schedule {
+        hash ^= hash_scheduled_block(s);
+    }
+    hash
+}
+
+fn push_tabu(hash: u64, queue: &mut VecDeque<u64>, set: &mut HashSet<u64>) {
+    if !set.insert(hash) {
+        return;
+    }
+    queue.push_back(hash);
+    if queue.len() > TABU_SIZE {
+        if let Some(old_hash) = queue.pop_front() {
+            set.remove(&old_hash);
+        }
+    }
 }
 
 fn build_initial_schedule_with_order(
@@ -1289,6 +1351,7 @@ fn insert_greedy(
     let original_tardiness = (original.exit_time - block.due_date).max(0);
     let mut best: Option<InsertCandidate> = None;
 
+    // TODO: 良いbay-idから試す
     for bay_id in 0..problem.bays.len() {
         let mut next_loads = loads.to_vec();
         next_loads[bay_id] += block.workload as f64;

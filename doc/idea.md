@@ -9,6 +9,10 @@ feasibilityのチェック:
   - annealingで解を探索して、一定周期で解をstdoutに書き出す
   - stdinからmyalgorithmが計算したfeasibilityの結果を読み取り、feasibleでない場合はrollbackする
 
+初期解
+- tardinessが大きいケースは小さい順に入れる
+- tardinessが発生することが確定しているブロックよりも、発生しないブロックを優先する
+
 局所探索:
 - 貪欲
   - insert_greedy(bay_id, block_id, bounds, orientation) -> (x, y, t)
