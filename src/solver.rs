@@ -65,7 +65,7 @@ const NEIGHBOR_KIND_COUNT: usize = 5;
 const NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
     (NeighborKind::LargeReconstruct, 0.2),
     (NeighborKind::Shift, 8.),
-    (NeighborKind::Move, 0.),
+    (NeighborKind::Move, 0.4),
     (NeighborKind::Rotate, 8.),
     (NeighborKind::Swap, 3.),
 ];
