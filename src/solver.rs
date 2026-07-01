@@ -1147,6 +1147,23 @@ fn insert_greedy(
     let mut best: Option<InsertCandidate> = None;
 
     for bay_id in 0..problem.bays.len() {
+        let mut next_loads = loads.to_vec();
+        next_loads[bay_id] += block.workload as f64;
+        let delta_obj23 = problem.weights.w2
+            * (normalized_imbalance(pre, &next_loads) - current_obj2)
+            + problem.weights.w3 * pre.pref_penalty[block_id][bay_id] as f64;
+        let min_tardiness = min_t
+            .saturating_add(process_t)
+            .saturating_sub(block.due_date)
+            .max(0);
+        let lower_score_delta = problem.weights.w1 * min_tardiness as f64 + delta_obj23;
+        if best
+            .as_ref()
+            .is_some_and(|best| lower_score_delta > best.score_delta)
+        {
+            continue;
+        }
+
         let bay_old_blocks: Vec<ScheduledBlock> = schedule
             .iter()
             .copied()
@@ -1161,12 +1178,6 @@ fn insert_greedy(
         let mut active_old_ids = Vec::with_capacity(bay_old_blocks.len());
         let mut active_pos = vec![None; bay_old_blocks.len()];
         let mut forbidden = Vec::with_capacity(16);
-
-        let mut next_loads = loads.to_vec();
-        next_loads[bay_id] += block.workload as f64;
-        let delta_obj23 = problem.weights.w2
-            * (normalized_imbalance(pre, &next_loads) - current_obj2)
-            + problem.weights.w3 * pre.pref_penalty[block_id][bay_id] as f64;
 
         for &orient_idx in &pre.orientation_order_by_bbox[block_id] {
             let Some(range) = pre.collision.fit_range(bay_id, block_id, orient_idx) else {
