@@ -9,7 +9,7 @@ use crate::{
     *,
 };
 use rayon::prelude::*;
-use std::{cmp::Reverse, path::Path, time::Instant};
+use std::{cmp::Reverse, path::Path, sync::Mutex, time::Instant};
 
 macro_rules! log {
     ($timer:expr, $($arg:tt)*) => {
@@ -28,6 +28,8 @@ pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
 
+const MAX_INITIAL_SEARCH_SECONDS: f64 = 30.;
+const BASE_INITIAL_SEARCH_TIME_RATIO: f64 = 0.3;
 
 const MIN_REMOVED_BLOCKS: usize = 1;
 const MAX_REMOVED_BLOCKS: usize = 13;
@@ -199,20 +201,17 @@ pub fn solve(
     let deadline = timelimit - LOCAL_SEARCH_TIME_BUFFER_SECONDS;
     let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
     log!(timer, "annealing workers: {}", worker_count);
+
+    let (initial, initial_score) =
+        search_initial_schedule(problem, &pre, timelimit, timer, worker_count)?;
+    log!(timer, "best initial score: {:.3}", initial_score);
+
     let worker_timers = vec![timer; worker_count];
     let results: Vec<_> = worker_timers
         .into_par_iter()
         .enumerate()
         .map(|(worker_id, worker_timer)| {
-            let initial = build_initial_schedule(problem, &pre, worker_id, worker_count)?;
-            let initial_score = score_schedule(problem, &pre, &initial);
-            log!(
-                worker_timer,
-                "worker {} initial score: {:.3}",
-                worker_id,
-                initial_score
-            );
-            Ok(run_annealing_worker(
+            run_annealing_worker(
                 problem,
                 &pre,
                 &initial,
@@ -220,14 +219,13 @@ pub fn solve(
                 worker_id,
                 worker_timer,
                 visualize_dir,
-            ))
+            )
         })
-        .collect::<Vec<Result<AnnealingResult, String>>>();
+        .collect::<Vec<AnnealingResult>>();
 
     let mut best: Option<Vec<ScheduledBlock>> = None;
     let mut best_score = f64::INFINITY;
     for result in results {
-        let result = result?;
         eprintln!(
             "[{:.4}] [id={}] iter={}, best={:.3}, accepted={}, improved={}, current={:.3}\nneighbor stats:\n{}",
             timer.elapsed_seconds(),
@@ -285,7 +283,7 @@ fn run_annealing_worker(
             None,
             false,
             false,
-            initial_score,
+            current_score,
             current_score,
             best_score,
             None,
@@ -416,30 +414,68 @@ fn run_annealing_worker(
     }
 }
 
+fn search_initial_schedule(
+    problem: &Problem,
+    pre: &Precompute,
+    timelimit: f64,
+    timer: Timer,
+    worker_count: usize,
+) -> Result<(Vec<ScheduledBlock>, f64), String> {
+    let search_seconds = MAX_INITIAL_SEARCH_SECONDS.min(BASE_INITIAL_SEARCH_TIME_RATIO * timelimit);
+    let search_deadline = timer.elapsed_seconds() + search_seconds;
+    log!(timer, "initial search seconds: {:.3}", search_seconds);
+
+    let best = Mutex::new(None::<(f64, Vec<ScheduledBlock>)>);
+    (0..worker_count).into_par_iter().for_each(|worker_id| {
+        let mut trial = 0;
+        let mut rng =
+            RandPcg64Mcg::new(RNG_SEED.wrapping_add(10_000).wrapping_add(worker_id as u64));
+
+        loop {
+            if timer.elapsed_seconds() >= search_deadline && best.lock().unwrap().is_some() {
+                break;
+            }
+
+            let weights = sample_order_weights(&mut rng);
+            let Ok(schedule) = build_initial_schedule(problem, pre, weights) else {
+                continue;
+            };
+            let score = score_schedule(problem, pre, &schedule);
+            let mut best_guard = best.lock().unwrap();
+            if best_guard
+                .as_ref()
+                .map_or(true, |(best_score, _)| score + 1e-9 < *best_score)
+            {
+                log!(
+                    timer,
+                    "update initial-score: worker {} score: {:.3}",
+                    worker_id,
+                    score
+                );
+                *best_guard = Some((score, schedule));
+            }
+
+            trial += 1;
+        }
+
+        log!(timer, "worker {} trial {:4}", worker_id, trial);
+    });
+
+    let Some((score, schedule)) = best.into_inner().unwrap() else {
+        return Err("failed to build initial schedule".to_string());
+    };
+    Ok((schedule, score))
+}
+
 fn build_initial_schedule(
     problem: &Problem,
     pre: &Precompute,
-    worker_id: usize,
-    worker_count: usize,
+    weights: BlockOrderWeights,
 ) -> Result<Vec<ScheduledBlock>, String> {
     let mut schedule = Vec::with_capacity(problem.blocks.len());
     let mut loads = vec![0.0; problem.bays.len()];
     let mut order: Vec<usize> = (0..problem.blocks.len()).collect();
-    let w = worker_id as f64 / (worker_count - 1).max(1) as f64;
-    let area_weight =
-        INITIAL_AREA_WEIGHT_MIN + (INITIAL_AREA_WEIGHT_MAX - INITIAL_AREA_WEIGHT_MIN) * w;
-    sort_block_order(
-        problem,
-        pre,
-        &mut order,
-        BlockOrderWeights {
-            workload: 0.0,
-            area: area_weight,
-            pref_spread: 0.0,
-            due_urgency: 1.0,
-            slack_urgency: 0.0,
-        },
-    );
+    sort_block_order(problem, pre, &mut order, weights);
 
     for block_id in order {
         let block = &problem.blocks[block_id];
