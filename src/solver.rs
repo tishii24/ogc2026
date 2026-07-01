@@ -45,9 +45,9 @@ const INITIAL_GOOD_WEIGHT_POOL_SIZE: usize = 32;
 const INITIAL_EXPLOIT_PROB: f64 = 0.25;
 const INITIAL_WEIGHT_MUTATION_SCALE: f64 = 0.2;
 
-const MIN_REMOVED_BLOCKS: usize = 1;
-const MAX_REMOVED_BLOCKS: usize = 20;
-const REMOVE_POOL_FACTOR: usize = 8;
+const MIN_REMOVED_BLOCKS: usize = 7;
+const MAX_REMOVED_BLOCKS: usize = 13;
+const REMOVE_POOL_FACTOR: usize = 4;
 const REMOVE_SEED_COUNT: usize = 3;
 const REMOVE_RANDOM_SEED_COUNT: usize = 1;
 const REMOVE_NEIGHBOR_POOL_FACTOR: usize = 6;
