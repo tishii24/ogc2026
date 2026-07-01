@@ -1,4 +1,7 @@
-- 焼きなまし過程の可視化
+- insert-greedyの高速化
+- 初期解の改善
+- 近傍の追加
+- reconstructの改善
 - safetyを追加する
 - panicを排除する
 
@@ -6,6 +9,7 @@ safety:
 - feasibilityをチェックする
   - check-feasibilityの高速化
 - 空のblockのチェック
+- 縦長のbayではxとyを入れ替える
 
 precompute:
 - 衝突判定の高速化
@@ -15,13 +19,16 @@ precompute:
 
 solver:
 - 局所探索の改善
-  - moveの追加
-  - rotateの追加
   - change-entry-tの追加
   - swapの追加
   - reconstructの改善（insert-greedyの改善）
-- 初期解を軽くする
-- 初期解のビームサーチ
+- get-insert-tの高速化
+- 初期解の改善
+  - 順番を変える
+    - tardinessが大きいケースは小さい順に入れる
+    - tardinessが発生することが確定しているブロックよりも、発生しないブロックを優先する
+    - (loadsが大きい順、面積が大きい順、偏りが大きい順、締切が早い) の重みを探索する
+  - 多点スタートする
 - 大域的最適化
   - obj2,obj3の下界を求めて、それに合わせてbay-idを決める
 - t-intervalをmergeして、候補tがなくなったら打ち切る
@@ -36,7 +43,6 @@ solver:
     - 置ける面積を具体的に計算
   - 重なっている面積が少なくなる方に動かす
 - 同時刻の操作順を考慮する
-- 縦長のbayでは上から詰める
 - 取り出す時刻を変えてABBA <->　ABABを入れ替える
 - 並列annealing
 

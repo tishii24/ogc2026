@@ -69,7 +69,9 @@ zipinfo "$VERSION.zip"
 ## 焼きなまし過程の可視化
 
 ```bash
-cargo run --release -- train/prob_40.json 90 --visualize log/vis/prob_1
+INPUT_JSON=train/prob_40.json
+OUT_DIR=log/vis/prob_40
+cargo run --release -- $INPUT_JSON 90 --visualize $OUT_DIR
 
-python3 tools/anneal_visualizer.py input.json log/vis/prob_1 --worker-id 0
+python3 tools/anneal_visualizer.py $INPUT_JSON $OUT_DIR --worker-id 0
 ```

@@ -33,11 +33,7 @@ const REMOVE_POOL_FACTOR: usize = 8;
 const REMOVE_SEED_COUNT: usize = 3;
 const REMOVE_RANDOM_SEED_COUNT: usize = 1;
 const REMOVE_NEIGHBOR_POOL_FACTOR: usize = 4;
-const INSERT_PARAMS: InsertSearchParams = InsertSearchParams {
-    x_step: 1,
-    y_step: 1,
-    x_buffer: 10,
-};
+const INSERT_PARAMS: InsertSearchParams = InsertSearchParams { x_buffer: 10 };
 const ORDER_SLACK_WEIGHT_MIN: f64 = 0.0;
 const ORDER_SLACK_WEIGHT_MAX: f64 = 4.0;
 
@@ -99,8 +95,6 @@ struct NeighborStats {
 
 #[derive(Clone, Copy)]
 struct InsertSearchParams {
-    x_step: i64,
-    y_step: i64,
     x_buffer: i64,
 }
 
@@ -955,14 +949,14 @@ fn insert_greedy<R: Random>(
             };
             let mut anchor_x: Option<i64> = None;
 
-            for x in (range.min_x..=range.max_x).step_by(params.x_step as usize) {
+            for x in range.min_x..=range.max_x {
                 if let Some(anchor_x) = anchor_x {
                     if x > anchor_x + params.x_buffer {
                         break;
                     }
                 }
 
-                for y in (range.min_y..=range.max_y).step_by(params.y_step as usize) {
+                for y in range.min_y..=range.max_y {
                     let tentative = ScheduledBlock {
                         block_id,
                         bay_id,

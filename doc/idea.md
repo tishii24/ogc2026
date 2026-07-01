@@ -9,6 +9,30 @@ feasibilityのチェック:
   - annealingで解を探索して、一定周期で解をstdoutに書き出す
   - stdinからmyalgorithmが計算したfeasibilityの結果を読み取り、feasibleでない場合はrollbackする
 
+insert-greedyの高速化
+- 挿入先のbay-idに含まれるblockを取得して、(floor(bbox.min_x-1), ceil(bbox.max_x+1))をintervalとする
+- block_toggle[x] := (is_start: bool, block_id: usize) を作成する
+- 挿入対象のblockをbとする
+- 挿入対象のorientationは以下ではいずれかに固定する
+- xが小さい順に走査する
+- 走査する時には、以下を更新しながら走査する
+  - check_list := (x,*)に配置する時にb.bboxと干渉しうるblock_idのリスト
+- x+=1するたびに、block_toggle[x]を参照して、上記を更新する
+- 各xについて、全てのyの挿入を試す
+- yを操作する時には、以下を更新しながら操作する
+  - hit_list := (x,y)に配置するときに、衝突するblock_idのリスト
+  - forbidden_intervals := hit_listに含まれるblock_idのforbiddenを管理するデータ構造（btreeset？）
+    - solver.rsのadd_forbidden_intervals_for_old と同じことをする
+    - TODO: 高速に操作できるデータ構造が欲しいです
+      - 以下のクエリに答えられることが必要
+        - intervalの追加・削除
+        - first-feasible-timeの取得
+          - solver.rsのfirst_feasible_timeと同じ
+- yが小さい順に以下を試す
+  - (x,y)に挿入をする時には、check_list内のblockとのcollisionをpre.collision.craneから取得する
+  - hit_listと矛盾があればhit_listとforbidden_intervalを更新する
+  - first-feasible-timeを取得する
+
 局所探索:
 - 貪欲
   - insert_greedy(bay_id, block_id, bounds, orientation) -> (x, y, t)

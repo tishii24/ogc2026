@@ -22,6 +22,12 @@ pub struct BlockPlacement {
     pub y: i64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockOrient {
+    pub block_id: usize,
+    pub orient_idx: usize,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct ConvexPart {
     points: [Pointf; MAX_CONVEX_VERTS],
@@ -123,13 +129,19 @@ impl CollisionPrecompute {
             return CollisionResult::Clear;
         }
 
+        let moving_orient = BlockOrient {
+            block_id: moving.block_id,
+            orient_idx: moving.orient_idx,
+        };
+        let fixed_orient = BlockOrient {
+            block_id: fixed.block_id,
+            orient_idx: fixed.orient_idx,
+        };
         let pair_idx = self.block_pair_index[moving.block_id * self.n + fixed.block_id]
             .expect("collision block pair should be precomputed");
-
         let pair = &self.block_pairs[pair_idx];
         let key = moving.orient_idx * pair.fixed_orients + fixed.orient_idx;
-
-        let orient_pair = self.get_or_build_orient_pair(moving, fixed, pair_idx, key);
+        let orient_pair = self.get_or_build_orient_pair(moving_orient, fixed_orient, pair_idx, key);
         let dx = fixed.x - moving.x;
         let dy = fixed.y - moving.y;
 
@@ -140,10 +152,29 @@ impl CollisionPrecompute {
         }
     }
 
+    pub fn crane_dy_intervals(
+        &self,
+        moving: BlockOrient,
+        fixed: BlockOrient,
+        dx: i64,
+    ) -> &[(i64, i64)] {
+        if moving.block_id == fixed.block_id {
+            return &[];
+        }
+
+        let pair_idx = self.block_pair_index[moving.block_id * self.n + fixed.block_id]
+            .expect("collision block pair should be precomputed");
+        let pair = &self.block_pairs[pair_idx];
+        let key = moving.orient_idx * pair.fixed_orients + fixed.orient_idx;
+        let orient_pair = self.get_or_build_orient_pair(moving, fixed, pair_idx, key);
+
+        orient_pair.crane.dy_intervals(dx)
+    }
+
     fn get_or_build_orient_pair(
         &self,
-        moving: BlockPlacement,
-        fixed: BlockPlacement,
+        moving: BlockOrient,
+        fixed: BlockOrient,
         pair_idx: usize,
         key: usize,
     ) -> &OrientPairCollision {
@@ -222,18 +253,11 @@ impl Drop for OrientPairCache {
 
 impl CollisionGrid {
     fn get(&self, dx: i64, dy: i64) -> bool {
-        if dx < self.delta.min_dx
-            || self.delta.max_dx < dx
-            || dy < self.delta.min_dy
-            || self.delta.max_dy < dy
-        {
+        if dy < self.delta.min_dy || self.delta.max_dy < dy {
             return false;
         }
 
-        let col = (dx - self.delta.min_dx) as usize;
-        let begin = self.column_offsets[col];
-        let end = self.column_offsets[col + 1];
-        self.intervals[begin..end]
+        self.dy_intervals(dx)
             .binary_search_by(|&(lo, hi)| {
                 if dy < lo {
                     std::cmp::Ordering::Greater
@@ -244,6 +268,17 @@ impl CollisionGrid {
                 }
             })
             .is_ok()
+    }
+
+    fn dy_intervals(&self, dx: i64) -> &[(i64, i64)] {
+        if dx < self.delta.min_dx || self.delta.max_dx < dx {
+            return &[];
+        }
+
+        let col = (dx - self.delta.min_dx) as usize;
+        let begin = self.column_offsets[col];
+        let end = self.column_offsets[col + 1];
+        &self.intervals[begin..end]
     }
 }
 

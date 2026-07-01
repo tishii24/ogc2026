@@ -39,6 +39,35 @@ def load_json(path: Path) -> Any:
         return json.load(f)
 
 
+def schedule_signature(block: dict[str, Any]) -> tuple[int, int, int, int, int, int]:
+    return (
+        int(block.get("bay_id", 0)),
+        int(block.get("orient_idx", 0)),
+        int(block.get("x", 0)),
+        int(block.get("y", 0)),
+        int(block.get("entry_time", 0)),
+        int(block.get("exit_time", 0)),
+    )
+
+
+def annotate_changed_blocks(snapshots: list[dict[str, Any]]) -> None:
+    prev_by_block: dict[int, tuple[int, int, int, int, int, int]] | None = None
+    for snapshot in snapshots:
+        cur_by_block = {
+            int(block.get("block_id", -1)): schedule_signature(block)
+            for block in snapshot.get("schedule", [])
+        }
+        if prev_by_block is None:
+            snapshot["changed_block_ids"] = []
+        else:
+            snapshot["changed_block_ids"] = sorted(
+                block_id
+                for block_id, signature in cur_by_block.items()
+                if prev_by_block.get(block_id) != signature
+            )
+        prev_by_block = cur_by_block
+
+
 def load_snapshots(path: Path) -> list[dict[str, Any]]:
     snapshots = []
     with path.open(encoding="utf-8") as f:
@@ -53,6 +82,7 @@ def load_snapshots(path: Path) -> list[dict[str, Any]]:
             if item.get("type") == "snapshot":
                 snapshots.append(item)
     snapshots.sort(key=lambda s: (float(s.get("elapsed", 0.0)), int(s.get("iter", 0))))
+    annotate_changed_blocks(snapshots)
     return snapshots
 
 
@@ -86,6 +116,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   .bay-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
   .bay-title { font-weight: 600; font-size: 14px; margin-bottom: 6px; display: flex; justify-content: space-between; }
   canvas { width: 100%; display: block; background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; }
+  .phase-title { margin: 8px 0 4px 0; font-family: Menlo, Consolas, monospace; font-size: 12px; color: #475569; }
   .muted { color: #6b7280; }
 </style>
 </head>
@@ -114,6 +145,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       <span class="chip"><span class="swatch" style="background:#fcd34d"></span>T≤30</span>
       <span class="chip"><span class="swatch" style="background:#fb923c"></span>T≤60</span>
       <span class="chip"><span class="swatch" style="background:#f87171"></span>T&gt;60</span>
+      <span class="chip"><span class="swatch" style="background:#fff;border:3px solid #2563eb"></span>changed</span>
     </div>
   </div>
 
@@ -161,6 +193,27 @@ function tardinessColor(t) {
 
 function currentSnapshot() { return snapshots[currentIndex] || { schedule: [] }; }
 
+function currentPhaseTimes() {
+  const schedule = currentSnapshot().schedule || [];
+  if (!schedule.length) return [0, 0, 0, 0];
+  const tMin = Math.min(...schedule.map(s => Number(s.entry_time || 0)));
+  const tMax = Math.max(...schedule.map(s => Number(s.exit_time || 0)));
+  const span = Math.max(0, tMax - tMin);
+  if (span <= 0) return [tMin, tMin, tMin, tMin];
+  return [1, 2, 3, 4].map(k => Math.floor(tMin + k * span / 5));
+}
+
+function activeBlocksForBayAtPhase(bayId, phaseIndex) {
+  const t = currentPhaseTimes()[phaseIndex] ?? 0;
+  return (currentSnapshot().schedule || []).filter(s =>
+    Number(s.bay_id) === bayId && Number(s.entry_time) <= t && t < Number(s.exit_time)
+  );
+}
+
+function changedBlockSet() {
+  return new Set((currentSnapshot().changed_block_ids || []).map(Number));
+}
+
 function setup() {
   snapSlider.max = String(Math.max(0, snapshots.length - 1));
   renderBays();
@@ -177,18 +230,27 @@ function renderBays() {
     title.className = 'bay-title';
     title.innerHTML = `<span>Bay ${bayId}</span><span class="muted">${bay.width} × ${bay.height}</span>`;
     card.appendChild(title);
-    const canvas = document.createElement('canvas');
-    canvas.dataset.bayId = String(bayId);
     const aspect = Number(bay.height || 1) / Math.max(1, Number(bay.width || 1));
-    canvas.style.height = `${Math.max(180, Math.min(420, Math.round(520 * aspect + 70)))}px`;
-    canvas.addEventListener('mousemove', onCanvasMouseMove);
-    canvas.addEventListener('mouseleave', () => {
-      blockInfo.textContent = 'Hover a block.';
-      blockInfo.classList.add('muted');
-    });
-    card.appendChild(canvas);
+    for (let phaseIndex = 0; phaseIndex < 4; phaseIndex++) {
+      const phaseTitle = document.createElement('div');
+      phaseTitle.className = 'phase-title';
+      phaseTitle.dataset.bayId = String(bayId);
+      phaseTitle.dataset.phaseIndex = String(phaseIndex);
+      card.appendChild(phaseTitle);
+
+      const canvas = document.createElement('canvas');
+      canvas.dataset.bayId = String(bayId);
+      canvas.dataset.phaseIndex = String(phaseIndex);
+      canvas.style.height = `${Math.max(120, Math.min(260, Math.round(360 * aspect + 50)))}px`;
+      canvas.addEventListener('mousemove', onCanvasMouseMove);
+      canvas.addEventListener('mouseleave', () => {
+        blockInfo.textContent = 'Hover a block.';
+        blockInfo.classList.add('muted');
+      });
+      card.appendChild(canvas);
+      canvases.push(canvas);
+    }
     baysRoot.appendChild(card);
-    canvases.push(canvas);
   });
 }
 
@@ -221,7 +283,21 @@ function blockTardiness(s) {
   return Math.max(0, Number(s.exit_time || 0) - Number(block.due_date || 0));
 }
 
-function drawAll() { canvases.forEach(drawBay); updateSummary(); }
+function drawAll() {
+  updatePhaseTitles();
+  canvases.forEach(drawBay);
+  updateSummary();
+}
+
+function updatePhaseTitles() {
+  const phaseTimes = currentPhaseTimes();
+  document.querySelectorAll('.phase-title').forEach(title => {
+    const bayId = Number(title.dataset.bayId);
+    const phaseIndex = Number(title.dataset.phaseIndex);
+    const active = activeBlocksForBayAtPhase(bayId, phaseIndex).length;
+    title.textContent = `phase ${phaseIndex + 1}  t=${phaseTimes[phaseIndex] ?? 0}  active=${active}`;
+  });
+}
 
 function drawBay(canvas) {
   const bayId = Number(canvas.dataset.bayId);
@@ -236,13 +312,14 @@ function drawBay(canvas) {
   ctx.lineWidth = 1;
   ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
 
-  const snap = currentSnapshot();
-  const blocks = (snap.schedule || []).filter(s => Number(s.bay_id) === bayId);
+  const phaseIndex = Number(canvas.dataset.phaseIndex || 0);
+  const blocks = activeBlocksForBayAtPhase(bayId, phaseIndex);
+  const changed = changedBlockSet();
   blocks.sort((a, b) => Number(a.block_id) - Number(b.block_id));
-  for (const s of blocks) drawBlock(ctx, width, height, bay, s);
+  for (const s of blocks) drawBlock(ctx, width, height, bay, s, changed.has(Number(s.block_id)));
 }
 
-function drawBlock(ctx, width, height, bay, s) {
+function drawBlock(ctx, width, height, bay, s, isChanged) {
   const block = problem.blocks[s.block_id];
   if (!block) return;
   const orient = (block.shape || [])[s.orient_idx];
@@ -264,6 +341,14 @@ function drawBlock(ctx, width, height, bay, s) {
     ctx.strokeStyle = blockTardiness(s) > 0 ? '#dc2626' : '#334155';
     ctx.lineWidth = blockTardiness(s) > 0 ? 2 : 1;
     ctx.stroke();
+    if (isChanged) {
+      ctx.strokeStyle = 'rgba(37,99,235,0.35)';
+      ctx.lineWidth = 8;
+      ctx.stroke();
+      ctx.strokeStyle = '#2563eb';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
   });
 
   const first = layers.find(poly => poly.length);
@@ -272,7 +357,7 @@ function drawBlock(ctx, width, height, bay, s) {
     const ys = first.map(pt => Number(s.y) + Number(pt[1]));
     const [cx, cy] = transformPoint((Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2, bay, width, height);
     ctx.fillStyle = '#111827';
-    ctx.font = '11px Menlo, Consolas, monospace';
+    ctx.font = isChanged ? 'bold 12px Menlo, Consolas, monospace' : '11px Menlo, Consolas, monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(String(s.block_id), cx, cy);
@@ -308,8 +393,11 @@ function canvasToBay(canvas, event) {
 function onCanvasMouseMove(event) {
   const canvas = event.currentTarget;
   const bayId = Number(canvas.dataset.bayId);
+  const phaseIndex = Number(canvas.dataset.phaseIndex || 0);
+  const phaseTime = currentPhaseTimes()[phaseIndex] ?? 0;
   const [x, y] = canvasToBay(canvas, event);
-  const blocks = (currentSnapshot().schedule || []).filter(s => Number(s.bay_id) === bayId);
+  const changed = changedBlockSet();
+  const blocks = activeBlocksForBayAtPhase(bayId, phaseIndex);
   for (let k = blocks.length - 1; k >= 0; k--) {
     const s = blocks[k];
     const block = problem.blocks[s.block_id];
@@ -323,7 +411,8 @@ function onCanvasMouseMove(event) {
         const pref = Number(prefs[s.bay_id] || 0);
         const maxPref = Math.max(pref, ...prefs.map(Number));
         blockInfo.classList.remove('muted');
-        blockInfo.textContent = `B${s.block_id} bay=${s.bay_id} orient=${s.orient_idx} x=${s.x} y=${s.y} entry=${s.entry_time} exit=${s.exit_time} due=${block.due_date} tardiness=${tardy} pref_penalty=${maxPref - pref}`;
+        const isChanged = changed.has(Number(s.block_id));
+        blockInfo.textContent = `phase=${phaseIndex + 1} t=${phaseTime} changed=${isChanged}  B${s.block_id} bay=${s.bay_id} orient=${s.orient_idx} x=${s.x} y=${s.y} entry=${s.entry_time} exit=${s.exit_time} due=${block.due_date} tardiness=${tardy} pref_penalty=${maxPref - pref}`;
         return;
       }
     }
@@ -336,6 +425,9 @@ function updateSummary() {
   const snap = currentSnapshot();
   snapLabel.textContent = `snapshot ${currentIndex + 1} / ${snapshots.length}`;
   snapSlider.value = String(currentIndex);
+  const phaseTimes = currentPhaseTimes();
+  const changedIds = (snap.changed_block_ids || []).map(Number);
+  const changedPreview = changedIds.slice(0, 20).join(',');
   summary.textContent = [
     `worker=${snap.worker ?? viewerData.worker_id}`,
     `iter=${snap.iter ?? '-'}`,
@@ -349,14 +441,16 @@ function updateSummary() {
     `current=${formatNumber(snap.current_score)}`,
     `best=${formatNumber(snap.best_score)}`,
     `delta=${formatNumber(snap.delta)}`,
+    `changed=${changedIds.length}${changedPreview ? ` [${changedPreview}${changedIds.length > 20 ? ',...' : ''}]` : ''}`,
+    `phases=[${phaseTimes.join(',')}]`,
   ].join('  ');
 }
 
 function updateAll() { drawAll(); }
 
-function setSnapshot(index) {
+function setSnapshot(index, keepFloat = false) {
   currentIndex = Math.max(0, Math.min(snapshots.length - 1, Math.floor(index)));
-  currentIndexFloat = currentIndex;
+  if (!keepFloat) currentIndexFloat = currentIndex;
   updateAll();
 }
 
@@ -371,7 +465,7 @@ function animate(timestamp) {
     playing = false;
     playButton.textContent = 'Play';
   }
-  setSnapshot(currentIndexFloat);
+  setSnapshot(currentIndexFloat, true);
   if (playing) requestAnimationFrame(animate);
 }
 
