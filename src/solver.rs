@@ -33,9 +33,6 @@ const START_TEMP: f64 = 1e2;
 const END_TEMP: f64 = 1e0;
 const WORKER_TEMP_SCALE: f64 = 10.;
 const BEST_EXCHANGE_INTERVAL: usize = 2_000;
-const BEST_EXCHANGE_KICK_PROB: f64 = 0.3;
-const KICK_MIN_REMOVED_BLOCKS: usize = 10;
-const KICK_MAX_REMOVED_BLOCKS: usize = 24;
 const TABU_SIZE: usize = 4_096;
 
 pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
@@ -367,44 +364,14 @@ fn run_annealing_worker(
         }
         iter += 1;
         if iter % BEST_EXCHANGE_INTERVAL == 0 {
-            let shared = {
-                let shared = state.lock().unwrap();
-                if shared.score + 1e-9 < current_score {
-                    Some((shared.score, shared.schedule.clone()))
-                } else {
-                    None
-                }
-            };
-            if let Some((shared_score, shared_schedule)) = shared {
-                if shared_score + 1e-9 < best_score {
-                    best = shared_schedule.clone();
-                    best_score = shared_score;
-                }
-
-                if rng.nextf() < BEST_EXCHANGE_KICK_PROB {
-                    if let Some(kicked) =
-                        try_best_exchange_kick(problem, pre, &shared_schedule, &mut rng)
-                    {
-                        current_score = score_schedule(problem, pre, &kicked);
-                        current = kicked;
-                    } else {
-                        current = shared_schedule;
-                        current_score = shared_score;
-                    }
-                } else {
-                    current = shared_schedule;
-                    current_score = shared_score;
-                }
+            let shared = state.lock().unwrap();
+            if shared.score + 1e-9 < current_score {
+                current = shared.schedule.clone();
+                current_score = shared.score;
                 push_tabu(hash_schedule(&current), &mut tabu_queue, &mut tabu_set);
-
-                if current_score + 1e-9 < best_score {
+                if shared.score + 1e-9 < best_score {
                     best = current.clone();
                     best_score = current_score;
-                    let mut shared = state.lock().unwrap();
-                    if current_score + 1e-9 < shared.score {
-                        shared.score = current_score;
-                        shared.schedule = current.clone();
-                    }
                 }
             }
         }
@@ -746,29 +713,7 @@ fn try_large_reconstruct<R: Random>(
     let k = rng
         .gen_range(MIN_REMOVED_BLOCKS, MAX_REMOVED_BLOCKS + 1)
         .min(problem.blocks.len());
-    try_reconstruct_with_k(problem, pre, schedule, rng, k, accept_threshold)
-}
 
-fn try_best_exchange_kick<R: Random>(
-    problem: &Problem,
-    pre: &Precompute,
-    schedule: &[ScheduledBlock],
-    rng: &mut R,
-) -> Option<Vec<ScheduledBlock>> {
-    let k = rng
-        .gen_range(KICK_MIN_REMOVED_BLOCKS, KICK_MAX_REMOVED_BLOCKS + 1)
-        .min(problem.blocks.len());
-    try_reconstruct_with_k(problem, pre, schedule, rng, k, f64::INFINITY)
-}
-
-fn try_reconstruct_with_k<R: Random>(
-    problem: &Problem,
-    pre: &Precompute,
-    schedule: &[ScheduledBlock],
-    rng: &mut R,
-    k: usize,
-    accept_threshold: f64,
-) -> Option<Vec<ScheduledBlock>> {
     let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng);
     if removed_ids.is_empty() {
         return None;
