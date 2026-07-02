@@ -1,3 +1,4 @@
+- is-tardy: reconstruct
 - 高速化
 - reconstructの改善
 - safety
@@ -20,10 +21,8 @@ precompute:
   - 凸包を作って、面積が大きくならない組み合わせを求める
 
 solver:
-- 局所探索の改善
-  - reconstructの改善
-  - 小さい近傍の追加
-- 初期解の改善
+- reconstructの改善
+- 小さい近傍の追加
 - 大域的最適化
   - obj2,obj3の下界を求めて、それに合わせてbay-idを決める
   - bay-idの割り当てを事前に山登りする
