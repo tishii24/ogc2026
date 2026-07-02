@@ -1,5 +1,6 @@
 - obj2を軽視する
 - kick近傍を入れる
+  - スコア遷移を見る
 - is-tardy: reconstruct
 - 高速化
 - reconstructの改善
