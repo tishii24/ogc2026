@@ -383,10 +383,11 @@ fn run_annealing_worker(
         let neighbor_idx = neighbor.index();
         let neighbor_start = Instant::now();
         neighbor_stats[neighbor_idx].selected += 1;
+        let accept_threshold = current_score - temp * rng.nextf().ln();
 
         let candidate = match neighbor {
             NeighborKind::LargeReconstruct => {
-                try_large_reconstruct(problem, pre, &current, &mut rng)
+                try_large_reconstruct(problem, pre, &current, &mut rng, accept_threshold)
             }
             NeighborKind::Shift => try_shift_neighbor(problem, pre, &current, &mut rng),
             NeighborKind::Move => try_move_neighbor(problem, pre, &current, &mut rng),
@@ -413,7 +414,7 @@ fn run_annealing_worker(
             neighbor_stats[neighbor_idx].improved += 1;
             neighbor_stats[neighbor_idx].improved_delta_sum += -delta;
         }
-        if delta <= 0.0 || rng.nextf() < (-delta / temp).exp() {
+        if score <= accept_threshold {
             current = candidate;
             current_score = score;
             push_tabu(candidate_hash, &mut tabu_queue, &mut tabu_set);
@@ -707,6 +708,7 @@ fn try_large_reconstruct<R: Random>(
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     rng: &mut R,
+    accept_threshold: f64,
 ) -> Option<Vec<ScheduledBlock>> {
     let k = rng
         .gen_range(MIN_REMOVED_BLOCKS, MAX_REMOVED_BLOCKS + 1)
@@ -731,14 +733,20 @@ fn try_large_reconstruct<R: Random>(
 
     let mut cur = base;
     let mut loads = vec![0.0; problem.bays.len()];
-    for s in &cur {
+    let mut fixed_score13 = 0.0;
+    for &s in &cur {
         loads[s.bay_id] += problem.blocks[s.block_id].workload as f64;
+        fixed_score13 += score13_block(problem, pre, s);
     }
 
     for old in removed_ordered {
+        if fixed_score13 > accept_threshold + 1e-9 {
+            return None;
+        }
         let old = old?;
         let scheduled = insert_greedy(problem, pre, old, &cur, &loads, INSERT_PARAMS)?;
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
+        fixed_score13 += score13_block(problem, pre, scheduled);
         cur.push(scheduled);
     }
 
@@ -1716,6 +1724,13 @@ fn get_insert_t(
         add_forbidden_from_hit_state(info, new_old_hit, old_new_hit, &mut forbidden);
     }
     first_feasible_time(&forbidden, min_t, max_t)
+}
+
+fn score13_block(problem: &Problem, pre: &Precompute, s: ScheduledBlock) -> f64 {
+    let block = &problem.blocks[s.block_id];
+    let tardiness = (s.exit_time - block.due_date).max(0);
+    let pref_penalty = pre.pref_penalty[s.block_id][s.bay_id];
+    problem.weights.w1 * tardiness as f64 + problem.weights.w3 * pref_penalty as f64
 }
 
 fn score_schedule(problem: &Problem, pre: &Precompute, schedule: &[ScheduledBlock]) -> f64 {

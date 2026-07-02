@@ -1,3 +1,4 @@
+- obj2を軽視する
 - is-tardy: reconstruct
 - 高速化
 - reconstructの改善
