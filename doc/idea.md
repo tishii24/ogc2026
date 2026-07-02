@@ -14,7 +14,13 @@ feasibilityのチェック:
 - tardinessが発生することが確定しているブロックよりも、発生しないブロックを優先する
 
 is-tardy:
-- 事前にbay-idの割り当てを最適化・それ通りにinsertを試す
-
-remove-block:
-- bayごとにareaがおおよそ均等になるように選ぶ
+- remove-block
+  - 違反量が大きいブロック
+- insert-order
+  - tardyな場合
+    - obj2は無視する
+    - anchorでの打ち切りをしない
+  - tardyじゃない場合
+    - 事前にbay-idの割り当てを最適化・それ通りにinsertを試す
+- insert
+  - 違反量が閾値を超える場合は打ち切る
