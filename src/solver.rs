@@ -695,12 +695,122 @@ fn build_initial_schedule_with_order(
             entry_time: block.release_time,
             exit_time: block.release_time + block.processing_time,
         };
-        let scheduled = insert_greedy(problem, pre, original, &schedule, &loads, INSERT_PARAMS)?;
+        let scheduled = insert_greedy(
+            problem,
+            pre,
+            original,
+            &schedule,
+            &loads,
+            INSERT_PARAMS,
+            None,
+        )?;
         loads[scheduled.bay_id] += block.workload as f64;
         schedule.push(scheduled);
     }
 
     Some(schedule)
+}
+
+fn total_tardiness(problem: &Problem, schedule: &[ScheduledBlock]) -> i64 {
+    schedule
+        .iter()
+        .map(|s| (s.exit_time - problem.blocks[s.block_id].due_date).max(0))
+        .sum()
+}
+
+fn optimize_removed_bay_assignment(
+    problem: &Problem,
+    pre: &Precompute,
+    removed_block_ids: &[usize],
+    base_loads: &[f64],
+    assignment: &mut [usize],
+) {
+    let workloads: Vec<f64> = removed_block_ids
+        .iter()
+        .map(|&block_id| problem.blocks[block_id].workload as f64)
+        .collect();
+    let mut loads = base_loads.to_vec();
+    let mut pref_penalty = 0.0;
+    for ((&block_id, &bay_id), &workload) in removed_block_ids
+        .iter()
+        .zip(assignment.iter())
+        .zip(workloads.iter())
+    {
+        loads[bay_id] += workload;
+        pref_penalty += pre.pref_penalty[block_id][bay_id] as f64;
+    }
+
+    let calc_score = |loads: &[f64], pref_penalty: f64| {
+        problem.weights.w2 * normalized_imbalance(pre, loads) + problem.weights.w3 * pref_penalty
+    };
+    let mut score = calc_score(&loads, pref_penalty);
+
+    loop {
+        let mut improved = false;
+        for i in 0..assignment.len() {
+            let block_id = removed_block_ids[i];
+            let workload = workloads[i];
+            let mut old_bay = assignment[i];
+            for &bay_id in &pre.bay_order_by_pref[block_id] {
+                if bay_id == old_bay {
+                    continue;
+                }
+
+                let pref_delta = pre.pref_penalty[block_id][bay_id] as f64
+                    - pre.pref_penalty[block_id][old_bay] as f64;
+                loads[old_bay] -= workload;
+                loads[bay_id] += workload;
+                let next_pref_penalty = pref_penalty + pref_delta;
+                let next_score = calc_score(&loads, next_pref_penalty);
+                if next_score + 1e-9 < score {
+                    assignment[i] = bay_id;
+                    old_bay = bay_id;
+                    pref_penalty = next_pref_penalty;
+                    score = next_score;
+                    improved = true;
+                } else {
+                    loads[old_bay] += workload;
+                    loads[bay_id] -= workload;
+                }
+            }
+        }
+
+        for i in 0..assignment.len() {
+            for j in i + 1..assignment.len() {
+                let bay_i = assignment[i];
+                let bay_j = assignment[j];
+                if bay_i == bay_j {
+                    continue;
+                }
+
+                let block_i = removed_block_ids[i];
+                let block_j = removed_block_ids[j];
+                let workload_i = workloads[i];
+                let workload_j = workloads[j];
+                let pref_delta = pre.pref_penalty[block_i][bay_j] as f64
+                    + pre.pref_penalty[block_j][bay_i] as f64
+                    - pre.pref_penalty[block_i][bay_i] as f64
+                    - pre.pref_penalty[block_j][bay_j] as f64;
+
+                loads[bay_i] += workload_j - workload_i;
+                loads[bay_j] += workload_i - workload_j;
+                let next_pref_penalty = pref_penalty + pref_delta;
+                let next_score = calc_score(&loads, next_pref_penalty);
+                if next_score + 1e-9 < score {
+                    assignment.swap(i, j);
+                    pref_penalty = next_pref_penalty;
+                    score = next_score;
+                    improved = true;
+                } else {
+                    loads[bay_i] += workload_i - workload_j;
+                    loads[bay_j] += workload_j - workload_i;
+                }
+            }
+        }
+        if !improved {
+            break;
+        }
+    }
 }
 
 fn try_large_reconstruct<R: Random>(
@@ -731,6 +841,8 @@ fn try_large_reconstruct<R: Random>(
         }
     }
 
+    let removed_ordered: Vec<ScheduledBlock> =
+        removed_ordered.into_iter().collect::<Option<Vec<_>>>()?;
     let mut cur = base;
     let mut loads = vec![0.0; problem.bays.len()];
     let mut fixed_score13 = 0.0;
@@ -739,12 +851,22 @@ fn try_large_reconstruct<R: Random>(
         fixed_score13 += score13_block(problem, pre, s);
     }
 
-    for old in removed_ordered {
+    let assignment = if total_tardiness(problem, schedule) == 0 {
+        let removed_block_ids: Vec<usize> = removed_ordered.iter().map(|s| s.block_id).collect();
+        let mut bays: Vec<usize> = removed_ordered.iter().map(|s| s.bay_id).collect();
+        optimize_removed_bay_assignment(problem, pre, &removed_block_ids, &loads, &mut bays);
+        Some(bays)
+    } else {
+        None
+    };
+
+    for (i, old) in removed_ordered.into_iter().enumerate() {
         if fixed_score13 > accept_threshold + 1e-9 {
             return None;
         }
-        let old = old?;
-        let scheduled = insert_greedy(problem, pre, old, &cur, &loads, INSERT_PARAMS)?;
+        let fixed_bay_id = assignment.as_ref().map(|bays| bays[i]);
+        let scheduled =
+            insert_greedy(problem, pre, old, &cur, &loads, INSERT_PARAMS, fixed_bay_id)?;
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
         fixed_score13 += score13_block(problem, pre, scheduled);
         cur.push(scheduled);
@@ -1077,7 +1199,7 @@ fn try_move_neighbor<R: Random>(
         base.push(s);
     }
 
-    let scheduled = insert_greedy(problem, pre, old, &base, &loads, INSERT_PARAMS)?;
+    let scheduled = insert_greedy(problem, pre, old, &base, &loads, INSERT_PARAMS, None)?;
     if scheduled == old {
         return None;
     }
@@ -1338,6 +1460,7 @@ fn insert_greedy(
     schedule: &[ScheduledBlock],
     loads: &[f64],
     params: InsertSearchParams,
+    fixed_bay_id: Option<usize>,
 ) -> Option<ScheduledBlock> {
     fn insert_candidate_better(a: &InsertCandidate, b: &InsertCandidate) -> bool {
         a.score_delta
@@ -1358,18 +1481,22 @@ fn insert_greedy(
     let current_obj2 = normalized_imbalance(pre, loads);
     let original_tardiness = (original.exit_time - block.due_date).max(0);
     let mut best: Option<InsertCandidate> = None;
+    let fixed_bays;
+    let bay_order: &[usize] = if let Some(bay_id) = fixed_bay_id {
+        fixed_bays = [bay_id];
+        &fixed_bays
+    } else {
+        &pre.bay_order_by_pref[block_id]
+    };
 
-    for &bay_id in &pre.bay_order_by_pref[block_id] {
+    for &bay_id in bay_order {
         let mut next_loads = loads.to_vec();
         next_loads[bay_id] += block.workload as f64;
         // TODO: obj2は最後の方でだけ気にする
         let delta_obj23 = problem.weights.w2
             * (normalized_imbalance(pre, &next_loads) - current_obj2)
             + problem.weights.w3 * pre.pref_penalty[block_id][bay_id] as f64;
-        let min_tardiness = min_t
-            .saturating_add(process_t)
-            .saturating_sub(block.due_date)
-            .max(0);
+        let min_tardiness = 0;
         let lower_score_delta = problem.weights.w1 * min_tardiness as f64 + delta_obj23;
         if best
             .as_ref()
