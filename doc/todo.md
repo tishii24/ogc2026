@@ -1,9 +1,8 @@
-- obj2を軽視する
-- kick近傍を入れる
-  - スコア遷移を見る
-- is-tardy: reconstruct
 - 高速化
+  - binary-searchを展開する
+- targeted-reconstruct
 - reconstructの改善
+- MILPの導入
 - safety
 - チューニング
 
@@ -16,6 +15,8 @@ safety:
   - fallback
 - py側にいくつか解を返して、feasibilityをチェックする
 - 縦長のbayではxとyを入れ替える
+- 固定長配列をやめる
+- orient-indexの確認
 
 precompute:
 - 衝突判定の高速化
@@ -24,7 +25,10 @@ precompute:
   - 凸包を作って、面積が大きくならない組み合わせを求める
 
 solver:
+- 初期解改善
 - reconstructの改善
+  - obj2を軽視する
+- bestを取ってくるときにkickの追加
 - 小さい近傍の追加
 - 大域的最適化
   - obj2,obj3の下界を求めて、それに合わせてbay-idを決める
@@ -51,3 +55,4 @@ other:
 - 全てのケースで評価
 - ケースをaugmentationして評価
 - 時間を延ばして評価
+- スコア遷移を見る

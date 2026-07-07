@@ -49,7 +49,7 @@ python tools/stats.py --suite suites/half.json --matrix
 `myalgorithm.py` は `solver` に標準入力で問題 JSON を渡すため、一時ファイルは作らない。
 
 ```bash
-# Docker image のビルド（初回のみ）
+# Docker image のビルド（Dockerfile 更新後も再実行する）
 docker build --platform linux/amd64 -t ogc2026-judge .
 
 # 提出物の作成
