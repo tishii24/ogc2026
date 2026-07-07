@@ -70,11 +70,17 @@ const NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
     (NeighborKind::Swap, 3.),
 ];
 
-const WORKLOAD_WEIGHT_MAX: f64 = 0.1;
-const AREA_WEIGHT_MAX: f64 = 0.2;
-const PREF_SPREAD_WEIGHT_MAX: f64 = 0.1;
-const DUE_URGENCY_WEIGHT_MAX: f64 = 1.;
-const SLACK_URGENCY_WEIGHT_MAX: f64 = 1.;
+const INITIAL_WORKLOAD_WEIGHT_MAX: f64 = 0.1;
+const INITIAL_AREA_WEIGHT_MAX: f64 = 0.2;
+const INITIAL_PREF_SPREAD_WEIGHT_MAX: f64 = 0.1;
+const INITIAL_DUE_URGENCY_WEIGHT_MAX: f64 = 1.;
+const INITIAL_SLACK_URGENCY_WEIGHT_MAX: f64 = 1.;
+
+const RECONSTRUCT_WORKLOAD_WEIGHT_MAX: f64 = 1.;
+const RECONSTRUCT_AREA_WEIGHT_MAX: f64 = 1.;
+const RECONSTRUCT_PREF_SPREAD_WEIGHT_MAX: f64 = 1.;
+const RECONSTRUCT_DUE_URGENCY_WEIGHT_MAX: f64 = 1.;
+const RECONSTRUCT_SLACK_URGENCY_WEIGHT_MAX: f64 = 1.;
 
 fn get_temp_scale(worker_id: usize, worker_count: usize) -> f64 {
     if worker_count <= 1 {
@@ -84,28 +90,56 @@ fn get_temp_scale(worker_id: usize, worker_count: usize) -> f64 {
     1. + WORKER_TEMP_SCALE * ratio.powf(2.)
 }
 
-fn sample_order_weights(rng: &mut impl Random) -> BlockOrderWeights {
+fn sample_initial_order_weights(rng: &mut impl Random) -> BlockOrderWeights {
     BlockOrderWeights {
-        workload: rng.gen_rangef(0.0, WORKLOAD_WEIGHT_MAX),
-        area: rng.gen_rangef(0.0, AREA_WEIGHT_MAX),
-        pref_spread: rng.gen_rangef(0.0, PREF_SPREAD_WEIGHT_MAX),
-        due_urgency: rng.gen_rangef(0.0, DUE_URGENCY_WEIGHT_MAX),
-        slack_urgency: rng.gen_rangef(0.0, SLACK_URGENCY_WEIGHT_MAX),
+        workload: rng.gen_rangef(0.0, INITIAL_WORKLOAD_WEIGHT_MAX),
+        area: rng.gen_rangef(0.0, INITIAL_AREA_WEIGHT_MAX),
+        pref_spread: rng.gen_rangef(0.0, INITIAL_PREF_SPREAD_WEIGHT_MAX),
+        due_urgency: rng.gen_rangef(0.0, INITIAL_DUE_URGENCY_WEIGHT_MAX),
+        slack_urgency: rng.gen_rangef(0.0, INITIAL_SLACK_URGENCY_WEIGHT_MAX),
     }
 }
 
-fn mutate_order_weights(weights: BlockOrderWeights, rng: &mut impl Random) -> BlockOrderWeights {
+fn sample_reconstruct_order_weights(rng: &mut impl Random) -> BlockOrderWeights {
+    BlockOrderWeights {
+        workload: rng.gen_rangef(0.0, RECONSTRUCT_WORKLOAD_WEIGHT_MAX),
+        area: rng.gen_rangef(0.0, RECONSTRUCT_AREA_WEIGHT_MAX),
+        pref_spread: rng.gen_rangef(0.0, RECONSTRUCT_PREF_SPREAD_WEIGHT_MAX),
+        due_urgency: rng.gen_rangef(0.0, RECONSTRUCT_DUE_URGENCY_WEIGHT_MAX),
+        slack_urgency: rng.gen_rangef(0.0, RECONSTRUCT_SLACK_URGENCY_WEIGHT_MAX),
+    }
+}
+
+fn mutate_initial_order_weights(
+    weights: BlockOrderWeights,
+    rng: &mut impl Random,
+) -> BlockOrderWeights {
     fn mutate(value: f64, min_value: f64, max_value: f64, rng: &mut impl Random) -> f64 {
         let width = (max_value - min_value) * INITIAL_WEIGHT_MUTATION_SCALE;
         (value + rng.gen_rangef(-width, width)).clamp(min_value, max_value)
     }
 
     BlockOrderWeights {
-        workload: mutate(weights.workload, 0.0, WORKLOAD_WEIGHT_MAX, rng),
-        area: mutate(weights.area, 0.0, AREA_WEIGHT_MAX, rng),
-        pref_spread: mutate(weights.pref_spread, 0.0, PREF_SPREAD_WEIGHT_MAX, rng),
-        due_urgency: mutate(weights.due_urgency, 0.0, DUE_URGENCY_WEIGHT_MAX, rng),
-        slack_urgency: mutate(weights.slack_urgency, 0.0, SLACK_URGENCY_WEIGHT_MAX, rng),
+        workload: mutate(weights.workload, 0.0, INITIAL_WORKLOAD_WEIGHT_MAX, rng),
+        area: mutate(weights.area, 0.0, INITIAL_AREA_WEIGHT_MAX, rng),
+        pref_spread: mutate(
+            weights.pref_spread,
+            0.0,
+            INITIAL_PREF_SPREAD_WEIGHT_MAX,
+            rng,
+        ),
+        due_urgency: mutate(
+            weights.due_urgency,
+            0.0,
+            INITIAL_DUE_URGENCY_WEIGHT_MAX,
+            rng,
+        ),
+        slack_urgency: mutate(
+            weights.slack_urgency,
+            0.0,
+            INITIAL_SLACK_URGENCY_WEIGHT_MAX,
+            rng,
+        ),
     }
 }
 
@@ -590,10 +624,10 @@ fn sample_initial_search_weights(
             }
         };
         if let Some(base) = base {
-            return mutate_order_weights(base, rng);
+            return mutate_initial_order_weights(base, rng);
         }
     }
-    sample_order_weights(rng)
+    sample_initial_order_weights(rng)
 }
 
 fn update_good_weight_pool(
@@ -718,7 +752,7 @@ fn try_large_reconstruct<R: Random>(
     if removed_ids.is_empty() {
         return None;
     }
-    let w = sample_order_weights(rng);
+    let w = sample_reconstruct_order_weights(rng);
     sort_block_order(problem, pre, &mut removed_ids, w);
 
     let mut removed_ordered = vec![None; removed_ids.len()];
@@ -1668,7 +1702,6 @@ fn add_forbidden_from_hit_state(
     }
 }
 
-/// TODO: sort版も試す
 fn first_feasible_time(forbidden: &[Interval], min_t: i64, max_t: i64) -> Option<i64> {
     let mut t = min_t;
     loop {
