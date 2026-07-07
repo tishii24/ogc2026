@@ -1,5 +1,6 @@
+- 高速化
+  - dx-intervalsにする
 - targeted-reconstruct
-- case2の修正
 - reconstructの改善
 - MILPの導入
 - safety

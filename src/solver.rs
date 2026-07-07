@@ -61,19 +61,13 @@ const SWAP_MAX_SHIFT_DELTA: i64 = 2;
 const MOVE_SAMPLE_BLOCKS: usize = 16;
 const MOVE_SMALL_POOL_SIZE: usize = 8;
 
-const TARDY_EJECT_AREA_POWER: f64 = 1.5;
-const TARDY_EJECT_MAX_REMOVED: usize = 4;
-const TARDY_EJECT_MAX_QUEUE: usize = 10;
-const TARDY_EJECT_POOL_SIZE: usize = 16;
-
-const NEIGHBOR_KIND_COUNT: usize = 6;
+const NEIGHBOR_KIND_COUNT: usize = 5;
 const NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
     (NeighborKind::LargeReconstruct, 0.2),
     (NeighborKind::Shift, 8.),
     (NeighborKind::Move, 0.1),
     (NeighborKind::Rotate, 8.),
     (NeighborKind::Swap, 3.),
-    (NeighborKind::TardyEject, 0.2),
 ];
 
 const INITIAL_WORKLOAD_WEIGHT_MAX: f64 = 0.1;
@@ -158,7 +152,6 @@ enum NeighborKind {
     Move,
     Rotate,
     Swap,
-    TardyEject,
 }
 
 impl NeighborKind {
@@ -169,7 +162,6 @@ impl NeighborKind {
             NeighborKind::Move => "Move",
             NeighborKind::Rotate => "Rotate",
             NeighborKind::Swap => "Swap",
-            NeighborKind::TardyEject => "TardyEj",
         }
     }
 
@@ -180,7 +172,6 @@ impl NeighborKind {
             NeighborKind::Move => 2,
             NeighborKind::Rotate => 3,
             NeighborKind::Swap => 4,
-            NeighborKind::TardyEject => 5,
         }
     }
 }
@@ -222,21 +213,6 @@ struct BlockOrderContext {
 struct InsertCandidate {
     scheduled: ScheduledBlock,
     score_delta: f64,
-    bbox_right: f64,
-    bbox_top: f64,
-}
-
-#[derive(Clone, Copy)]
-struct BlockForbidden {
-    old_idx: usize,
-    interval: Interval,
-}
-
-struct TardyEjectCandidate {
-    scheduled: ScheduledBlock,
-    removed_ids: Vec<usize>,
-    removed_area_sum: f64,
-    after_tardiness: i64,
     bbox_right: f64,
     bbox_top: f64,
 }
@@ -451,7 +427,6 @@ fn run_annealing_worker(
             NeighborKind::Move => try_move_neighbor(problem, pre, &current, &mut rng),
             NeighborKind::Rotate => try_rotate_neighbor(problem, pre, &current, &mut rng),
             NeighborKind::Swap => try_swap_neighbor(problem, pre, &current, &mut rng),
-            NeighborKind::TardyEject => try_tardy_eject_neighbor(problem, pre, &current, &mut rng),
         };
         let Some(candidate) = candidate else {
             neighbor_stats[neighbor_idx].time_sec += neighbor_start.elapsed().as_secs_f64();
@@ -1145,410 +1120,6 @@ fn try_move_neighbor<R: Random>(
     Some(base)
 }
 
-fn try_tardy_eject_neighbor<R: Random>(
-    problem: &Problem,
-    pre: &Precompute,
-    schedule: &[ScheduledBlock],
-    rng: &mut R,
-) -> Option<Vec<ScheduledBlock>> {
-    if schedule.is_empty() {
-        return None;
-    }
-
-    let mut tardy_blocks: Vec<(i64, ScheduledBlock)> = schedule
-        .iter()
-        .copied()
-        .filter_map(|s| {
-            let block = &problem.blocks[s.block_id];
-            let tardiness = (s.exit_time - block.due_date).max(0);
-            (tardiness > 0).then_some((tardiness, s))
-        })
-        .collect();
-    if tardy_blocks.is_empty() {
-        return None;
-    }
-
-    rng.shuffle(&mut tardy_blocks);
-    tardy_blocks.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.block_id.cmp(&b.1.block_id)));
-    let pool_len = TARDY_EJECT_POOL_SIZE.min(tardy_blocks.len());
-    let initial = tardy_blocks[rng.gen_index(pool_len)].1;
-    let initial_block_id = initial.block_id;
-
-    let mut cur = Vec::with_capacity(schedule.len());
-    for &s in schedule {
-        if s.block_id != initial_block_id {
-            cur.push(s);
-        }
-    }
-
-    let n = problem.blocks.len();
-    let mut queue = vec![initial];
-    let mut in_queue = vec![false; n];
-    let mut processing = vec![false; n];
-    let mut processed = vec![false; n];
-    in_queue[initial_block_id] = true;
-    let mut removed_total = 0usize;
-
-    while !queue.is_empty() {
-        let mut pop_idx = 0;
-        for i in 1..queue.len() {
-            let a = queue[i];
-            let b = queue[pop_idx];
-            if pre.block_area[a.block_id]
-                .total_cmp(&pre.block_area[b.block_id])
-                .then(b.block_id.cmp(&a.block_id))
-                .is_gt()
-            {
-                pop_idx = i;
-            }
-        }
-
-        let old = queue.swap_remove(pop_idx);
-        in_queue[old.block_id] = false;
-        processing[old.block_id] = true;
-
-        let mut protected = vec![false; n];
-        for block_id in 0..n {
-            protected[block_id] = in_queue[block_id] || processing[block_id] || processed[block_id];
-        }
-
-        let require_improvement = old.block_id == initial_block_id;
-        let result = search_tardy_eject_insert(
-            problem,
-            pre,
-            old,
-            &cur,
-            &protected,
-            require_improvement,
-            INSERT_PARAMS,
-        )?;
-
-        if removed_total + result.removed_ids.len() > TARDY_EJECT_MAX_REMOVED {
-            return None;
-        }
-        if queue.len() + result.removed_ids.len() > TARDY_EJECT_MAX_QUEUE {
-            return None;
-        }
-
-        let mut removed_blocks = Vec::with_capacity(result.removed_ids.len());
-        for &removed_id in &result.removed_ids {
-            if in_queue[removed_id] || processing[removed_id] || processed[removed_id] {
-                return None;
-            }
-            let pos = cur.iter().position(|s| s.block_id == removed_id)?;
-            removed_blocks.push(cur.swap_remove(pos));
-        }
-        removed_total += removed_blocks.len();
-
-        for removed in removed_blocks {
-            in_queue[removed.block_id] = true;
-            queue.push(removed);
-        }
-
-        processing[old.block_id] = false;
-        processed[old.block_id] = true;
-        cur.push(result.scheduled);
-    }
-
-    if cur.len() != problem.blocks.len() {
-        return None;
-    }
-    let mut seen = vec![false; n];
-    for s in &cur {
-        if seen[s.block_id] {
-            return None;
-        }
-        seen[s.block_id] = true;
-    }
-
-    Some(cur)
-}
-
-fn search_tardy_eject_insert(
-    problem: &Problem,
-    pre: &Precompute,
-    original: ScheduledBlock,
-    schedule: &[ScheduledBlock],
-    protected: &[bool],
-    require_tardiness_improvement: bool,
-    params: InsertSearchParams,
-) -> Option<TardyEjectCandidate> {
-    let block_id = original.block_id;
-    let block = &problem.blocks[block_id];
-    let process_t = block.processing_time;
-    let min_t = block.release_time;
-    let max_t = if require_tardiness_improvement {
-        original.exit_time - process_t - 1
-    } else {
-        original.exit_time - process_t
-    };
-    if min_t > max_t {
-        return None;
-    }
-
-    let before_tardiness = (original.exit_time - block.due_date).max(0);
-    if require_tardiness_improvement && before_tardiness == 0 {
-        return None;
-    }
-
-    let mut best: Option<TardyEjectCandidate> = None;
-
-    for &bay_id in &pre.bay_order_by_pref[block_id] {
-        let bay_old_blocks: Vec<ScheduledBlock> = schedule
-            .iter()
-            .copied()
-            .filter(|old| old.bay_id == bay_id)
-            .collect();
-        let old_time_infos: Vec<Option<OldTimeInfo>> = bay_old_blocks
-            .iter()
-            .map(|&old| old_time_info(old, process_t, min_t, max_t))
-            .collect();
-        let mut events = Vec::with_capacity(bay_old_blocks.len() * 4);
-        let mut states = vec![HitState::default(); bay_old_blocks.len()];
-        let mut active_old_ids = Vec::with_capacity(bay_old_blocks.len());
-        let mut active_pos = vec![None; bay_old_blocks.len()];
-        let mut forbiddens = Vec::with_capacity(16);
-
-        for &orient_idx in &pre.orientation_order_by_bbox[block_id] {
-            let Some(range) = pre.collision.fit_range(bay_id, block_id, orient_idx) else {
-                continue;
-            };
-            let new_orient = BlockOrient {
-                block_id,
-                orient_idx,
-            };
-            let bounds = pre.orientation_bbox_bounds[block_id][orient_idx];
-            let mut anchor_y: Option<i64> = None;
-
-            for y in range.min_y..=range.max_y {
-                if let Some(anchor_y) = anchor_y {
-                    if y > anchor_y + params.y_buffer {
-                        break;
-                    }
-                }
-
-                events.clear();
-                states.fill(HitState::default());
-                active_old_ids.clear();
-                active_pos.fill(None);
-
-                for (old_idx, &old) in bay_old_blocks.iter().enumerate() {
-                    if old_time_infos[old_idx].is_none() {
-                        continue;
-                    }
-
-                    let old_orient = BlockOrient {
-                        block_id: old.block_id,
-                        orient_idx: old.orient_idx,
-                    };
-
-                    for &(lo, hi) in
-                        pre.collision
-                            .crane_dx_intervals(new_orient, old_orient, old.y - y)
-                    {
-                        push_x_event(
-                            old.x - hi,
-                            old.x - lo,
-                            old_idx,
-                            HitDir::NewOld,
-                            range.min_x,
-                            range.max_x,
-                            &mut events,
-                        );
-                    }
-                    for &(lo, hi) in
-                        pre.collision
-                            .crane_dx_intervals(old_orient, new_orient, y - old.y)
-                    {
-                        push_x_event(
-                            old.x + lo,
-                            old.x + hi,
-                            old_idx,
-                            HitDir::OldNew,
-                            range.min_x,
-                            range.max_x,
-                            &mut events,
-                        );
-                    }
-                }
-
-                events.sort_unstable_by_key(|event| event.x);
-                let mut event_pos = 0;
-                let mut x = range.min_x;
-                loop {
-                    while event_pos < events.len() && events[event_pos].x == x {
-                        apply_x_event(
-                            events[event_pos],
-                            &mut states,
-                            &mut active_old_ids,
-                            &mut active_pos,
-                        );
-                        event_pos += 1;
-                    }
-
-                    forbiddens.clear();
-                    for &old_idx in &active_old_ids {
-                        let Some(info) = old_time_infos[old_idx] else {
-                            continue;
-                        };
-                        let state = states[old_idx];
-                        add_block_forbidden_from_hit_state(
-                            old_idx,
-                            info,
-                            state.new_old > 0,
-                            state.old_new > 0,
-                            &mut forbiddens,
-                        );
-                    }
-
-                    let scheduled_base = ScheduledBlock {
-                        block_id,
-                        bay_id,
-                        orient_idx,
-                        x,
-                        y,
-                        entry_time: min_t,
-                        exit_time: min_t + process_t,
-                    };
-                    if let Some(candidate) = evaluate_tardy_eject_times(
-                        pre,
-                        scheduled_base,
-                        block,
-                        &bay_old_blocks,
-                        &forbiddens,
-                        bounds,
-                        protected,
-                        min_t,
-                        max_t,
-                        before_tardiness,
-                        require_tardiness_improvement,
-                    ) {
-                        let after_tardiness = candidate.after_tardiness;
-                        if best
-                            .as_ref()
-                            .map_or(true, |best| tardy_eject_candidate_better(&candidate, best))
-                        {
-                            best = Some(candidate);
-                        }
-
-                        if after_tardiness <= before_tardiness && anchor_y.is_none() {
-                            anchor_y = Some(y);
-                        }
-                    }
-
-                    if event_pos >= events.len() {
-                        break;
-                    }
-                    x = events[event_pos].x;
-                    if x > range.max_x {
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    best
-}
-
-fn evaluate_tardy_eject_times(
-    pre: &Precompute,
-    scheduled_base: ScheduledBlock,
-    block: &Block,
-    bay_old_blocks: &[ScheduledBlock],
-    forbiddens: &[BlockForbidden],
-    bounds: Boundsf,
-    protected: &[bool],
-    min_t: i64,
-    max_t: i64,
-    before_tardiness: i64,
-    require_tardiness_improvement: bool,
-) -> Option<TardyEjectCandidate> {
-    let mut times = Vec::with_capacity(forbiddens.len() * 2 + 1);
-    times.push(min_t);
-    for forbidden in forbiddens {
-        let l = forbidden.interval.0.max(min_t);
-        let r = forbidden.interval.1.min(max_t);
-        if l > r {
-            continue;
-        }
-        times.push(l);
-        if r < max_t {
-            times.push(r + 1);
-        }
-    }
-    times.sort_unstable();
-    times.dedup();
-
-    let mut best: Option<TardyEjectCandidate> = None;
-    for t in times {
-        let after_tardiness = (t + block.processing_time - block.due_date).max(0);
-        if require_tardiness_improvement && after_tardiness >= before_tardiness {
-            continue;
-        }
-
-        let mut removed_ids = Vec::new();
-        let mut removed_area_sum = 0.0;
-        let mut seen_old_idx = vec![false; bay_old_blocks.len()];
-        let mut invalid = false;
-        for forbidden in forbiddens {
-            let (l, r) = forbidden.interval;
-            if !(l <= t && t <= r) {
-                continue;
-            }
-            let old_idx = forbidden.old_idx;
-            if seen_old_idx[old_idx] {
-                continue;
-            }
-            seen_old_idx[old_idx] = true;
-
-            let removed_id = bay_old_blocks[old_idx].block_id;
-            if removed_id == scheduled_base.block_id || protected[removed_id] {
-                invalid = true;
-                break;
-            }
-            removed_ids.push(removed_id);
-            removed_area_sum += pre.block_area[removed_id].powf(TARDY_EJECT_AREA_POWER);
-        }
-        if invalid {
-            continue;
-        }
-
-        let scheduled = ScheduledBlock {
-            entry_time: t,
-            exit_time: t + block.processing_time,
-            ..scheduled_base
-        };
-        let candidate = TardyEjectCandidate {
-            scheduled,
-            removed_ids,
-            removed_area_sum,
-            after_tardiness,
-            bbox_right: scheduled.x as f64 + bounds.max_x,
-            bbox_top: scheduled.y as f64 + bounds.max_y,
-        };
-        if best
-            .as_ref()
-            .map_or(true, |best| tardy_eject_candidate_better(&candidate, best))
-        {
-            best = Some(candidate);
-        }
-    }
-
-    best
-}
-
-fn tardy_eject_candidate_better(a: &TardyEjectCandidate, b: &TardyEjectCandidate) -> bool {
-    a.removed_area_sum
-        .total_cmp(&b.removed_area_sum)
-        .then(a.after_tardiness.cmp(&b.after_tardiness))
-        .then(a.scheduled.entry_time.cmp(&b.scheduled.entry_time))
-        .then(a.bbox_right.total_cmp(&b.bbox_right))
-        .then(a.bbox_top.total_cmp(&b.bbox_top))
-        .then(a.scheduled.block_id.cmp(&b.scheduled.block_id))
-        .is_lt()
-}
-
 fn choose_removed_blocks<R: Random>(
     problem: &Problem,
     pre: &Precompute,
@@ -2128,62 +1699,6 @@ fn add_forbidden_from_hit_state(
     }
     if allow_r < or {
         forbidden.push((allow_r + 1, or));
-    }
-}
-
-fn add_block_forbidden_from_hit_state(
-    old_idx: usize,
-    info: OldTimeInfo,
-    new_old_hit: bool,
-    old_new_hit: bool,
-    forbidden: &mut Vec<BlockForbidden>,
-) {
-    let new_old_clear = !new_old_hit;
-    let old_new_clear = !old_new_hit;
-    if new_old_clear && old_new_clear {
-        return;
-    }
-
-    let ol = info.overlap_entry_time_min;
-    let or = info.overlap_entry_time_max;
-    if !new_old_clear && !old_new_clear {
-        forbidden.push(BlockForbidden {
-            old_idx,
-            interval: (ol, or),
-        });
-        return;
-    }
-
-    let (allow_l, allow_r) = if new_old_clear {
-        (
-            (info.old_entry_time + 1).max(ol),
-            (info.old_exit_time - info.new_process_time - 1).min(or),
-        )
-    } else {
-        (
-            (info.old_exit_time - info.new_process_time + 1).max(ol),
-            (info.old_entry_time - 1).min(or),
-        )
-    };
-
-    if allow_l > allow_r {
-        forbidden.push(BlockForbidden {
-            old_idx,
-            interval: (ol, or),
-        });
-        return;
-    }
-    if ol < allow_l {
-        forbidden.push(BlockForbidden {
-            old_idx,
-            interval: (ol, allow_l - 1),
-        });
-    }
-    if allow_r < or {
-        forbidden.push(BlockForbidden {
-            old_idx,
-            interval: (allow_r + 1, or),
-        });
     }
 }
 
