@@ -62,7 +62,7 @@ const MOVE_SAMPLE_BLOCKS: usize = 16;
 const MOVE_SMALL_POOL_SIZE: usize = 8;
 
 const TARDY_EJECT_AREA_POWER: f64 = 1.5;
-const TARDY_EJECT_MAX_REMOVED: usize = 5;
+const TARDY_EJECT_MAX_REMOVED: usize = 4;
 const TARDY_EJECT_MAX_QUEUE: usize = 10;
 const TARDY_EJECT_POOL_SIZE: usize = 16;
 
@@ -1213,7 +1213,7 @@ fn try_tardy_eject_neighbor<R: Random>(
         }
 
         let require_improvement = old.block_id == initial_block_id;
-        let mut result = match search_tardy_eject_insert(
+        let result = search_tardy_eject_insert(
             problem,
             pre,
             old,
@@ -1221,21 +1221,13 @@ fn try_tardy_eject_neighbor<R: Random>(
             &protected,
             require_improvement,
             INSERT_PARAMS,
-        ) {
-            Some(result) => result,
-            None if !require_improvement => {
-                restore_original_no_eject(problem, pre, old, &cur, i64::MAX)?
-            }
-            None => return None,
-        };
+        )?;
 
-        if removed_total + result.removed_ids.len() > TARDY_EJECT_MAX_REMOVED
-            || queue.len() + result.removed_ids.len() > TARDY_EJECT_MAX_QUEUE
-        {
-            if require_improvement {
-                return None;
-            }
-            result = restore_original_no_eject(problem, pre, old, &cur, i64::MAX)?;
+        if removed_total + result.removed_ids.len() > TARDY_EJECT_MAX_REMOVED {
+            return None;
+        }
+        if queue.len() + result.removed_ids.len() > TARDY_EJECT_MAX_QUEUE {
+            return None;
         }
 
         let mut removed_blocks = Vec::with_capacity(result.removed_ids.len());
@@ -1297,13 +1289,6 @@ fn search_tardy_eject_insert(
     let before_tardiness = (original.exit_time - block.due_date).max(0);
     if require_tardiness_improvement && before_tardiness == 0 {
         return None;
-    }
-
-    if !require_tardiness_improvement {
-        if let Some(candidate) = restore_original_no_eject(problem, pre, original, schedule, max_t)
-        {
-            return Some(candidate);
-        }
     }
 
     let mut best: Option<TardyEjectCandidate> = None;
@@ -1464,38 +1449,6 @@ fn search_tardy_eject_insert(
     }
 
     best
-}
-
-fn restore_original_no_eject(
-    problem: &Problem,
-    pre: &Precompute,
-    original: ScheduledBlock,
-    schedule: &[ScheduledBlock],
-    max_t: i64,
-) -> Option<TardyEjectCandidate> {
-    let block = &problem.blocks[original.block_id];
-    let process_t = block.processing_time;
-    let min_t = block.release_time;
-    let tentative = ScheduledBlock {
-        entry_time: min_t,
-        exit_time: min_t + process_t,
-        ..original
-    };
-    let entry_time = get_insert_t(pre, tentative, schedule, min_t, max_t)?;
-    let scheduled = ScheduledBlock {
-        entry_time,
-        exit_time: entry_time + process_t,
-        ..original
-    };
-    let bounds = pre.orientation_bbox_bounds[original.block_id][original.orient_idx];
-    Some(TardyEjectCandidate {
-        scheduled,
-        removed_ids: Vec::new(),
-        removed_area_sum: 0.0,
-        after_tardiness: (scheduled.exit_time - block.due_date).max(0),
-        bbox_right: scheduled.x as f64 + bounds.max_x,
-        bbox_top: scheduled.y as f64 + bounds.max_y,
-    })
 }
 
 fn evaluate_tardy_eject_times(
