@@ -51,7 +51,7 @@ const REMOVE_POOL_FACTOR: usize = 4;
 const REMOVE_SEED_COUNT: usize = 3;
 const REMOVE_RANDOM_SEED_COUNT: usize = 1;
 const REMOVE_NEIGHBOR_POOL_FACTOR: usize = 6;
-const INSERT_PARAMS: InsertSearchParams = InsertSearchParams { x_buffer: 10 };
+const INSERT_PARAMS: InsertSearchParams = InsertSearchParams { y_buffer: 10 };
 
 const SHIFT_MAX_SHIFT_X: i64 = 5;
 const SHIFT_MAX_SHIFT_Y: i64 = 5;
@@ -154,7 +154,7 @@ struct NeighborStats {
 
 #[derive(Clone, Copy)]
 struct InsertSearchParams {
-    x_buffer: i64,
+    y_buffer: i64,
 }
 
 #[derive(Clone, Copy)]
@@ -190,8 +190,8 @@ enum HitDir {
 }
 
 #[derive(Clone, Copy)]
-struct YEvent {
-    y: i64,
+struct XEvent {
+    x: i64,
     old_idx: usize,
     dir: HitDir,
     delta: i8,
@@ -1402,11 +1402,11 @@ fn insert_greedy(
                 orient_idx,
             };
             let bounds = pre.orientation_bbox_bounds[block_id][orient_idx];
-            let mut anchor_x: Option<i64> = None;
+            let mut anchor_y: Option<i64> = None;
 
-            for x in range.min_x..=range.max_x {
-                if let Some(anchor_x) = anchor_x {
-                    if x > anchor_x + params.x_buffer {
+            for y in range.min_y..=range.max_y {
+                if let Some(anchor_y) = anchor_y {
+                    if y > anchor_y + params.y_buffer {
                         break;
                     }
                 }
@@ -1428,40 +1428,40 @@ fn insert_greedy(
 
                     for &(lo, hi) in
                         pre.collision
-                            .crane_dy_intervals(new_orient, old_orient, old.x - x)
+                            .crane_dx_intervals(new_orient, old_orient, old.y - y)
                     {
-                        push_y_event(
-                            old.y - hi,
-                            old.y - lo,
+                        push_x_event(
+                            old.x - hi,
+                            old.x - lo,
                             old_idx,
                             HitDir::NewOld,
-                            range.min_y,
-                            range.max_y,
+                            range.min_x,
+                            range.max_x,
                             &mut events,
                         );
                     }
                     for &(lo, hi) in
                         pre.collision
-                            .crane_dy_intervals(old_orient, new_orient, x - old.x)
+                            .crane_dx_intervals(old_orient, new_orient, y - old.y)
                     {
-                        push_y_event(
-                            old.y + lo,
-                            old.y + hi,
+                        push_x_event(
+                            old.x + lo,
+                            old.x + hi,
                             old_idx,
                             HitDir::OldNew,
-                            range.min_y,
-                            range.max_y,
+                            range.min_x,
+                            range.max_x,
                             &mut events,
                         );
                     }
                 }
 
-                events.sort_unstable_by_key(|event| event.y);
+                events.sort_unstable_by_key(|event| event.x);
                 let mut event_pos = 0;
-                let mut y = range.min_y;
+                let mut x = range.min_x;
                 loop {
-                    while event_pos < events.len() && events[event_pos].y == y {
-                        apply_y_event(
+                    while event_pos < events.len() && events[event_pos].x == x {
+                        apply_x_event(
                             events[event_pos],
                             &mut states,
                             &mut active_old_ids,
@@ -1509,16 +1509,16 @@ fn insert_greedy(
                             best = Some(candidate);
                         }
 
-                        if tardiness <= original_tardiness && anchor_x.is_none() {
-                            anchor_x = Some(x);
+                        if tardiness <= original_tardiness && anchor_y.is_none() {
+                            anchor_y = Some(y);
                         }
                     }
 
                     if event_pos >= events.len() {
                         break;
                     }
-                    y = events[event_pos].y;
-                    if y > range.max_y {
+                    x = events[event_pos].x;
+                    if x > range.max_x {
                         break;
                     }
                 }
@@ -1552,30 +1552,30 @@ fn old_time_info(
     }
 }
 
-fn push_y_event(
+fn push_x_event(
     l: i64,
     r: i64,
     old_idx: usize,
     dir: HitDir,
-    min_y: i64,
-    max_y: i64,
-    events: &mut Vec<YEvent>,
+    min_x: i64,
+    max_x: i64,
+    events: &mut Vec<XEvent>,
 ) {
-    let l = l.max(min_y);
-    let r = r.min(max_y);
+    let l = l.max(min_x);
+    let r = r.min(max_x);
     if l > r {
         return;
     }
 
-    events.push(YEvent {
-        y: l,
+    events.push(XEvent {
+        x: l,
         old_idx,
         dir,
         delta: 1,
     });
-    if let Some(y) = r.checked_add(1) {
-        events.push(YEvent {
-            y,
+    if let Some(x) = r.checked_add(1) {
+        events.push(XEvent {
+            x,
             old_idx,
             dir,
             delta: -1,
@@ -1583,8 +1583,8 @@ fn push_y_event(
     }
 }
 
-fn apply_y_event(
-    event: YEvent,
+fn apply_x_event(
+    event: XEvent,
     states: &mut [HitState],
     active_old_ids: &mut Vec<usize>,
     active_pos: &mut [Option<usize>],

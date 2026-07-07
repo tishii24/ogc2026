@@ -1,5 +1,5 @@
 - 高速化
-  - binary-searchを展開する
+  - dx-intervalsにする
 - targeted-reconstruct
 - reconstructの改善
 - MILPの導入

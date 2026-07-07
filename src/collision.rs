@@ -65,13 +65,13 @@ struct DeltaRange {
 #[derive(Clone, Debug)]
 struct CollisionGrid {
     delta: DeltaRange,
-    column_offsets: Vec<usize>,
+    row_offsets: Vec<usize>,
     intervals: Vec<(i64, i64)>,
 }
 
 struct CollisionGridBuilder {
     delta: DeltaRange,
-    columns: Vec<Vec<(i64, i64)>>,
+    rows: Vec<Vec<(i64, i64)>>,
 }
 
 #[derive(Clone, Debug)]
@@ -152,11 +152,11 @@ impl CollisionPrecompute {
         }
     }
 
-    pub fn crane_dy_intervals(
+    pub fn crane_dx_intervals(
         &self,
         moving: BlockOrient,
         fixed: BlockOrient,
-        dx: i64,
+        dy: i64,
     ) -> &[(i64, i64)] {
         if moving.block_id == fixed.block_id {
             return &[];
@@ -168,7 +168,7 @@ impl CollisionPrecompute {
         let key = moving.orient_idx * pair.fixed_orients + fixed.orient_idx;
         let orient_pair = self.get_or_build_orient_pair(moving, fixed, pair_idx, key);
 
-        orient_pair.crane.dy_intervals(dx)
+        orient_pair.crane.dx_intervals(dy)
     }
 
     fn get_or_build_orient_pair(
@@ -253,15 +253,15 @@ impl Drop for OrientPairCache {
 
 impl CollisionGrid {
     fn get(&self, dx: i64, dy: i64) -> bool {
-        if dy < self.delta.min_dy || self.delta.max_dy < dy {
+        if dx < self.delta.min_dx || self.delta.max_dx < dx {
             return false;
         }
 
-        self.dy_intervals(dx)
+        self.dx_intervals(dy)
             .binary_search_by(|&(lo, hi)| {
-                if dy < lo {
+                if dx < lo {
                     std::cmp::Ordering::Greater
-                } else if hi < dy {
+                } else if hi < dx {
                     std::cmp::Ordering::Less
                 } else {
                     std::cmp::Ordering::Equal
@@ -270,21 +270,21 @@ impl CollisionGrid {
             .is_ok()
     }
 
-    fn dy_intervals(&self, dx: i64) -> &[(i64, i64)] {
-        if dx < self.delta.min_dx || self.delta.max_dx < dx {
+    fn dx_intervals(&self, dy: i64) -> &[(i64, i64)] {
+        if dy < self.delta.min_dy || self.delta.max_dy < dy {
             return &[];
         }
 
-        let col = (dx - self.delta.min_dx) as usize;
-        let begin = self.column_offsets[col];
-        let end = self.column_offsets[col + 1];
+        let row = (dy - self.delta.min_dy) as usize;
+        let begin = self.row_offsets[row];
+        let end = self.row_offsets[row + 1];
         &self.intervals[begin..end]
     }
 }
 
 impl CollisionGridBuilder {
     fn new(range: DeltaRange) -> Self {
-        let width = (range.max_dx - range.min_dx + 1) as usize;
+        let height = (range.max_dy - range.min_dy + 1) as usize;
         Self {
             delta: DeltaRange {
                 min_dx: range.min_dx,
@@ -292,54 +292,54 @@ impl CollisionGridBuilder {
                 min_dy: range.min_dy,
                 max_dy: range.max_dy,
             },
-            columns: vec![Vec::new(); width],
+            rows: vec![Vec::new(); height],
         }
     }
 
-    fn add_interval(&mut self, dx: i64, min_dy: i64, max_dy: i64) {
-        if dx < self.delta.min_dx || self.delta.max_dx < dx {
+    fn add_x_interval(&mut self, dy: i64, min_dx: i64, max_dx: i64) {
+        if dy < self.delta.min_dy || self.delta.max_dy < dy {
             return;
         }
-        let min_dy = min_dy.max(self.delta.min_dy);
-        let max_dy = max_dy.min(self.delta.max_dy);
-        if min_dy > max_dy {
+        let min_dx = min_dx.max(self.delta.min_dx);
+        let max_dx = max_dx.min(self.delta.max_dx);
+        if min_dx > max_dx {
             return;
         }
-        self.columns[(dx - self.delta.min_dx) as usize].push((min_dy, max_dy));
+        self.rows[(dy - self.delta.min_dy) as usize].push((min_dx, max_dx));
     }
 
     fn add_grid(&mut self, grid: &CollisionGrid) {
-        for col in 0..(grid.delta.max_dx - grid.delta.min_dx + 1) as usize {
-            let dx = grid.delta.min_dx + col as i64;
-            let begin = grid.column_offsets[col];
-            let end = grid.column_offsets[col + 1];
+        for row in 0..(grid.delta.max_dy - grid.delta.min_dy + 1) as usize {
+            let dy = grid.delta.min_dy + row as i64;
+            let begin = grid.row_offsets[row];
+            let end = grid.row_offsets[row + 1];
             for &(lo, hi) in &grid.intervals[begin..end] {
-                self.add_interval(dx, lo, hi);
+                self.add_x_interval(dy, lo, hi);
             }
         }
     }
 
     fn add_reversed_grid(&mut self, grid: &CollisionGrid) {
-        for col in 0..(grid.delta.max_dx - grid.delta.min_dx + 1) as usize {
-            let dx = grid.delta.min_dx + col as i64;
-            let begin = grid.column_offsets[col];
-            let end = grid.column_offsets[col + 1];
+        for row in 0..(grid.delta.max_dy - grid.delta.min_dy + 1) as usize {
+            let dy = grid.delta.min_dy + row as i64;
+            let begin = grid.row_offsets[row];
+            let end = grid.row_offsets[row + 1];
             for &(lo, hi) in &grid.intervals[begin..end] {
-                self.add_interval(-dx, -hi, -lo);
+                self.add_x_interval(-dy, -hi, -lo);
             }
         }
     }
 
     fn finish(mut self) -> CollisionGrid {
-        let mut column_offsets = Vec::with_capacity(self.columns.len() + 1);
+        let mut row_offsets = Vec::with_capacity(self.rows.len() + 1);
         let mut intervals: Vec<(i64, i64)> = Vec::new();
-        column_offsets.push(0);
+        row_offsets.push(0);
 
-        for col in &mut self.columns {
-            col.sort_unstable();
-            let col_start = intervals.len();
-            for &(lo, hi) in col.iter() {
-                if intervals.len() > col_start {
+        for row in &mut self.rows {
+            row.sort_unstable();
+            let row_start = intervals.len();
+            for &(lo, hi) in row.iter() {
+                if intervals.len() > row_start {
                     let last = intervals.last_mut().unwrap();
                     if lo <= last.1 + 1 {
                         last.1 = last.1.max(hi);
@@ -348,7 +348,7 @@ impl CollisionGridBuilder {
                 }
                 intervals.push((lo, hi));
             }
-            column_offsets.push(intervals.len());
+            row_offsets.push(intervals.len());
         }
 
         CollisionGrid {
@@ -358,7 +358,7 @@ impl CollisionGridBuilder {
                 min_dy: self.delta.min_dy,
                 max_dy: self.delta.max_dy,
             },
-            column_offsets,
+            row_offsets,
             intervals,
         }
     }
@@ -747,20 +747,20 @@ fn rasterize_convex_pair(builder: &mut CollisionGridBuilder, a: ConvexPart, b: C
     let hull = minkowski_difference_hull(a, b);
     assert!(hull.len >= 3, "failed to build Minkowski difference hull");
 
-    let mut min_x = f64::INFINITY;
-    let mut max_x = f64::NEG_INFINITY;
+    let mut min_y = f64::INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
     for i in 0..hull.len {
-        min_x = min_x.min(hull.points[i].x);
-        max_x = max_x.max(hull.points[i].x);
+        min_y = min_y.min(hull.points[i].y);
+        max_y = max_y.max(hull.points[i].y);
     }
-    let min_dx = (min_x - AREA_EPS).ceil() as i64;
-    let max_dx = (max_x + AREA_EPS).floor() as i64;
-    let min_dx = min_dx.max(builder.delta.min_dx);
-    let max_dx = max_dx.min(builder.delta.max_dx);
+    let min_dy = (min_y - AREA_EPS).ceil() as i64;
+    let max_dy = (max_y + AREA_EPS).floor() as i64;
+    let min_dy = min_dy.max(builder.delta.min_dy);
+    let max_dy = max_dy.min(builder.delta.max_dy);
 
-    for dx in min_dx..=max_dx {
-        if let Some((min_dy, max_dy)) = vertical_slice_conservative(&hull, dx) {
-            builder.add_interval(dx, min_dy, max_dy);
+    for dy in min_dy..=max_dy {
+        if let Some((min_dx, max_dx)) = horizontal_slice_conservative(&hull, dy) {
+            builder.add_x_interval(dy, min_dx, max_dx);
         }
     }
 }
@@ -842,8 +842,8 @@ fn rotated_edge(points: &[Pointf], len: usize, start: usize, offset: usize) -> P
     }
 }
 
-fn vertical_slice_conservative(poly: &ConvexPolygon, dx: i64) -> Option<(i64, i64)> {
-    let x = dx as f64;
+fn horizontal_slice_conservative(poly: &ConvexPolygon, dy: i64) -> Option<(i64, i64)> {
+    let y = dy as f64;
     let mut low = f64::NEG_INFINITY;
     let mut high = f64::INFINITY;
 
@@ -852,21 +852,21 @@ fn vertical_slice_conservative(poly: &ConvexPolygon, dx: i64) -> Option<(i64, i6
         let q = poly.points[(i + 1) % poly.len];
         let ex = q.x - p.x;
         let ey = q.y - p.y;
-        let rhs = ey * (x - p.x);
+        let rhs = ex * (y - p.y);
 
-        if ex > AREA_EPS {
-            low = low.max(p.y + rhs / ex);
-        } else if ex < -AREA_EPS {
-            high = high.min(p.y + rhs / ex);
-        } else if -ey * (x - p.x) < -AREA_EPS {
+        if ey > AREA_EPS {
+            high = high.min(p.x + rhs / ey);
+        } else if ey < -AREA_EPS {
+            low = low.max(p.x + rhs / ey);
+        } else if ex * (y - p.y) < -AREA_EPS {
             return None;
         }
     }
 
-    let min_dy = (low - AREA_EPS).ceil() as i64;
-    let max_dy = (high + AREA_EPS).floor() as i64;
-    if min_dy <= max_dy {
-        Some((min_dy, max_dy))
+    let min_dx = (low - AREA_EPS).ceil() as i64;
+    let max_dx = (high + AREA_EPS).floor() as i64;
+    if min_dx <= max_dx {
+        Some((min_dx, max_dx))
     } else {
         None
     }
