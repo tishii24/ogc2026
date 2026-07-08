@@ -1,10 +1,13 @@
+- 高速化
+- safety
+- チューニング
+
+todo:
+- kick
 - targeted-reconstruct
 - reconstructの改善
   - obj2を軽視する
-- 高速化
 - MILPの導入
-- safety
-- チューニング
 
 safety:
 - 定期的にpy側でfeasibilityをチェックする
@@ -26,20 +29,12 @@ precompute:
 
 solver:
 - 初期解改善
-- reconstructの改善
-  - obj2を軽視する
-- bestを取ってくるときにkickの追加
-- 小さい近傍の追加
-- 大域的最適化
-  - obj2,obj3の下界を求めて、それに合わせてbay-idを決める
-  - bay-idの割り当てを事前に山登りする
-  - obj2は最後でだけ気にする
 - 高速化
   - insert-greedy
 - 調整
   - start-temp,end-tempの推定
   - dx,dyをnon-positiveに限定する
-  - パラメータ
+  - パラメータ調整
 - 強い最適化
   - packing-scoreの計算（bboxの重なりなど）
   - 重なっている面積が少なくなる方に動かす
