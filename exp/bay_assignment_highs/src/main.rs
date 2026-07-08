@@ -6,6 +6,8 @@ use std::io::{self, Read};
 use std::num::NonZero;
 use std::time::Instant;
 
+const FLOOR_EPS: f64 = 1e-6;
+
 #[derive(Debug, Deserialize)]
 struct Problem {
     bays: Vec<Bay>,
@@ -124,11 +126,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // z2 >= 0
+    // z2 = floor(max |A_j - A_k|) を表す整数変数
     //
     // objective coefficient:
     //   w2
-    let z2_col = pb.add_column(prob.weights.w2, 0.0..);
+    let z2_col = pb.add_integer_column(prob.weights.w2, 0.0..);
 
     // 各 block はちょうど 1 bay に割り当てる
     //
@@ -139,12 +141,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         pb.add_row(1.0..=1.0, &row);
     }
 
-    // z2 >= |A_j - A_k|
+    // z2 = floor(max |A_j - A_k|)
     //
     // A_j = u_j * Σ_i workload_i * x_ij
     //
-    // A_j - A_k - z2 <= 0
-    // A_k - A_j - z2 <= 0
+    // floor(|A_j - A_k|) <= z2 を EPS 近似で表す:
+    // A_j - A_k - z2 <= 1 - FLOOR_EPS
+    // A_k - A_j - z2 <= 1 - FLOOR_EPS
     for j in 0..m {
         for k in (j + 1)..m {
             let mut row_pos = Vec::with_capacity(2 * n + 1);
@@ -154,11 +157,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let wj = u[j] * prob.blocks[i].workload;
                 let wk = u[k] * prob.blocks[i].workload;
 
-                // A_j - A_k - z2 <= 0
+                // A_j - A_k - z2 <= 1 - FLOOR_EPS
                 row_pos.push((x[i][j], wj));
                 row_pos.push((x[i][k], -wk));
 
-                // A_k - A_j - z2 <= 0
+                // A_k - A_j - z2 <= 1 - FLOOR_EPS
                 row_neg.push((x[i][j], -wj));
                 row_neg.push((x[i][k], wk));
             }
@@ -166,8 +169,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             row_pos.push((z2_col, -1.0));
             row_neg.push((z2_col, -1.0));
 
-            pb.add_row(..=0.0, &row_pos);
-            pb.add_row(..=0.0, &row_neg);
+            pb.add_row(..=1.0 - FLOOR_EPS, &row_pos);
+            pb.add_row(..=1.0 - FLOOR_EPS, &row_neg);
         }
     }
 
@@ -215,7 +218,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect();
 
-    let z2 = solution[z2_col];
+    let mut z2_raw: f64 = 0.0;
+    for j in 0..m {
+        for k in (j + 1)..m {
+            z2_raw = z2_raw.max((normalized_load[j] - normalized_load[k]).abs());
+        }
+    }
+    let z2 = z2_raw.floor();
 
     let z3: f64 = (0..n).map(|i| pref_penalty[i][assignment[i]]).sum();
 
@@ -231,10 +240,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!("{}", serde_json::to_string(&output)?);
-
     println!("Elapsed: {}ms", start.elapsed().as_millis());
-
-    println!("diff: {}", prob.weights.w2 * (z2 - z2.floor()));
 
     Ok(())
 }

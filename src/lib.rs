@@ -1,5 +1,6 @@
 pub mod collision;
 pub mod precompute;
+pub mod preoptimize;
 pub mod solver;
 pub mod util;
 pub mod vis;
