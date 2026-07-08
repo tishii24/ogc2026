@@ -1,7 +1,7 @@
-- 高速化
-  - dx-intervalsにする
+- (x,y,t)空間での距離でブロックを削除
 - targeted-reconstruct
 - reconstructの改善
+- 高速化
 - MILPの導入
 - safety
 - チューニング

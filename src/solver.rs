@@ -50,7 +50,7 @@ const MAX_REMOVED_BLOCKS: usize = 13;
 const REMOVE_POOL_FACTOR: usize = 4;
 const REMOVE_SEED_COUNT: usize = 3;
 const REMOVE_RANDOM_SEED_COUNT: usize = 1;
-const REMOVE_NEIGHBOR_POOL_FACTOR: usize = 6;
+const REMOVE_TIME_DISTANCE_WEIGHT: f64 = 1.0;
 const INSERT_PARAMS: InsertSearchParams = InsertSearchParams { y_buffer: 10 };
 
 const SHIFT_MAX_SHIFT_X: i64 = 5;
@@ -1227,6 +1227,7 @@ fn choose_removed_blocks<R: Random>(
         let seeds_left = seeds.len() - seed_index;
         let need = (k - selected.len() + seeds_left - 1) / seeds_left;
         let (sx, sy) = scheduled_center(pre, seed);
+        let st = seed.entry_time as f64;
         let mut neighbors: Vec<(f64, usize)> = schedule
             .iter()
             .filter(|s| s.bay_id == seed.bay_id && !used[s.block_id])
@@ -1234,18 +1235,15 @@ fn choose_removed_blocks<R: Random>(
                 let (x, y) = scheduled_center(pre, s);
                 let dx = x - sx;
                 let dy = y - sy;
-                (dx * dx + dy * dy, s.block_id)
+                let dt = s.entry_time as f64 - st;
+                (
+                    dx * dx + dy * dy + REMOVE_TIME_DISTANCE_WEIGHT * dt * dt,
+                    s.block_id,
+                )
             })
             .collect();
         neighbors.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        let pool_len = (need * REMOVE_NEIGHBOR_POOL_FACTOR).min(neighbors.len());
-        let mut neighbor_ids: Vec<usize> = neighbors
-            .into_iter()
-            .take(pool_len)
-            .map(|(_, block_id)| block_id)
-            .collect();
-        rng.shuffle(&mut neighbor_ids);
-        for block_id in neighbor_ids.into_iter().take(need) {
+        for (_, block_id) in neighbors.into_iter().take(need) {
             push_selected(&mut selected, &mut used, block_id, k);
         }
     }
