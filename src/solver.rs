@@ -50,7 +50,8 @@ const MAX_REMOVED_BLOCKS: usize = 13;
 const REMOVE_POOL_FACTOR: usize = 4;
 const REMOVE_SEED_COUNT: usize = 3;
 const REMOVE_RANDOM_SEED_COUNT: usize = 1;
-const REMOVE_TIME_DISTANCE_WEIGHT: f64 = 1.0;
+const REMOVE_X_DISTANCE_WEIGHT_MAX: f64 = 3.0;
+const REMOVE_Y_DISTANCE_WEIGHT_MAX: f64 = 3.0;
 const INSERT_PARAMS: InsertSearchParams = InsertSearchParams { y_buffer: 10 };
 
 const SHIFT_MAX_SHIFT_X: i64 = 5;
@@ -1162,6 +1163,9 @@ fn choose_removed_blocks<R: Random>(
     }
     let heavy_bay = most_loaded_bay(pre, &loads);
 
+    let remove_x_distance_weight = rng.gen_rangef(0.0, REMOVE_X_DISTANCE_WEIGHT_MAX);
+    let remove_y_distance_weight = rng.gen_rangef(0.0, REMOVE_Y_DISTANCE_WEIGHT_MAX);
+
     let mut badness = vec![0i64; problem.blocks.len()];
     for s in schedule {
         let block = &problem.blocks[s.block_id];
@@ -1237,7 +1241,9 @@ fn choose_removed_blocks<R: Random>(
                 let dy = y - sy;
                 let dt = s.entry_time as f64 - st;
                 (
-                    dx * dx + dy * dy + REMOVE_TIME_DISTANCE_WEIGHT * dt * dt,
+                    remove_x_distance_weight * dx * dx
+                        + remove_y_distance_weight * dy * dy
+                        + dt * dt,
                     s.block_id,
                 )
             })
