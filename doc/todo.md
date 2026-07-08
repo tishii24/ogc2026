@@ -1,6 +1,6 @@
-- (x,y,t)空間での距離でブロックを削除
 - targeted-reconstruct
 - reconstructの改善
+  - obj2を軽視する
 - 高速化
 - MILPの導入
 - safety
