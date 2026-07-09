@@ -40,7 +40,7 @@ const INITIAL_GOOD_WEIGHT_POOL_SIZE: usize = 32;
 const INITIAL_EXPLOIT_PROB: f64 = 0.25;
 const INITIAL_WEIGHT_MUTATION_SCALE: f64 = 0.2;
 
-const MIN_REMOVED_BLOCKS: usize = 7;
+const MIN_REMOVED_BLOCKS: usize = 3;
 const MAX_REMOVED_BLOCKS: usize = 13;
 const REMOVE_POOL_FACTOR: usize = 4;
 const REMOVE_SEED_COUNT: usize = 3;
@@ -1363,6 +1363,21 @@ fn insert_greedy(
                 orient_idx,
             };
             let bounds = pre.orientation_bbox_bounds[block_id][orient_idx];
+            let crane_pair_cache: Vec<_> = bay_old_blocks
+                .iter()
+                .enumerate()
+                .map(|(old_idx, old)| {
+                    if old_time_infos[old_idx].is_none() {
+                        return None;
+                    }
+                    let old_orient = BlockOrient {
+                        block_id: old.block_id,
+                        orient_idx: old.orient_idx,
+                    };
+                    pre.collision
+                        .crane_pairs_both_directions(new_orient, old_orient)
+                })
+                .collect();
             let mut anchor_y: Option<i64> = None;
 
             for y in range.min_y..=range.max_y {
@@ -1382,15 +1397,11 @@ fn insert_greedy(
                         continue;
                     }
 
-                    let old_orient = BlockOrient {
-                        block_id: old.block_id,
-                        orient_idx: old.orient_idx,
+                    let Some((new_old_pair, old_new_pair)) = crane_pair_cache[old_idx] else {
+                        continue;
                     };
 
-                    for &(lo, hi) in
-                        pre.collision
-                            .crane_dx_intervals(new_orient, old_orient, old.y - y)
-                    {
+                    for &(lo, hi) in new_old_pair.crane.dx_intervals(old.y - y) {
                         push_x_event(
                             old.x - hi,
                             old.x - lo,
@@ -1401,10 +1412,7 @@ fn insert_greedy(
                             &mut events,
                         );
                     }
-                    for &(lo, hi) in
-                        pre.collision
-                            .crane_dx_intervals(old_orient, new_orient, y - old.y)
-                    {
+                    for &(lo, hi) in old_new_pair.crane.dx_intervals(y - old.y) {
                         push_x_event(
                             old.x + lo,
                             old.x + hi,

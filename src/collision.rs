@@ -59,7 +59,7 @@ struct DeltaRange {
 }
 
 #[derive(Clone, Debug)]
-struct CollisionGrid {
+pub struct CollisionGrid {
     delta: DeltaRange,
     row_offsets: Vec<usize>,
     intervals: Vec<(i64, i64)>,
@@ -71,8 +71,8 @@ struct CollisionGridBuilder {
 }
 
 #[derive(Clone, Debug)]
-struct OrientPairCollision {
-    crane: CollisionGrid,
+pub struct OrientPairCollision {
+    pub crane: CollisionGrid,
 }
 
 struct OrientPairCache {
@@ -148,23 +148,45 @@ impl CollisionPrecompute {
         }
     }
 
-    pub fn crane_dx_intervals(
+    #[inline]
+    pub fn crane_pair(
         &self,
         moving: BlockOrient,
         fixed: BlockOrient,
-        dy: i64,
-    ) -> &[(i64, i64)] {
+    ) -> Option<&OrientPairCollision> {
         if moving.block_id == fixed.block_id {
-            return &[];
+            return None;
         }
 
         let pair_idx = self.block_pair_index[moving.block_id * self.n + fixed.block_id]
             .expect("collision block pair should be precomputed");
         let pair = &self.block_pairs[pair_idx];
         let key = moving.orient_idx * pair.fixed_orients + fixed.orient_idx;
-        let orient_pair = self.get_or_build_orient_pair(moving, fixed, pair_idx, key);
+        Some(self.get_or_build_orient_pair(moving, fixed, pair_idx, key))
+    }
 
-        orient_pair.crane.dx_intervals(dy)
+    #[inline]
+    pub fn crane_pairs_both_directions(
+        &self,
+        a: BlockOrient,
+        b: BlockOrient,
+    ) -> Option<(&OrientPairCollision, &OrientPairCollision)> {
+        let ab = self.crane_pair(a, b)?;
+        let ba = self.crane_pair(b, a)?;
+        Some((ab, ba))
+    }
+
+    #[inline]
+    pub fn crane_dx_intervals(
+        &self,
+        moving: BlockOrient,
+        fixed: BlockOrient,
+        dy: i64,
+    ) -> &[(i64, i64)] {
+        match self.crane_pair(moving, fixed) {
+            Some(pair) => pair.crane.dx_intervals(dy),
+            None => &[],
+        }
     }
 
     fn get_or_build_orient_pair(
@@ -266,7 +288,8 @@ impl CollisionGrid {
             .is_ok()
     }
 
-    fn dx_intervals(&self, dy: i64) -> &[(i64, i64)] {
+    #[inline]
+    pub fn dx_intervals(&self, dy: i64) -> &[(i64, i64)] {
         if dy < self.delta.min_dy || self.delta.max_dy < dy {
             return &[];
         }
