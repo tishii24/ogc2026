@@ -5,8 +5,6 @@ use std::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 const AREA_EPS: f64 = 1e-3;
-const MAX_CONVEX_VERTS: usize = 16;
-const MAX_MINKOWSKI_POINTS: usize = MAX_CONVEX_VERTS * MAX_CONVEX_VERTS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CollisionResult {
@@ -28,16 +26,14 @@ pub struct BlockOrient {
     pub orient_idx: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct ConvexPart {
-    points: [Pointf; MAX_CONVEX_VERTS],
-    len: usize,
+    points: Vec<Pointf>,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct ConvexPolygon {
-    points: [Pointf; MAX_MINKOWSKI_POINTS],
-    len: usize,
+struct ConvexScratch {
+    neg_b: Vec<Pointf>,
+    hull: Vec<Pointf>,
 }
 
 #[derive(Clone, Debug)]
@@ -451,7 +447,7 @@ fn build_convex_parts(points: &[Pointf]) -> Vec<ConvexPart> {
 }
 
 fn is_convex_polygon(points: &[Pointf]) -> bool {
-    if points.len() < 3 || points.len() > MAX_CONVEX_VERTS {
+    if points.len() < 3 {
         return false;
     }
     let area = signed_area(points);
@@ -598,21 +594,14 @@ fn point_on_segment(p: Pointf, a: Pointf, b: Pointf) -> bool {
 }
 
 fn make_convex_part(points: &[Pointf]) -> ConvexPart {
-    assert!(points.len() >= 3 && points.len() <= MAX_CONVEX_VERTS);
-    let mut part_points = [Pointf { x: 0.0, y: 0.0 }; MAX_CONVEX_VERTS];
-    let len = points.len();
-    if signed_area(points) >= 0.0 {
-        part_points[..len].copy_from_slice(points);
+    assert!(points.len() >= 3);
+    let points = if signed_area(points) >= 0.0 {
+        points.to_vec()
     } else {
-        for i in 0..len {
-            part_points[i] = points[len - 1 - i];
-        }
-    }
+        points.iter().rev().copied().collect()
+    };
 
-    ConvexPart {
-        points: part_points,
-        len,
-    }
+    ConvexPart { points }
 }
 
 fn signed_area(points: &[Pointf]) -> f64 {
@@ -733,25 +722,34 @@ fn build_crane_grids_both_directions(
 
 fn build_layer_pair_grid(a: &PolyLayer, b: &PolyLayer) -> CollisionGrid {
     let mut builder = CollisionGridBuilder::new(delta_range(a.bbox, b.bbox));
+    let mut scratch = ConvexScratch {
+        neg_b: Vec::new(),
+        hull: Vec::new(),
+    };
 
-    for &pa in &a.parts {
-        for &pb in &b.parts {
-            rasterize_convex_pair(&mut builder, pa, pb);
+    for pa in &a.parts {
+        for pb in &b.parts {
+            rasterize_convex_pair(&mut builder, pa, pb, &mut scratch);
         }
     }
 
     builder.finish()
 }
 
-fn rasterize_convex_pair(builder: &mut CollisionGridBuilder, a: ConvexPart, b: ConvexPart) {
-    let hull = minkowski_difference_hull(a, b);
-    assert!(hull.len >= 3, "failed to build Minkowski difference hull");
+fn rasterize_convex_pair(
+    builder: &mut CollisionGridBuilder,
+    a: &ConvexPart,
+    b: &ConvexPart,
+    scratch: &mut ConvexScratch,
+) {
+    let hull = minkowski_difference_hull(a, b, scratch);
+    assert!(hull.len() >= 3, "failed to build Minkowski difference hull");
 
     let mut min_y = f64::INFINITY;
     let mut max_y = f64::NEG_INFINITY;
-    for i in 0..hull.len {
-        min_y = min_y.min(hull.points[i].y);
-        max_y = max_y.max(hull.points[i].y);
+    for &p in hull {
+        min_y = min_y.min(p.y);
+        max_y = max_y.max(p.y);
     }
     let min_dy = (min_y - AREA_EPS).ceil() as i64;
     let max_dy = (max_y + AREA_EPS).floor() as i64;
@@ -759,68 +757,72 @@ fn rasterize_convex_pair(builder: &mut CollisionGridBuilder, a: ConvexPart, b: C
     let max_dy = max_dy.min(builder.delta.max_dy);
 
     for dy in min_dy..=max_dy {
-        if let Some((min_dx, max_dx)) = horizontal_slice_conservative(&hull, dy) {
+        if let Some((min_dx, max_dx)) = horizontal_slice_conservative(hull, dy) {
             builder.add_x_interval(dy, min_dx, max_dx);
         }
     }
 }
 
-fn minkowski_difference_hull(a: ConvexPart, b: ConvexPart) -> ConvexPolygon {
-    let mut neg_b = [Pointf { x: 0.0, y: 0.0 }; MAX_CONVEX_VERTS];
-    for (dst, src) in neg_b.iter_mut().zip(b.points.iter()).take(b.len) {
-        *dst = Pointf {
-            x: -src.x,
-            y: -src.y,
-        };
-    }
+fn minkowski_difference_hull<'a>(
+    a: &ConvexPart,
+    b: &ConvexPart,
+    scratch: &'a mut ConvexScratch,
+) -> &'a [Pointf] {
+    scratch.neg_b.clear();
+    scratch.neg_b.reserve(b.points.len());
+    scratch
+        .neg_b
+        .extend(b.points.iter().map(|&p| Pointf { x: -p.x, y: -p.y }));
 
-    let start_a = lowest_leftmost_index(&a.points, a.len);
-    let start_b = lowest_leftmost_index(&neg_b, b.len);
-    let mut points = [Pointf { x: 0.0, y: 0.0 }; MAX_MINKOWSKI_POINTS];
-    let mut len = 1;
+    let a_points = a.points.as_slice();
+    let b_points = scratch.neg_b.as_slice();
+    let start_a = lowest_leftmost_index(a_points);
+    let start_b = lowest_leftmost_index(b_points);
+
+    scratch.hull.clear();
+    scratch.hull.reserve(a_points.len() + b_points.len());
     let mut cur = Pointf {
-        x: a.points[start_a].x + neg_b[start_b].x,
-        y: a.points[start_a].y + neg_b[start_b].y,
+        x: a_points[start_a].x + b_points[start_b].x,
+        y: a_points[start_a].y + b_points[start_b].y,
     };
-    points[0] = cur;
+    scratch.hull.push(cur);
 
     let mut ia = 0;
     let mut ib = 0;
-    while ia < a.len || ib < b.len {
-        let take_a = if ib == b.len {
+    while ia < a_points.len() || ib < b_points.len() {
+        let take_a = if ib == b_points.len() {
             true
-        } else if ia == a.len {
+        } else if ia == a_points.len() {
             false
         } else {
-            let ea = rotated_edge(&a.points, a.len, start_a, ia);
-            let eb = rotated_edge(&neg_b, b.len, start_b, ib);
+            let ea = rotated_edge(a_points, start_a, ia);
+            let eb = rotated_edge(b_points, start_b, ib);
             ea.x * eb.y - ea.y * eb.x >= 0.0
         };
 
         let edge = if take_a {
-            let edge = rotated_edge(&a.points, a.len, start_a, ia);
+            let edge = rotated_edge(a_points, start_a, ia);
             ia += 1;
             edge
         } else {
-            let edge = rotated_edge(&neg_b, b.len, start_b, ib);
+            let edge = rotated_edge(b_points, start_b, ib);
             ib += 1;
             edge
         };
 
         cur.x += edge.x;
         cur.y += edge.y;
-        if ia < a.len || ib < b.len {
-            points[len] = cur;
-            len += 1;
+        if ia < a_points.len() || ib < b_points.len() {
+            scratch.hull.push(cur);
         }
     }
 
-    ConvexPolygon { points, len }
+    scratch.hull.as_slice()
 }
 
-fn lowest_leftmost_index(points: &[Pointf], len: usize) -> usize {
+fn lowest_leftmost_index(points: &[Pointf]) -> usize {
     let mut best = 0;
-    for i in 1..len {
+    for i in 1..points.len() {
         if points[i]
             .y
             .total_cmp(&points[best].y)
@@ -833,7 +835,8 @@ fn lowest_leftmost_index(points: &[Pointf], len: usize) -> usize {
     best
 }
 
-fn rotated_edge(points: &[Pointf], len: usize, start: usize, offset: usize) -> Pointf {
+fn rotated_edge(points: &[Pointf], start: usize, offset: usize) -> Pointf {
+    let len = points.len();
     let i = (start + offset) % len;
     let j = (start + offset + 1) % len;
     Pointf {
@@ -842,14 +845,14 @@ fn rotated_edge(points: &[Pointf], len: usize, start: usize, offset: usize) -> P
     }
 }
 
-fn horizontal_slice_conservative(poly: &ConvexPolygon, dy: i64) -> Option<(i64, i64)> {
+fn horizontal_slice_conservative(poly: &[Pointf], dy: i64) -> Option<(i64, i64)> {
     let y = dy as f64;
     let mut low = f64::NEG_INFINITY;
     let mut high = f64::INFINITY;
 
-    for i in 0..poly.len {
-        let p = poly.points[i];
-        let q = poly.points[(i + 1) % poly.len];
+    for i in 0..poly.len() {
+        let p = poly[i];
+        let q = poly[(i + 1) % poly.len()];
         let ex = q.x - p.x;
         let ey = q.y - p.y;
         let rhs = ex * (y - p.y);
@@ -968,11 +971,11 @@ mod tests {
         let dx_f = dx as f64;
         let dy_f = dy as f64;
 
-        for &pa in &a.parts {
-            for &pb in &b.parts {
+        for pa in &a.parts {
+            for pb in &b.parts {
                 if !bbox_may_overlap(
-                    bbox_of_point_slice(&pa.points[..pa.len]),
-                    bbox_of_point_slice(&pb.points[..pb.len]),
+                    bbox_of_point_slice(&pa.points),
+                    bbox_of_point_slice(&pb.points),
                     dx,
                     dy,
                 ) {
@@ -986,28 +989,33 @@ mod tests {
         false
     }
 
-    fn convex_parts_overlap_area_positive(a: ConvexPart, b: ConvexPart, dx: f64, dy: f64) -> bool {
-        for i in 0..a.len {
-            let axis = edge_normal(a.points[i], a.points[(i + 1) % a.len]);
+    fn convex_parts_overlap_area_positive(
+        a: &ConvexPart,
+        b: &ConvexPart,
+        dx: f64,
+        dy: f64,
+    ) -> bool {
+        for i in 0..a.points.len() {
+            let axis = edge_normal(a.points[i], a.points[(i + 1) % a.points.len()]);
             if axis.x.abs() <= AREA_EPS && axis.y.abs() <= AREA_EPS {
                 continue;
             }
-            let (amin, amax) = project_point_slice(&a.points[..a.len], axis);
+            let (amin, amax) = project_point_slice(&a.points, axis);
             let (bmin, bmax) = project_convex_part(b, axis, dx, dy);
             if amax <= bmin + AREA_EPS || bmax <= amin + AREA_EPS {
                 return false;
             }
         }
 
-        for i in 0..b.len {
-            let axis = edge_normal(b.points[i], b.points[(i + 1) % b.len]);
+        for i in 0..b.points.len() {
+            let axis = edge_normal(b.points[i], b.points[(i + 1) % b.points.len()]);
             if axis.x.abs() <= AREA_EPS && axis.y.abs() <= AREA_EPS {
                 continue;
             }
             let shift = dx * axis.x + dy * axis.y;
-            let (bmin0, bmax0) = project_point_slice(&b.points[..b.len], axis);
+            let (bmin0, bmax0) = project_point_slice(&b.points, axis);
             let (bmin, bmax) = (bmin0 + shift, bmax0 + shift);
-            let (amin, amax) = project_point_slice(&a.points[..a.len], axis);
+            let (amin, amax) = project_point_slice(&a.points, axis);
             if amax <= bmin + AREA_EPS || bmax <= amin + AREA_EPS {
                 return false;
             }
@@ -1022,8 +1030,8 @@ mod tests {
         Pointf { x: -ey, y: ex }
     }
 
-    fn project_convex_part(part: ConvexPart, axis: Pointf, dx: f64, dy: f64) -> (f64, f64) {
-        let (min, max) = project_point_slice(&part.points[..part.len], axis);
+    fn project_convex_part(part: &ConvexPart, axis: Pointf, dx: f64, dy: f64) -> (f64, f64) {
+        let (min, max) = project_point_slice(&part.points, axis);
         let shift = dx * axis.x + dy * axis.y;
         (min + shift, max + shift)
     }

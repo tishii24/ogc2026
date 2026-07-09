@@ -10,14 +10,13 @@ todo:
 - チューニング
 
 safety:
-- 定期的にpy側でfeasibilityをチェックする
-  - check-feasibilityの高速化
-- 空のblockがある場合の検証
+- 定期的・最後にpy側にいくつかの解を返して、check-feasibilityをする
+  - todo: check-feasibilityの高速化
 - AIチェック
-  - panicを排除する
+- panicを排除する
+  - 空のblockがある場合（2点しかない場合）
   - fallback
-- py側にいくつか解を返して、feasibilityをチェックする
-- 固定長配列をやめる
+  - 固定長配列をやめる
 
 precompute:
 - 衝突判定の高速化
@@ -36,16 +35,15 @@ solver:
 - 強い最適化
   - packing-scoreの計算（bboxの重なりなど）
   - 重なっている面積が少なくなる方に動かす
+
+other:
+- 全てのケースで評価
+- データ拡張
+- 時間を延ばして評価
+- スコア遷移を見る
+
+pending:
 - 同時刻の操作順を考慮する
   - block-id順で出す、とすれば半分くらいは考慮できる
 - 取り出す時刻を変えてABBA <->　ABABを入れ替える
   - change-entry-tの追加
-
-stats:
-- ベストを一番下に表示
-
-other:
-- 全てのケースで評価
-- ケースをaugmentationして評価
-- 時間を延ばして評価
-- スコア遷移を見る
