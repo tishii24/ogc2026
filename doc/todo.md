@@ -17,9 +17,7 @@ safety:
   - panicを排除する
   - fallback
 - py側にいくつか解を返して、feasibilityをチェックする
-- 縦長のbayではxとyを入れ替える
 - 固定長配列をやめる
-- orient-indexの確認
 
 precompute:
 - 衝突判定の高速化
