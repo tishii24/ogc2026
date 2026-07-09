@@ -27,6 +27,12 @@ def parse_args() -> argparse.Namespace:
         "--suite",
         help='Only summarize cases in suite JSON. Format: {"cases": ["train/prob_1.json", ...]}',
     )
+    parser.add_argument(
+        "-t",
+        "--tl",
+        type=float,
+        help="Only summarize rows with this timelimit.",
+    )
     return parser.parse_args()
 
 
@@ -94,6 +100,10 @@ def parse_float(value: str) -> float | None:
 
 def parse_bool(value: str) -> bool:
     return str(value).lower() in {"true", "1", "yes"}
+
+
+def same_timelimit(a: float, b: float) -> bool:
+    return abs(a - b) < 1e-9
 
 
 def format_number(value: float) -> str:
@@ -481,6 +491,13 @@ def main() -> int:
         rows = list(csv.DictReader(f))
 
     rows = latest_rows(rows)
+    if args.tl is not None:
+        rows = [
+            row
+            for row in rows
+            if (tl := parse_float(row.get("timelimit", ""))) is not None
+            and same_timelimit(tl, args.tl)
+        ]
     if suite_cases is not None:
         suite_case_set = set(suite_cases)
         rows = [row for row in rows if row.get("case", "") in suite_case_set]

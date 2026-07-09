@@ -1,3 +1,4 @@
+/*
 use std::num::NonZero;
 
 use highs::{HighsModelStatus, RowProblem, Sense};
@@ -174,3 +175,4 @@ fn optimize_bay_assignment_highs(
         normalized_load,
     })
 }
+*/

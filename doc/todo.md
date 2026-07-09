@@ -1,3 +1,5 @@
+- 探索の改善
+  - tardinessがある間はobj2,obj3を軽視する
 - 高速化
 - safety
 - チューニング

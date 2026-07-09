@@ -29,8 +29,7 @@ const RNG_SEED: u64 = 1;
 const MAX_WORKER_COUNT: usize = 4;
 
 const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
-const START_TEMP: f64 = 1e2;
-const END_TEMP: f64 = 1e0;
+const TEMP_WEIGHT_DIVISOR: f64 = 10.0;
 const WORKER_TEMP_SCALE: f64 = 10.;
 const BEST_EXCHANGE_INTERVAL: usize = 2_000;
 const TABU_SIZE: usize = 4_096;
@@ -76,12 +75,14 @@ const INITIAL_AREA_WEIGHT_MAX: f64 = 0.2;
 const INITIAL_PREF_SPREAD_WEIGHT_MAX: f64 = 0.1;
 const INITIAL_DUE_URGENCY_WEIGHT_MAX: f64 = 1.;
 const INITIAL_SLACK_URGENCY_WEIGHT_MAX: f64 = 1.;
+const INITIAL_ORDER_RANDOM_WEIGHT_MAX: f64 = 0.;
 
 const RECONSTRUCT_WORKLOAD_WEIGHT_MAX: f64 = 1.;
 const RECONSTRUCT_AREA_WEIGHT_MAX: f64 = 1.;
 const RECONSTRUCT_PREF_SPREAD_WEIGHT_MAX: f64 = 1.;
 const RECONSTRUCT_DUE_URGENCY_WEIGHT_MAX: f64 = 1.;
 const RECONSTRUCT_SLACK_URGENCY_WEIGHT_MAX: f64 = 1.;
+const RECONSTRUCT_ORDER_RANDOM_WEIGHT_MAX: f64 = 0.;
 
 fn get_temp_scale(worker_id: usize, worker_count: usize) -> f64 {
     if worker_count <= 1 {
@@ -98,6 +99,7 @@ fn sample_initial_order_weights(rng: &mut impl Random) -> BlockOrderWeights {
         pref_spread: rng.gen_rangef(0.0, INITIAL_PREF_SPREAD_WEIGHT_MAX),
         due_urgency: rng.gen_rangef(0.0, INITIAL_DUE_URGENCY_WEIGHT_MAX),
         slack_urgency: rng.gen_rangef(0.0, INITIAL_SLACK_URGENCY_WEIGHT_MAX),
+        random: rng.gen_rangef(0.0, INITIAL_ORDER_RANDOM_WEIGHT_MAX),
     }
 }
 
@@ -108,6 +110,7 @@ fn sample_reconstruct_order_weights(rng: &mut impl Random) -> BlockOrderWeights 
         pref_spread: rng.gen_rangef(0.0, RECONSTRUCT_PREF_SPREAD_WEIGHT_MAX),
         due_urgency: rng.gen_rangef(0.0, RECONSTRUCT_DUE_URGENCY_WEIGHT_MAX),
         slack_urgency: rng.gen_rangef(0.0, RECONSTRUCT_SLACK_URGENCY_WEIGHT_MAX),
+        random: rng.gen_rangef(0.0, RECONSTRUCT_ORDER_RANDOM_WEIGHT_MAX),
     }
 }
 
@@ -141,6 +144,7 @@ fn mutate_initial_order_weights(
             INITIAL_SLACK_URGENCY_WEIGHT_MAX,
             rng,
         ),
+        random: mutate(weights.random, 0.0, INITIAL_ORDER_RANDOM_WEIGHT_MAX, rng),
     }
 }
 
@@ -199,6 +203,7 @@ struct BlockOrderWeights {
     pref_spread: f64,
     due_urgency: f64,
     slack_urgency: f64,
+    random: f64,
 }
 
 struct BlockOrderContext {
@@ -400,7 +405,7 @@ fn run_annealing_worker(
         iter += 1;
         if iter % BEST_EXCHANGE_INTERVAL == 0 {
             let shared = state.lock().unwrap();
-            if shared.score + 1e-9 < current_score {
+            if shared.score + problem.weights.w1 + 1e-9 < current_score {
                 current = shared.schedule.clone();
                 current_score = shared.score;
                 push_tabu(hash_schedule(&current), &mut tabu_queue, &mut tabu_set);
@@ -412,7 +417,9 @@ fn run_annealing_worker(
         }
 
         let progress = (elapsed / deadline).clamp(0.0, 1.0);
-        let temp = temp_scale * START_TEMP * (END_TEMP / START_TEMP).powf(progress);
+        let start_temp = (problem.weights.w1 / TEMP_WEIGHT_DIVISOR).max(1e-9);
+        let end_temp = (problem.weights.w3 / TEMP_WEIGHT_DIVISOR).max(1e-9);
+        let temp = temp_scale * start_temp * (end_temp / start_temp).powf(progress);
 
         let neighbor = sample_neighbor(&mut rng);
         let neighbor_idx = neighbor.index();
@@ -570,7 +577,7 @@ fn search_initial_schedule(
             }
 
             let weights = sample_initial_search_weights(&mut rng, &initial_state);
-            let order = build_initial_order(problem, pre, weights);
+            let order = build_initial_order(problem, pre, weights, &mut rng);
             let order_hash = hash_order(&order);
             {
                 let mut state = initial_state.lock().unwrap();
@@ -655,13 +662,14 @@ fn update_good_weight_pool(
     }
 }
 
-fn build_initial_order(
+fn build_initial_order<R: Random>(
     problem: &Problem,
     pre: &Precompute,
     weights: BlockOrderWeights,
+    rng: &mut R,
 ) -> Vec<usize> {
     let mut order: Vec<usize> = (0..problem.blocks.len()).collect();
-    sort_block_order(problem, pre, &mut order, weights);
+    sort_block_order(problem, pre, &mut order, weights, rng);
     order
 }
 
@@ -754,7 +762,7 @@ fn try_large_reconstruct<R: Random>(
         return None;
     }
     let w = sample_reconstruct_order_weights(rng);
-    sort_block_order(problem, pre, &mut removed_ids, w);
+    sort_block_order(problem, pre, &mut removed_ids, w, rng);
 
     let mut removed_ordered = vec![None; removed_ids.len()];
     let mut base = Vec::with_capacity(schedule.len() - removed_ids.len());
@@ -1348,16 +1356,21 @@ fn block_order_score(
         + weights.slack_urgency * slack_urgency
 }
 
-fn sort_block_order(
+fn sort_block_order<R: Random>(
     problem: &Problem,
     pre: &Precompute,
     order: &mut [usize],
     weights: BlockOrderWeights,
+    rng: &mut R,
 ) {
     let ctx = build_block_order_context(problem, pre, order);
+    let mut random_scores = vec![0.0; problem.blocks.len()];
+    for &block_id in order.iter() {
+        random_scores[block_id] = rng.gen_rangef(0., weights.random);
+    }
     order.sort_by(|&a, &b| {
-        let score_a = block_order_score(problem, pre, &ctx, weights, a);
-        let score_b = block_order_score(problem, pre, &ctx, weights, b);
+        let score_a = block_order_score(problem, pre, &ctx, weights, a) + random_scores[a];
+        let score_b = block_order_score(problem, pre, &ctx, weights, b) + random_scores[b];
         score_b
             .total_cmp(&score_a)
             .then(block_slack(problem, a).cmp(&block_slack(problem, b)))

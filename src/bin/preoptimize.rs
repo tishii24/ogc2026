@@ -1,3 +1,4 @@
+/*
 use std::env;
 use std::fs;
 use std::io::{self, Read};
@@ -72,4 +73,8 @@ fn read_input() -> Result<String, String> {
             .map_err(|err| format!("failed to read stdin: {err}"))?;
         Ok(input)
     }
+}
+*/
+fn main() {
+    todo!()
 }
