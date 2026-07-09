@@ -104,7 +104,6 @@ from functools import lru_cache
 from typing import Optional
 
 from shapely.geometry import Polygon as ShapelyPolygon
-from shapely.ops import unary_union
 
 # -----------------------------------------------------------------------------
 # Internal geometry helpers
@@ -151,12 +150,12 @@ def _anchor_layers(layers: list) -> list:
 
     Returns a new list of layers; the original data is not modified.
     """
-    all_verts = [v for l in layers for v in l]
+    all_verts = [v for ll in layers for v in ll]
     if not all_verts:
-        return [list(l) for l in layers]
+        return [list(ll) for ll in layers]
     min_x = min(v[0] for v in all_verts)
     min_y = min(v[1] for v in all_verts)
-    return [[[x - min_x, y - min_y] for x, y in l] for l in layers]
+    return [[[x - min_x, y - min_y] for x, y in ll] for ll in layers]
 
 
 def _translate_verts(verts: list, dx: float, dy: float) -> list:
@@ -318,7 +317,7 @@ class Block:
             object.__setattr__(
                 self,
                 "_layers_cache",
-                [_translate_verts(l, self.x - ref_x, self.y - ref_y) for l in layers],
+                [_translate_verts(ll, self.x - ref_x, self.y - ref_y) for ll in layers],
             )
         else:
             object.__setattr__(self, "_layers_cache", [])

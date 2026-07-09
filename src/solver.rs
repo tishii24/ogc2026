@@ -5,14 +5,12 @@ use crate::{
         rand::{RandPcg64Mcg, Random},
         time::Timer,
     },
-    vis::WorkerVisualizer,
     *,
 };
 use rayon::prelude::*;
 use std::{
     cmp::Reverse,
     collections::{HashSet, VecDeque},
-    path::Path,
     sync::Mutex,
     time::Instant,
 };
@@ -22,8 +20,6 @@ macro_rules! log {
         eprintln!("[{:.4}] {}", $timer.elapsed_seconds(), format_args!($($arg)*))
     };
 }
-
-const VISUALIZE_ACCEPTED_INTERVAL: usize = 1000;
 
 const RNG_SEED: u64 = 1;
 const MAX_WORKER_COUNT: usize = 4;
@@ -280,12 +276,7 @@ struct AnnealingResult {
     neighbor_stats: [NeighborStats; NEIGHBOR_KIND_COUNT],
 }
 
-pub fn solve(
-    problem: &Problem,
-    timelimit: f64,
-    timer: Timer,
-    visualize_dir: Option<&Path>,
-) -> Result<Solution, String> {
+pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution, String> {
     log!(timer, "building precompute...");
     let pre = Precompute::build(problem);
     log!(timer, "precompute built");
@@ -316,7 +307,6 @@ pub fn solve(
                 worker_id,
                 worker_count,
                 worker_timer,
-                visualize_dir,
             )
         })
         .collect::<Vec<AnnealingResult>>();
@@ -354,7 +344,6 @@ fn run_annealing_worker(
     worker_id: usize,
     worker_count: usize,
     timer: Timer,
-    visualize_dir: Option<&Path>,
 ) -> AnnealingResult {
     let mut rng = RandPcg64Mcg::new(RNG_SEED.wrapping_add(worker_id as u64));
     let temp_scale = get_temp_scale(worker_id, worker_count);
@@ -369,33 +358,6 @@ fn run_annealing_worker(
     let mut accepted = 0usize;
     let mut improved = 0usize;
     let mut neighbor_stats = [NeighborStats::default(); NEIGHBOR_KIND_COUNT];
-    let mut visualizer =
-        visualize_dir.and_then(|dir| match WorkerVisualizer::create(dir, worker_id) {
-            Ok(visualizer) => Some(visualizer),
-            Err(err) => {
-                eprintln!("failed to create visualizer for worker {worker_id}: {err}");
-                None
-            }
-        });
-    if let Some(visualizer) = visualizer.as_mut() {
-        if let Err(err) = visualizer.write_snapshot(
-            "initial",
-            worker_id,
-            0,
-            timer.elapsed_seconds(),
-            None,
-            None,
-            false,
-            false,
-            current_score,
-            current_score,
-            best_score,
-            None,
-            &current,
-        ) {
-            eprintln!("failed to write visualizer snapshot for worker {worker_id}: {err}");
-        }
-    }
 
     loop {
         let elapsed = timer.elapsed_seconds();
@@ -463,7 +425,6 @@ fn run_annealing_worker(
             accepted += 1;
             neighbor_stats[neighbor_idx].accepted += 1;
 
-            let mut improved_best = false;
             if current_score + 1e-9 < best_score {
                 log!(
                     timer,
@@ -474,7 +435,6 @@ fn run_annealing_worker(
                 best = current.clone();
                 best_score = current_score;
                 improved += 1;
-                improved_best = true;
 
                 let mut shared = state.lock().unwrap();
                 if current_score + 1e-9 < shared.score {
@@ -482,58 +442,8 @@ fn run_annealing_worker(
                     shared.schedule = current.clone();
                 }
             }
-
-            let reason = if improved_best {
-                Some("best")
-            } else if accepted % VISUALIZE_ACCEPTED_INTERVAL == 0 {
-                Some("periodic")
-            } else {
-                None
-            };
-            if let (Some(reason), Some(visualizer)) = (reason, visualizer.as_mut()) {
-                if let Err(err) = visualizer.write_snapshot(
-                    reason,
-                    worker_id,
-                    iter,
-                    elapsed,
-                    Some(neighbor.name()),
-                    Some(true),
-                    improved_current,
-                    improved_best,
-                    score,
-                    current_score,
-                    best_score,
-                    Some(delta),
-                    &current,
-                ) {
-                    eprintln!("failed to write visualizer snapshot for worker {worker_id}: {err}");
-                }
-            }
         }
         neighbor_stats[neighbor_idx].time_sec += neighbor_start.elapsed().as_secs_f64();
-    }
-
-    if let Some(visualizer) = visualizer.as_mut() {
-        if let Err(err) = visualizer.write_snapshot(
-            "final",
-            worker_id,
-            iter,
-            timer.elapsed_seconds(),
-            None,
-            None,
-            false,
-            false,
-            best_score,
-            current_score,
-            best_score,
-            None,
-            &best,
-        ) {
-            eprintln!("failed to write visualizer snapshot for worker {worker_id}: {err}");
-        }
-        if let Err(err) = visualizer.flush() {
-            eprintln!("failed to flush visualizer for worker {worker_id}: {err}");
-        }
     }
 
     AnnealingResult {

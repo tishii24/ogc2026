@@ -1,15 +1,13 @@
-- 探索の改善
-  - tardinessがある間はobj2,obj3を軽視する
-- 高速化
+todo:
+- reconstructの改善
+  - targeted-reconstruct
+  - obj23を軽視する
+  - 高速化
+- 小さいケース
+  - kick
+  - MILPの導入
 - safety
 - チューニング
-
-todo:
-- kick
-- targeted-reconstruct
-- reconstructの改善
-  - obj2を軽視する
-- MILPの導入
 
 safety:
 - 定期的にpy側でfeasibilityをチェックする
