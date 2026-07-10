@@ -40,11 +40,12 @@ const INITIAL_GOOD_WEIGHT_POOL_SIZE: usize = 32;
 const INITIAL_EXPLOIT_PROB: f64 = 0.25;
 const INITIAL_WEIGHT_MUTATION_SCALE: f64 = 0.2;
 
-const MIN_REMOVED_BLOCKS: usize = 3;
+const MIN_REMOVED_BLOCKS: usize = 7;
 const MAX_REMOVED_BLOCKS: usize = 13;
 const REMOVE_POOL_FACTOR: usize = 4;
-const REMOVE_SEED_COUNT: usize = 3;
-const REMOVE_RANDOM_SEED_COUNT: usize = 1;
+const REMOVE_COUNT_SAMPLE_POWER: f64 = 2.0;
+const REMOVE_SEED_PER_BLOCK: usize = 4;
+const REMOVE_RANDOM_SEED_RATIO: f64 = 0.25;
 const REMOVE_X_DISTANCE_WEIGHT_MAX: f64 = 3.0;
 const REMOVE_Y_DISTANCE_WEIGHT_MAX: f64 = 3.0;
 const INSERT_PARAMS: InsertSearchParams = InsertSearchParams { y_buffer: 10 };
@@ -663,9 +664,7 @@ fn try_large_reconstruct<R: Random>(
     rng: &mut R,
     accept_threshold: f64,
 ) -> Option<Vec<ScheduledBlock>> {
-    let k = rng
-        .gen_range(MIN_REMOVED_BLOCKS, MAX_REMOVED_BLOCKS + 1)
-        .min(problem.blocks.len());
+    let k = sample_removed_count(rng).min(problem.blocks.len());
 
     let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng);
     if removed_ids.is_empty() {
@@ -1039,6 +1038,12 @@ fn try_move_neighbor<R: Random>(
     Some(base)
 }
 
+fn sample_removed_count<R: Random>(rng: &mut R) -> usize {
+    let span = MAX_REMOVED_BLOCKS - MIN_REMOVED_BLOCKS + 1;
+    let u = rng.nextf().powf(REMOVE_COUNT_SAMPLE_POWER);
+    MIN_REMOVED_BLOCKS + ((u * span as f64) as usize).min(span - 1)
+}
+
 fn choose_removed_blocks<R: Random>(
     problem: &Problem,
     pre: &Precompute,
@@ -1119,8 +1124,13 @@ fn choose_removed_blocks<R: Random>(
 
     let mut selected = Vec::with_capacity(k);
     let mut used = vec![false; problem.blocks.len()];
-    let seed_count = REMOVE_SEED_COUNT.min(k);
-    let random_seed_count = REMOVE_RANDOM_SEED_COUNT.min(seed_count);
+    let seed_count = k.div_ceil(REMOVE_SEED_PER_BLOCK);
+    let mut random_seed_count = 0;
+    for _ in 0..seed_count {
+        if rng.nextf() < REMOVE_RANDOM_SEED_RATIO {
+            random_seed_count += 1;
+        }
+    }
     let bad_seed_count = seed_count - random_seed_count;
 
     let mut seed_pool = bad_pool.clone();
@@ -1131,8 +1141,9 @@ fn choose_removed_blocks<R: Random>(
 
     let mut random_seed_pool: Vec<usize> = schedule.iter().map(|s| s.block_id).collect();
     rng.shuffle(&mut random_seed_pool);
+    let random_seed_end = selected.len() + random_seed_count;
     for block_id in random_seed_pool {
-        if selected.len() >= seed_count {
+        if selected.len() >= random_seed_end {
             break;
         }
         push_selected(&mut selected, &mut used, block_id, k);
