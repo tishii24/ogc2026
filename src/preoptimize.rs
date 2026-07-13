@@ -14,7 +14,7 @@ pub struct PreoptimizeParams {
     pub horizon_margin: i64,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct PreoptimizedBlock {
     pub bay_id: usize,
     pub entry_time: i64,
@@ -24,6 +24,7 @@ pub struct PreoptimizedBlock {
 pub enum PreoptimizeStatus {
     Optimal,
     TimeLimit,
+    Annealing,
 }
 
 #[derive(Debug, Serialize)]
@@ -61,6 +62,18 @@ struct StartVariable {
     entry_time: i64,
 }
 
+pub(crate) struct PreoptimizeData {
+    pub occupancy: Vec<Vec<Option<f64>>>,
+    pub bay_areas: Vec<f64>,
+    pub bay_load_scale: Vec<f64>,
+    pub pref_penalty: Vec<Vec<i64>>,
+    pub min_time: i64,
+    pub horizon: i64,
+    pub initial: Vec<PreoptimizedBlock>,
+    pub initial_objective: f64,
+    pub initial_z2: f64,
+}
+
 fn normalized_imbalance(loads: &[f64], bay_load_scale: &[f64]) -> f64 {
     if loads.len() < 2 {
         return 0.0;
@@ -75,7 +88,7 @@ fn normalized_imbalance(loads: &[f64], bay_load_scale: &[f64]) -> f64 {
     max_load - min_load
 }
 
-fn evaluate_schedule(
+pub(crate) fn evaluate_schedule(
     problem: &Problem,
     pref_penalty: &[Vec<i64>],
     bay_load_scale: &[f64],
@@ -283,11 +296,10 @@ fn build_occupancy(
         .collect())
 }
 
-pub fn preoptimize(
+pub(crate) fn prepare_preoptimize(
     problem: &Problem,
     params: PreoptimizeParams,
-) -> Result<PreoptimizeResult, String> {
-    let build_start = Instant::now();
+) -> Result<PreoptimizeData, String> {
     if problem.bays.is_empty() {
         return Err("bays must be non-empty".to_string());
     }
@@ -303,24 +315,6 @@ pub fn preoptimize(
     if params.horizon_margin < 0 {
         return Err("horizon_margin must be non-negative".to_string());
     }
-    if problem.blocks.is_empty() {
-        return Ok(PreoptimizeResult {
-            status: PreoptimizeStatus::Optimal,
-            objective: 0.0,
-            initial_objective: 0.0,
-            z1: 0.0,
-            z2: 0.0,
-            z3: 0.0,
-            blocks: Vec::new(),
-            horizon: 0,
-            variable_count: 0,
-            constraint_count: 0,
-            mip_gap: Some(0.0),
-            model_build_seconds: build_start.elapsed().as_secs_f64(),
-            solve_seconds: 0.0,
-        });
-    }
-
     for (block_id, block) in problem.blocks.iter().enumerate() {
         if block.processing_time <= 0 {
             return Err(format!("block {block_id} has non-positive processing_time"));
@@ -339,6 +333,38 @@ pub fn preoptimize(
         if row.iter().all(Option::is_none) {
             return Err(format!("block {block_id} has no eligible bay"));
         }
+    }
+    let bay_areas: Vec<f64> = problem
+        .bays
+        .iter()
+        .map(|bay| (bay.width * bay.height) as f64)
+        .collect();
+    let avg_bay_area = bay_areas.iter().sum::<f64>() / bay_areas.len() as f64;
+    let bay_load_scale: Vec<f64> = bay_areas.iter().map(|&area| avg_bay_area / area).collect();
+    let pref_penalty: Vec<Vec<i64>> = problem
+        .blocks
+        .iter()
+        .map(|block| {
+            let max_pref = block.bay_preferences.iter().copied().max().unwrap_or(0);
+            block
+                .bay_preferences
+                .iter()
+                .map(|&pref| max_pref - pref)
+                .collect()
+        })
+        .collect();
+    if problem.blocks.is_empty() {
+        return Ok(PreoptimizeData {
+            occupancy,
+            bay_areas,
+            bay_load_scale,
+            pref_penalty,
+            min_time: 0,
+            horizon: 0,
+            initial: Vec::new(),
+            initial_objective: 0.0,
+            initial_z2: 0.0,
+        });
     }
 
     let min_time = problem
@@ -360,26 +386,6 @@ pub fn preoptimize(
     let search_horizon = max_release
         .checked_add(total_processing)
         .ok_or_else(|| "preoptimize search horizon overflowed i64".to_string())?;
-
-    let bay_areas: Vec<f64> = problem
-        .bays
-        .iter()
-        .map(|bay| (bay.width * bay.height) as f64)
-        .collect();
-    let avg_bay_area = bay_areas.iter().sum::<f64>() / bay_areas.len() as f64;
-    let bay_load_scale: Vec<f64> = bay_areas.iter().map(|&area| avg_bay_area / area).collect();
-    let pref_penalty: Vec<Vec<i64>> = problem
-        .blocks
-        .iter()
-        .map(|block| {
-            let max_pref = block.bay_preferences.iter().copied().max().unwrap_or(0);
-            block
-                .bay_preferences
-                .iter()
-                .map(|&pref| max_pref - pref)
-                .collect()
-        })
-        .collect();
     let initial = build_greedy_schedule(
         problem,
         &occupancy,
@@ -406,6 +412,53 @@ pub fn preoptimize(
         .max(max_due)
         .checked_add(params.horizon_margin)
         .ok_or_else(|| "preoptimize horizon overflowed i64".to_string())?;
+
+    Ok(PreoptimizeData {
+        occupancy,
+        bay_areas,
+        bay_load_scale,
+        pref_penalty,
+        min_time,
+        horizon,
+        initial,
+        initial_objective,
+        initial_z2,
+    })
+}
+
+pub fn preoptimize(
+    problem: &Problem,
+    params: PreoptimizeParams,
+) -> Result<PreoptimizeResult, String> {
+    let build_start = Instant::now();
+    let data = prepare_preoptimize(problem, params)?;
+    if problem.blocks.is_empty() {
+        return Ok(PreoptimizeResult {
+            status: PreoptimizeStatus::Optimal,
+            objective: 0.0,
+            initial_objective: 0.0,
+            z1: 0.0,
+            z2: 0.0,
+            z3: 0.0,
+            blocks: Vec::new(),
+            horizon: 0,
+            variable_count: 0,
+            constraint_count: 0,
+            mip_gap: Some(0.0),
+            model_build_seconds: build_start.elapsed().as_secs_f64(),
+            solve_seconds: 0.0,
+        });
+    }
+
+    let occupancy = &data.occupancy;
+    let bay_areas = &data.bay_areas;
+    let bay_load_scale = &data.bay_load_scale;
+    let pref_penalty = &data.pref_penalty;
+    let min_time = data.min_time;
+    let horizon = data.horizon;
+    let initial = &data.initial;
+    let initial_objective = data.initial_objective;
+    let initial_z2 = data.initial_z2;
     let time_count: usize = (horizon - min_time)
         .try_into()
         .map_err(|_| "preoptimize time range is too large".to_string())?;
@@ -449,7 +502,7 @@ pub fn preoptimize(
     }
 
     let mut usage_variables = Vec::with_capacity(problem.bays.len());
-    for &bay_area in &bay_areas {
+    for &bay_area in bay_areas {
         let mut row = Vec::with_capacity(time_count);
         for _ in 0..time_count {
             let col_index = variable_count;
@@ -574,8 +627,7 @@ pub fn preoptimize(
         });
     }
 
-    let (objective, z1, z2, z3) =
-        evaluate_schedule(problem, &pref_penalty, &bay_load_scale, &blocks);
+    let (objective, z1, z2, z3) = evaluate_schedule(problem, pref_penalty, bay_load_scale, &blocks);
     let mip_gap = solved.mip_gap();
 
     Ok(PreoptimizeResult {

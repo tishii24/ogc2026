@@ -7,6 +7,7 @@ use std::time::Instant;
 use ogc2026::{
     Problem,
     preoptimize::{PreoptimizeParams, preoptimize},
+    preoptimize2::preoptimize_annealing,
 };
 
 const DEFAULT_TIMELIMIT_SECONDS: f64 = 60.0;
@@ -14,8 +15,14 @@ const DEFAULT_ALPHA: f64 = 0.0;
 const DEFAULT_BETA: f64 = 0.0;
 const DEFAULT_HORIZON_MARGIN: i64 = 10;
 
+enum Method {
+    Milp,
+    Annealing,
+}
+
 struct Args {
     input_path: String,
+    method: Method,
     time_limit: f64,
     alpha: f64,
     beta: f64,
@@ -35,15 +42,16 @@ fn run() -> Result<(), String> {
     let problem: Problem = serde_json::from_str(&input)
         .map_err(|err| format!("failed to parse problem json: {err}"))?;
     let start = Instant::now();
-    let result = preoptimize(
-        &problem,
-        PreoptimizeParams {
-            alpha: args.alpha,
-            beta: args.beta,
-            time_limit: args.time_limit,
-            horizon_margin: args.horizon_margin,
-        },
-    )?;
+    let params = PreoptimizeParams {
+        alpha: args.alpha,
+        beta: args.beta,
+        time_limit: args.time_limit,
+        horizon_margin: args.horizon_margin,
+    };
+    let result = match args.method {
+        Method::Milp => preoptimize(&problem, params),
+        Method::Annealing => preoptimize_annealing(&problem, params),
+    }?;
 
     eprintln!(
         "preoptimize: status={:?}, horizon={}, variables={}, constraints={}, elapsed={:.3}s",
@@ -60,9 +68,8 @@ fn run() -> Result<(), String> {
 }
 
 fn parse_args(args: Vec<String>) -> Result<Args, String> {
-    const USAGE: &str =
-        "usage: preoptimize <input.json|-> [timelimit] [alpha] [beta] [horizon-margin]";
-    if args.is_empty() || args.len() > 5 {
+    const USAGE: &str = "usage: preoptimize <input.json|-> <milp|annealing> [timelimit] [alpha] [beta] [horizon-margin]";
+    if args.len() < 2 || args.len() > 6 {
         return Err(USAGE.to_string());
     }
 
@@ -74,12 +81,23 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
         })
     };
 
+    let method = match args[1].as_str() {
+        "milp" => Method::Milp,
+        "annealing" => Method::Annealing,
+        value => {
+            return Err(format!(
+                "invalid method '{value}': expected milp or annealing"
+            ));
+        }
+    };
+
     Ok(Args {
         input_path: args[0].clone(),
-        time_limit: parse(1, "timelimit", DEFAULT_TIMELIMIT_SECONDS)?,
-        alpha: parse(2, "alpha", DEFAULT_ALPHA)?,
-        beta: parse(3, "beta", DEFAULT_BETA)?,
-        horizon_margin: args.get(4).map_or(Ok(DEFAULT_HORIZON_MARGIN), |value| {
+        method,
+        time_limit: parse(2, "timelimit", DEFAULT_TIMELIMIT_SECONDS)?,
+        alpha: parse(3, "alpha", DEFAULT_ALPHA)?,
+        beta: parse(4, "beta", DEFAULT_BETA)?,
+        horizon_margin: args.get(5).map_or(Ok(DEFAULT_HORIZON_MARGIN), |value| {
             value
                 .parse::<i64>()
                 .map_err(|err| format!("invalid horizon-margin '{value}': {err}"))
