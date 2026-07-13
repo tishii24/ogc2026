@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    Operation, Problem, ScheduledBlock, Solution, precompute::Precompute, util::rand::Random,
+    Operation, Problem, ScheduledBlock, Solution, precompute::Precompute,
+    preoptimize::PreoptimizedBlock, util::rand::Random,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -70,6 +71,37 @@ pub(crate) fn score_schedule(
 
     let obj2 = normalized_imbalance(pre, &loads);
     problem.weights.w1 * obj1 + problem.weights.w2 * obj2 + problem.weights.w3 * obj3
+}
+
+pub(crate) fn guidance_block_distance(
+    scheduled: ScheduledBlock,
+    target: PreoptimizedBlock,
+    bay_mismatch_penalty: f64,
+) -> f64 {
+    let dt = scheduled.entry_time as f64 - target.entry_time as f64;
+    dt * dt
+        + if scheduled.bay_id == target.bay_id {
+            0.0
+        } else {
+            bay_mismatch_penalty
+        }
+}
+
+pub(crate) fn guidance_distance(
+    schedule: &[ScheduledBlock],
+    guidance: &[PreoptimizedBlock],
+    bay_mismatch_penalty: f64,
+) -> f64 {
+    schedule
+        .iter()
+        .map(|&scheduled| {
+            guidance_block_distance(
+                scheduled,
+                guidance[scheduled.block_id],
+                bay_mismatch_penalty,
+            )
+        })
+        .sum()
 }
 
 pub(crate) fn normalized_imbalance(pre: &Precompute, loads: &[f64]) -> f64 {
