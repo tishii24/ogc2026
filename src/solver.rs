@@ -1,5 +1,5 @@
 use crate::{
-    insert::{InsertSearchParams, insert_greedy, try_place_block},
+    insert::{InsertMode, InsertSearchParams, insert_greedy, try_place_block},
     precompute::Precompute,
     solver_util::{
         NeighborKind, NeighborStats, format_neighbor_stats, sample_neighbor, schedule_to_solution,
@@ -299,13 +299,26 @@ fn run_annealing_worker(
         let accept_threshold = current_score - temp * rng.nextf().ln();
 
         let candidate = match neighbor {
-            NeighborKind::LargeReconstruct => {
-                try_large_reconstruct(problem, pre, &current, &mut rng, accept_threshold)
+            NeighborKind::LargeReconstruct => try_large_reconstruct(
+                problem,
+                pre,
+                &current,
+                &mut rng,
+                accept_threshold,
+                InsertMode::Earliest,
+            ),
+            NeighborKind::Shift => {
+                try_shift_neighbor(problem, pre, &current, &mut rng, InsertMode::Earliest)
             }
-            NeighborKind::Shift => try_shift_neighbor(problem, pre, &current, &mut rng),
-            NeighborKind::Move => try_move_neighbor(problem, pre, &current, &mut rng),
-            NeighborKind::Rotate => try_rotate_neighbor(problem, pre, &current, &mut rng),
-            NeighborKind::Swap => try_swap_neighbor(problem, pre, &current, &mut rng),
+            NeighborKind::Move => {
+                try_move_neighbor(problem, pre, &current, &mut rng, InsertMode::Earliest)
+            }
+            NeighborKind::Rotate => {
+                try_rotate_neighbor(problem, pre, &current, &mut rng, InsertMode::Earliest)
+            }
+            NeighborKind::Swap => {
+                try_swap_neighbor(problem, pre, &current, &mut rng, InsertMode::Earliest)
+            }
         };
         let Some(candidate) = candidate else {
             neighbor_stats[neighbor_idx].time_sec += neighbor_start.elapsed().as_secs_f64();
@@ -565,6 +578,7 @@ fn build_initial_schedule_with_order(
             &loads,
             INSERT_PARAMS,
             &pre.bay_order_by_pref[block_id],
+            InsertMode::Earliest,
         )?;
         loads[scheduled.bay_id] += block.workload as f64;
         schedule.push(scheduled);
@@ -579,6 +593,7 @@ fn try_large_reconstruct<R: Random>(
     schedule: &[ScheduledBlock],
     rng: &mut R,
     accept_threshold: f64,
+    mode: InsertMode,
 ) -> Option<Vec<ScheduledBlock>> {
     let k = sample_removed_count(rng).min(problem.blocks.len());
 
@@ -620,6 +635,7 @@ fn try_large_reconstruct<R: Random>(
             &loads,
             INSERT_PARAMS,
             &pre.bay_order_by_pref[old.block_id],
+            mode,
         )?;
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
         fixed_score13 += score13_block(problem, pre, scheduled);
@@ -633,15 +649,30 @@ fn update_best(
     problem: &Problem,
     best: &mut Option<(i64, i64, ScheduledBlock)>,
     candidate: ScheduledBlock,
+    mode: InsertMode,
 ) {
     let block = &problem.blocks[candidate.block_id];
     let tardiness = (candidate.exit_time - block.due_date).max(0);
-    if best
-        .as_ref()
-        .map_or(true, |&(best_tardiness, best_entry_time, _)| {
-            (tardiness, candidate.entry_time) < (best_tardiness, best_entry_time)
-        })
-    {
+    let better =
+        best.as_ref().is_none_or(
+            |&(best_tardiness, best_entry_time, best_scheduled)| match mode {
+                InsertMode::Earliest => {
+                    (tardiness, candidate.entry_time) < (best_tardiness, best_entry_time)
+                }
+                InsertMode::ClosestTo { target_time } => {
+                    (
+                        candidate.entry_time.abs_diff(target_time),
+                        tardiness,
+                        candidate.entry_time,
+                    ) < (
+                        best_scheduled.entry_time.abs_diff(target_time),
+                        best_tardiness,
+                        best_entry_time,
+                    )
+                }
+            },
+        );
+    if better {
         *best = Some((tardiness, candidate.entry_time, candidate));
     }
 }
@@ -651,6 +682,7 @@ fn try_shift_neighbor<R: Random>(
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     rng: &mut R,
+    mode: InsertMode,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.is_empty() {
         return None;
@@ -692,13 +724,14 @@ fn try_shift_neighbor<R: Random>(
                 old.orient_idx,
                 x,
                 y,
+                mode,
             ) else {
                 continue;
             };
             if moved == old {
                 continue;
             }
-            update_best(problem, &mut best, moved);
+            update_best(problem, &mut best, moved, mode);
         }
     }
 
@@ -712,6 +745,7 @@ fn try_rotate_neighbor<R: Random>(
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     rng: &mut R,
+    mode: InsertMode,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.is_empty() {
         return None;
@@ -757,6 +791,7 @@ fn try_rotate_neighbor<R: Random>(
                     orient_idx,
                     x,
                     y,
+                    mode,
                 ) else {
                     continue;
                 };
@@ -764,7 +799,7 @@ fn try_rotate_neighbor<R: Random>(
                     continue;
                 }
 
-                update_best(problem, &mut best, rotated);
+                update_best(problem, &mut best, rotated, mode);
             }
         }
     }
@@ -783,6 +818,7 @@ fn try_swap_place(
     orient_idx: usize,
     base_x: i64,
     base_y: i64,
+    mode: InsertMode,
 ) -> Option<ScheduledBlock> {
     let range = pre.collision.fit_range(bay_id, old.block_id, orient_idx)?;
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
@@ -804,10 +840,11 @@ fn try_swap_place(
                 orient_idx,
                 x,
                 y,
+                mode,
             ) else {
                 continue;
             };
-            update_best(problem, &mut best, scheduled);
+            update_best(problem, &mut best, scheduled, mode);
         }
     }
 
@@ -819,6 +856,7 @@ fn try_swap_neighbor<R: Random>(
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     rng: &mut R,
+    mode: InsertMode,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.len() < 2 {
         return None;
@@ -858,6 +896,7 @@ fn try_swap_neighbor<R: Random>(
         a_old.orient_idx,
         a_base_x,
         a_base_y,
+        mode,
     )?;
     cur.push(a_new);
 
@@ -872,6 +911,7 @@ fn try_swap_neighbor<R: Random>(
         candidate.orient_idx,
         b_base_x,
         b_base_y,
+        mode,
     )?;
     cur.push(b_new);
 
@@ -883,6 +923,7 @@ fn try_move_neighbor<R: Random>(
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     rng: &mut R,
+    mode: InsertMode,
 ) -> Option<Vec<ScheduledBlock>> {
     fn move_obj13(problem: &Problem, pre: &Precompute, s: ScheduledBlock) -> f64 {
         let block = &problem.blocks[s.block_id];
@@ -933,6 +974,7 @@ fn try_move_neighbor<R: Random>(
         &loads,
         INSERT_PARAMS,
         &pre.bay_order_by_pref[old.block_id],
+        mode,
     )?;
     if scheduled == old {
         return None;

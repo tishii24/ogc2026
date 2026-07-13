@@ -12,9 +12,17 @@ pub(crate) struct InsertSearchParams {
     pub y_buffer: i64,
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+pub(crate) enum InsertMode {
+    Earliest,
+    ClosestTo { target_time: i64 },
+}
+
 struct InsertCandidate {
     scheduled: ScheduledBlock,
     score_delta: f64,
+    time_distance: u64,
     bbox_right: f64,
     bbox_top: f64,
 }
@@ -62,11 +70,21 @@ pub(crate) fn insert_greedy(
     loads: &[f64],
     params: InsertSearchParams,
     bay_order: &[usize],
+    mode: InsertMode,
 ) -> Option<ScheduledBlock> {
-    fn insert_candidate_better(a: &InsertCandidate, b: &InsertCandidate) -> bool {
-        a.score_delta
-            .total_cmp(&b.score_delta)
-            .then(a.scheduled.entry_time.cmp(&b.scheduled.entry_time))
+    fn insert_candidate_better(a: &InsertCandidate, b: &InsertCandidate, mode: InsertMode) -> bool {
+        let order = match mode {
+            InsertMode::Earliest => a
+                .score_delta
+                .total_cmp(&b.score_delta)
+                .then(a.scheduled.entry_time.cmp(&b.scheduled.entry_time)),
+            InsertMode::ClosestTo { .. } => a
+                .time_distance
+                .cmp(&b.time_distance)
+                .then(a.score_delta.total_cmp(&b.score_delta))
+                .then(a.scheduled.entry_time.cmp(&b.scheduled.entry_time)),
+        };
+        order
             .then(a.bbox_right.total_cmp(&b.bbox_right))
             .then(a.bbox_top.total_cmp(&b.bbox_top))
             .then(a.scheduled.block_id.cmp(&b.scheduled.block_id))
@@ -95,9 +113,10 @@ pub(crate) fn insert_greedy(
             .saturating_sub(block.due_date)
             .max(0);
         let lower_score_delta = problem.weights.w1 * min_tardiness as f64 + delta_obj23;
-        if best
-            .as_ref()
-            .is_some_and(|best| lower_score_delta > best.score_delta)
+        if matches!(mode, InsertMode::Earliest)
+            && best
+                .as_ref()
+                .is_some_and(|best| lower_score_delta > best.score_delta)
         {
             continue;
         }
@@ -216,7 +235,7 @@ pub(crate) fn insert_greedy(
                         );
                     }
 
-                    if let Some(entry_time) = first_feasible_time(&forbidden, min_t, max_t) {
+                    if let Some(entry_time) = select_feasible_time(&forbidden, min_t, max_t, mode) {
                         let scheduled = ScheduledBlock {
                             block_id,
                             bay_id,
@@ -231,17 +250,27 @@ pub(crate) fn insert_greedy(
                         let candidate = InsertCandidate {
                             scheduled,
                             score_delta,
+                            time_distance: match mode {
+                                InsertMode::Earliest => 0,
+                                InsertMode::ClosestTo { target_time } => {
+                                    entry_time.abs_diff(target_time)
+                                }
+                            },
                             bbox_right: scheduled.x as f64 + bounds.max_x,
                             bbox_top: scheduled.y as f64 + bounds.max_y,
                         };
                         if best
                             .as_ref()
-                            .map_or(true, |best| insert_candidate_better(&candidate, best))
+                            .map_or(true, |best| insert_candidate_better(&candidate, best, mode))
                         {
                             best = Some(candidate);
                         }
 
-                        if tardiness <= original_tardiness && anchor_y.is_none() {
+                        let anchors_search = match mode {
+                            InsertMode::Earliest => tardiness <= original_tardiness,
+                            InsertMode::ClosestTo { .. } => true,
+                        };
+                        if anchors_search && anchor_y.is_none() {
                             anchor_y = Some(y);
                         }
                     }
@@ -270,6 +299,7 @@ pub(crate) fn try_place_block(
     orient_idx: usize,
     x: i64,
     y: i64,
+    mode: InsertMode,
 ) -> Option<ScheduledBlock> {
     let block = &problem.blocks[block_id];
     let tentative = ScheduledBlock {
@@ -281,7 +311,7 @@ pub(crate) fn try_place_block(
         entry_time: 0,
         exit_time: block.processing_time,
     };
-    let entry_time = get_insert_t(pre, tentative, schedule, block.release_time, i64::MAX)?;
+    let entry_time = get_insert_t(pre, tentative, schedule, block.release_time, i64::MAX, mode)?;
     Some(ScheduledBlock {
         entry_time,
         exit_time: entry_time + block.processing_time,
@@ -429,6 +459,9 @@ fn add_forbidden_from_hit_state(
 }
 
 fn first_feasible_time(forbidden: &[Interval], min_t: i64, max_t: i64) -> Option<i64> {
+    if min_t > max_t {
+        return None;
+    }
     let mut t = min_t;
     loop {
         let mut next_t = t;
@@ -451,12 +484,68 @@ fn first_feasible_time(forbidden: &[Interval], min_t: i64, max_t: i64) -> Option
     }
 }
 
+fn last_feasible_time(forbidden: &[Interval], min_t: i64, max_t: i64) -> Option<i64> {
+    if min_t > max_t {
+        return None;
+    }
+    let mut t = max_t;
+    loop {
+        let mut next_t = t;
+        for &(l, r) in forbidden {
+            if l <= t && t <= r {
+                let previous = l.checked_sub(1)?;
+                next_t = next_t.min(previous);
+            }
+        }
+
+        if next_t == t {
+            return Some(t);
+        }
+        if next_t < min_t {
+            return None;
+        }
+        t = next_t;
+    }
+}
+
+fn select_feasible_time(
+    forbidden: &[Interval],
+    min_t: i64,
+    max_t: i64,
+    mode: InsertMode,
+) -> Option<i64> {
+    if min_t > max_t {
+        return None;
+    }
+    match mode {
+        InsertMode::Earliest => first_feasible_time(forbidden, min_t, max_t),
+        InsertMode::ClosestTo { target_time } => {
+            let target = target_time.clamp(min_t, max_t);
+            let before = last_feasible_time(forbidden, min_t, target);
+            let after = first_feasible_time(forbidden, target, max_t);
+            match (before, after) {
+                (Some(before), Some(after)) => {
+                    if target.abs_diff(before) <= target.abs_diff(after) {
+                        Some(before)
+                    } else {
+                        Some(after)
+                    }
+                }
+                (Some(before), None) => Some(before),
+                (None, Some(after)) => Some(after),
+                (None, None) => None,
+            }
+        }
+    }
+}
+
 fn get_insert_t(
     pre: &Precompute,
     new_block: ScheduledBlock,
     schedule: &[ScheduledBlock],
     min_t: i64,
     max_t: i64,
+    mode: InsertMode,
 ) -> Option<i64> {
     let mut forbidden = Vec::with_capacity(16);
     for &old in schedule.iter().filter(|old| old.bay_id == new_block.bay_id) {
@@ -482,5 +571,5 @@ fn get_insert_t(
         let old_new_hit = pre.collision.crane(old_place, new_place) == CollisionResult::Hit;
         add_forbidden_from_hit_state(info, new_old_hit, old_new_hit, &mut forbidden);
     }
-    first_feasible_time(&forbidden, min_t, max_t)
+    select_feasible_time(&forbidden, min_t, max_t, mode)
 }
