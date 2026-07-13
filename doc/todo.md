@@ -1,15 +1,22 @@
 課題:
 - 大きいケースで良い解を作る
   - 良い初期解を作る
+    - beam-search?
+    - パラメータを増やす
   - 高速化
 - 最適解が得やすいケースを小さいケースを落とさない
   - 幅広く探索する
 
 todo:
+- preblock-area
 - reconstructの改善
   - targeted-reconstruct
   - obj23を軽視する
   - 高速化
+- 順番の改善
+  - volume
+  - limit-t
+- shiftを元の位置も含める（change-entry-t）
 - 小さいケース
   - kick
   - 解の入れ替え条件を改善する

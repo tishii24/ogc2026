@@ -1,4 +1,3 @@
-/*
 use std::env;
 use std::fs;
 use std::io::{self, Read};
@@ -7,19 +6,20 @@ use std::time::Instant;
 
 use ogc2026::{
     Problem,
-    precompute::Precompute,
-    preoptimize::{BayAssignmentInput, BayAssignmentOptimizer, HighsBayAssignmentOptimizer},
+    preoptimize::{PreoptimizeParams, preoptimize},
 };
-use serde::Serialize;
 
-#[derive(Debug, Serialize)]
-struct Output {
-    status: String,
-    objective: f64,
-    z2: f64,
-    z3: f64,
-    assignment: Vec<usize>,
-    normalized_load: Vec<f64>,
+const DEFAULT_TIMELIMIT_SECONDS: f64 = 60.0;
+const DEFAULT_ALPHA: f64 = 0.0;
+const DEFAULT_BETA: f64 = 0.0;
+const DEFAULT_HORIZON_MARGIN: i64 = 10;
+
+struct Args {
+    input_path: String,
+    time_limit: f64,
+    alpha: f64,
+    beta: f64,
+    horizon_margin: i64,
 }
 
 fn main() {
@@ -30,51 +30,71 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let input = read_input()?;
+    let args = parse_args(env::args().skip(1).collect())?;
+    let input = read_input(&args.input_path)?;
     let problem: Problem = serde_json::from_str(&input)
         .map_err(|err| format!("failed to parse problem json: {err}"))?;
     let start = Instant::now();
+    let result = preoptimize(
+        &problem,
+        PreoptimizeParams {
+            alpha: args.alpha,
+            beta: args.beta,
+            time_limit: args.time_limit,
+            horizon_margin: args.horizon_margin,
+        },
+    )?;
 
-    let pre = Precompute::build(&problem);
-    let target_block_ids: Vec<usize> = (0..problem.blocks.len()).collect();
-    let fixed_loads = vec![0.0; problem.bays.len()];
-    let mut optimizer = HighsBayAssignmentOptimizer;
-    let result = optimizer.optimize_bay_assignment(BayAssignmentInput {
-        problem: &problem,
-        pre: &pre,
-        target_block_ids: &target_block_ids,
-        fixed_loads: &fixed_loads,
-    })?;
-
-    let output = Output {
-        status: "Optimal".to_string(),
-        objective: result.objective,
-        z2: result.z2,
-        z3: result.z3,
-        assignment: result.assignment,
-        normalized_load: result.normalized_load,
-    };
-
-    let output = serde_json::to_string(&output)
+    eprintln!(
+        "preoptimize: status={:?}, horizon={}, variables={}, constraints={}, elapsed={:.3}s",
+        result.status,
+        result.horizon,
+        result.variable_count,
+        result.constraint_count,
+        start.elapsed().as_secs_f64()
+    );
+    let output = serde_json::to_string(&result)
         .map_err(|err| format!("failed to serialize output json: {err}"))?;
     println!("{output}");
-    println!("Elapsed: {}ms", start.elapsed().as_millis());
     Ok(())
 }
 
-fn read_input() -> Result<String, String> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() >= 2 && args[1] != "-" {
-        fs::read_to_string(&args[1]).map_err(|err| format!("failed to read {}: {err}", args[1]))
-    } else {
-        let mut input = String::new();
-        io::stdin()
-            .read_to_string(&mut input)
-            .map_err(|err| format!("failed to read stdin: {err}"))?;
-        Ok(input)
+fn parse_args(args: Vec<String>) -> Result<Args, String> {
+    const USAGE: &str =
+        "usage: preoptimize <input.json|-> [timelimit] [alpha] [beta] [horizon-margin]";
+    if args.is_empty() || args.len() > 5 {
+        return Err(USAGE.to_string());
     }
+
+    let parse = |index: usize, name: &str, default: f64| -> Result<f64, String> {
+        args.get(index).map_or(Ok(default), |value| {
+            value
+                .parse::<f64>()
+                .map_err(|err| format!("invalid {name} '{value}': {err}"))
+        })
+    };
+
+    Ok(Args {
+        input_path: args[0].clone(),
+        time_limit: parse(1, "timelimit", DEFAULT_TIMELIMIT_SECONDS)?,
+        alpha: parse(2, "alpha", DEFAULT_ALPHA)?,
+        beta: parse(3, "beta", DEFAULT_BETA)?,
+        horizon_margin: args.get(4).map_or(Ok(DEFAULT_HORIZON_MARGIN), |value| {
+            value
+                .parse::<i64>()
+                .map_err(|err| format!("invalid horizon-margin '{value}': {err}"))
+        })?,
+    })
 }
-*/
-fn main() {
-    todo!()
+
+fn read_input(path: &str) -> Result<String, String> {
+    if path != "-" {
+        return fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"));
+    }
+
+    let mut input = String::new();
+    io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|err| format!("failed to read stdin: {err}"))?;
+    Ok(input)
 }

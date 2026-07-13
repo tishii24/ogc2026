@@ -67,19 +67,19 @@ const NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
     (NeighborKind::Swap, 3.),
 ];
 
-const INITIAL_WORKLOAD_WEIGHT_MAX: f64 = 0.1;
-const INITIAL_AREA_WEIGHT_MAX: f64 = 0.2;
-const INITIAL_PREF_SPREAD_WEIGHT_MAX: f64 = 0.1;
-const INITIAL_DUE_URGENCY_WEIGHT_MAX: f64 = 1.;
-const INITIAL_SLACK_URGENCY_WEIGHT_MAX: f64 = 1.;
-const INITIAL_ORDER_RANDOM_WEIGHT_MAX: f64 = 0.2;
+const INITIAL_WORKLOAD_WEIGHT_RANGE: (f64, f64) = (0., 0.1);
+const INITIAL_AREA_WEIGHT_RANGE: (f64, f64) = (-0.2, 0.2);
+const INITIAL_PREF_SPREAD_WEIGHT_RANGE: (f64, f64) = (0., 0.1);
+const INITIAL_DUE_URGENCY_WEIGHT_RANGE: (f64, f64) = (0., 1.);
+const INITIAL_SLACK_URGENCY_WEIGHT_RANGE: (f64, f64) = (0., 1.);
+const INITIAL_ORDER_RANDOM_WEIGHT_RANGE: (f64, f64) = (0., 0.2);
 
-const RECONSTRUCT_WORKLOAD_WEIGHT_MAX: f64 = 1.;
-const RECONSTRUCT_AREA_WEIGHT_MAX: f64 = 1.;
-const RECONSTRUCT_PREF_SPREAD_WEIGHT_MAX: f64 = 1.;
-const RECONSTRUCT_DUE_URGENCY_WEIGHT_MAX: f64 = 1.;
-const RECONSTRUCT_SLACK_URGENCY_WEIGHT_MAX: f64 = 1.;
-const RECONSTRUCT_ORDER_RANDOM_WEIGHT_MAX: f64 = 0.5;
+const RECONSTRUCT_WORKLOAD_WEIGHT_RANGE: (f64, f64) = (0., 1.);
+const RECONSTRUCT_AREA_WEIGHT_RANGE: (f64, f64) = (-0.2, 1.);
+const RECONSTRUCT_PREF_SPREAD_WEIGHT_RANGE: (f64, f64) = (0., 1.);
+const RECONSTRUCT_DUE_URGENCY_WEIGHT_RANGE: (f64, f64) = (0., 1.);
+const RECONSTRUCT_SLACK_URGENCY_WEIGHT_RANGE: (f64, f64) = (0., 1.);
+const RECONSTRUCT_ORDER_RANDOM_WEIGHT_RANGE: (f64, f64) = (0., 0.5);
 
 fn get_temp_scale(worker_id: usize, worker_count: usize) -> f64 {
     if worker_count <= 1 {
@@ -89,25 +89,29 @@ fn get_temp_scale(worker_id: usize, worker_count: usize) -> f64 {
     1. + WORKER_TEMP_SCALE * ratio.powf(2.)
 }
 
+fn gen_rangef(rng: &mut impl Random, r: (f64, f64)) -> f64 {
+    rng.gen_rangef(r.0, r.1)
+}
+
 fn sample_initial_order_weights(rng: &mut impl Random) -> BlockOrderWeights {
     BlockOrderWeights {
-        workload: rng.gen_rangef(0.0, INITIAL_WORKLOAD_WEIGHT_MAX),
-        area: rng.gen_rangef(0.0, INITIAL_AREA_WEIGHT_MAX),
-        pref_spread: rng.gen_rangef(0.0, INITIAL_PREF_SPREAD_WEIGHT_MAX),
-        due_urgency: rng.gen_rangef(0.0, INITIAL_DUE_URGENCY_WEIGHT_MAX),
-        slack_urgency: rng.gen_rangef(0.0, INITIAL_SLACK_URGENCY_WEIGHT_MAX),
-        random: rng.gen_rangef(0.0, INITIAL_ORDER_RANDOM_WEIGHT_MAX),
+        workload: gen_rangef(rng, INITIAL_WORKLOAD_WEIGHT_RANGE),
+        area: gen_rangef(rng, INITIAL_AREA_WEIGHT_RANGE),
+        pref_spread: gen_rangef(rng, INITIAL_PREF_SPREAD_WEIGHT_RANGE),
+        due_urgency: gen_rangef(rng, INITIAL_DUE_URGENCY_WEIGHT_RANGE),
+        slack_urgency: gen_rangef(rng, INITIAL_SLACK_URGENCY_WEIGHT_RANGE),
+        random: gen_rangef(rng, INITIAL_ORDER_RANDOM_WEIGHT_RANGE),
     }
 }
 
 fn sample_reconstruct_order_weights(rng: &mut impl Random) -> BlockOrderWeights {
     BlockOrderWeights {
-        workload: rng.gen_rangef(0.0, RECONSTRUCT_WORKLOAD_WEIGHT_MAX),
-        area: rng.gen_rangef(0.0, RECONSTRUCT_AREA_WEIGHT_MAX),
-        pref_spread: rng.gen_rangef(0.0, RECONSTRUCT_PREF_SPREAD_WEIGHT_MAX),
-        due_urgency: rng.gen_rangef(0.0, RECONSTRUCT_DUE_URGENCY_WEIGHT_MAX),
-        slack_urgency: rng.gen_rangef(0.0, RECONSTRUCT_SLACK_URGENCY_WEIGHT_MAX),
-        random: rng.gen_rangef(0.0, RECONSTRUCT_ORDER_RANDOM_WEIGHT_MAX),
+        workload: gen_rangef(rng, RECONSTRUCT_WORKLOAD_WEIGHT_RANGE),
+        area: gen_rangef(rng, RECONSTRUCT_AREA_WEIGHT_RANGE),
+        pref_spread: gen_rangef(rng, RECONSTRUCT_PREF_SPREAD_WEIGHT_RANGE),
+        due_urgency: gen_rangef(rng, RECONSTRUCT_DUE_URGENCY_WEIGHT_RANGE),
+        slack_urgency: gen_rangef(rng, RECONSTRUCT_SLACK_URGENCY_WEIGHT_RANGE),
+        random: gen_rangef(rng, RECONSTRUCT_ORDER_RANDOM_WEIGHT_RANGE),
     }
 }
 
@@ -115,33 +119,22 @@ fn mutate_initial_order_weights(
     weights: BlockOrderWeights,
     rng: &mut impl Random,
 ) -> BlockOrderWeights {
-    fn mutate(value: f64, min_value: f64, max_value: f64, rng: &mut impl Random) -> f64 {
-        let width = (max_value - min_value) * INITIAL_WEIGHT_MUTATION_SCALE;
-        (value + rng.gen_rangef(-width, width)).clamp(min_value, max_value)
+    fn mutate(value: f64, r: (f64, f64), rng: &mut impl Random) -> f64 {
+        let width = (r.1 - r.0) * INITIAL_WEIGHT_MUTATION_SCALE;
+        (value + rng.gen_rangef(-width, width)).clamp(r.0, r.1)
     }
 
     BlockOrderWeights {
-        workload: mutate(weights.workload, 0.0, INITIAL_WORKLOAD_WEIGHT_MAX, rng),
-        area: mutate(weights.area, 0.0, INITIAL_AREA_WEIGHT_MAX, rng),
-        pref_spread: mutate(
-            weights.pref_spread,
-            0.0,
-            INITIAL_PREF_SPREAD_WEIGHT_MAX,
-            rng,
-        ),
-        due_urgency: mutate(
-            weights.due_urgency,
-            0.0,
-            INITIAL_DUE_URGENCY_WEIGHT_MAX,
-            rng,
-        ),
+        workload: mutate(weights.workload, INITIAL_WORKLOAD_WEIGHT_RANGE, rng),
+        area: mutate(weights.area, INITIAL_AREA_WEIGHT_RANGE, rng),
+        pref_spread: mutate(weights.pref_spread, INITIAL_PREF_SPREAD_WEIGHT_RANGE, rng),
+        due_urgency: mutate(weights.due_urgency, INITIAL_DUE_URGENCY_WEIGHT_RANGE, rng),
         slack_urgency: mutate(
             weights.slack_urgency,
-            0.0,
-            INITIAL_SLACK_URGENCY_WEIGHT_MAX,
+            INITIAL_SLACK_URGENCY_WEIGHT_RANGE,
             rng,
         ),
-        random: mutate(weights.random, 0.0, INITIAL_ORDER_RANDOM_WEIGHT_MAX, rng),
+        random: mutate(weights.random, INITIAL_ORDER_RANDOM_WEIGHT_RANGE, rng),
     }
 }
 
@@ -359,6 +352,7 @@ fn run_annealing_worker(
     let mut accepted = 0usize;
     let mut improved = 0usize;
     let mut neighbor_stats = [NeighborStats::default(); NEIGHBOR_KIND_COUNT];
+    let start = timer.elapsed_seconds();
 
     loop {
         let elapsed = timer.elapsed_seconds();
@@ -379,7 +373,7 @@ fn run_annealing_worker(
             }
         }
 
-        let progress = (elapsed / deadline).clamp(0.0, 1.0);
+        let progress = (elapsed / (deadline - start).max(1e-4)).clamp(0.0, 1.0);
         let start_temp = (problem.weights.w1 / TEMP_WEIGHT_DIVISOR).max(1e-9);
         let end_temp = (problem.weights.w3 / TEMP_WEIGHT_DIVISOR).max(1e-9);
         let temp = temp_scale * start_temp * (end_temp / start_temp).powf(progress);
