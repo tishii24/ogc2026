@@ -4,8 +4,8 @@ use crate::{
     preoptimize::{PreoptimizeParams, PreoptimizedBlock},
     preoptimize2::preoptimize_annealing,
     solver_util::{
-        NeighborKind, NeighborStats, format_neighbor_stats, guidance_block_distance,
-        guidance_distance, sample_neighbor, schedule_to_solution, score_schedule, score13_block,
+        NeighborKind, NeighborStats, format_neighbor_stats, guidance_distance, sample_neighbor,
+        schedule_to_solution, score_schedule, score13_block,
     },
     util::{
         rand::{RandPcg64Mcg, Random},
@@ -36,19 +36,18 @@ const BEST_EXCHANGE_INTERVAL: usize = 2_000;
 const TABU_SIZE: usize = 4_096;
 
 const PREOPTIMIZE_TIME_RATIO: f64 = 0.1;
-const MAX_PREOPTIMIZE_SECONDS: f64 = 30.;
+const MAX_PREOPTIMIZE_SECONDS: f64 = 10.;
 const PREOPTIMIZE_ALPHA: f64 = 0.8;
 const PREOPTIMIZE_BETA: f64 = 1.;
-const GUIDED_PHASE_RATIO: f64 = 0.5;
+const GUIDED_PHASE_RATIO: f64 = 0.3;
 const GUIDE_BAY_MISMATCH_PENALTY: f64 = 1_000_000.;
-const GUIDE_END_TEMP_RATIO: f64 = 1e-3;
 
 pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
 
-const MAX_INITIAL_SEARCH_SECONDS: f64 = 30.;
-const BASE_INITIAL_SEARCH_TIME_RATIO: f64 = 0.3;
+const MAX_INITIAL_SEARCH_SECONDS: f64 = 20.;
+const BASE_INITIAL_SEARCH_TIME_RATIO: f64 = 0.2;
 const INITIAL_GOOD_WEIGHT_POOL_SIZE: usize = 32;
 const INITIAL_EXPLOIT_PROB: f64 = 0.25;
 const INITIAL_WEIGHT_MUTATION_SCALE: f64 = 0.2;
@@ -323,10 +322,10 @@ fn run_annealing_worker(
     let mut rng = RandPcg64Mcg::new(RNG_SEED.wrapping_add(worker_id as u64));
     let temp_scale = get_temp_scale(worker_id, worker_count);
     let mut current = initial.to_vec();
-    let mut current_eval = guidance_distance(&current, guidance, GUIDE_BAY_MISMATCH_PENALTY);
-    let mut best_guided_eval = current_eval;
+    let mut current_eval = score_schedule(problem, pre, &current);
+    let mut best_fixed_bay_score = current_eval;
     let mut best = current.clone();
-    let mut best_score = score_schedule(problem, pre, &current);
+    let mut best_score = current_eval;
     let mut tabu_queue = VecDeque::with_capacity(TABU_SIZE);
     let mut tabu_set = HashSet::with_capacity(TABU_SIZE * 2);
     push_tabu(hash_schedule(&current), &mut tabu_queue, &mut tabu_set);
@@ -336,8 +335,8 @@ fn run_annealing_worker(
     let mut neighbor_stats = [NeighborStats::default(); NEIGHBOR_KIND_COUNT];
     let start = timer.elapsed_seconds();
     let guided_deadline = start + GUIDED_PHASE_RATIO * (deadline - start).max(0.0);
-    let guide_start_temp = (current_eval / problem.blocks.len().max(1) as f64).max(1.0);
-    let guide_end_temp = guide_start_temp * GUIDE_END_TEMP_RATIO;
+    let start_temp = (problem.weights.w1 / TEMP_WEIGHT_DIVISOR).max(1e-9);
+    let end_temp = (problem.weights.w3 / TEMP_WEIGHT_DIVISOR).max(1e-9);
     let mut guided_phase = true;
 
     loop {
@@ -354,9 +353,9 @@ fn run_annealing_worker(
             push_tabu(hash_schedule(&current), &mut tabu_queue, &mut tabu_set);
             log!(
                 timer,
-                "worker {} switch to actual score: distance={:.3}, score={:.3}",
+                "worker {} release bay assignment: distance={:.3}, score={:.3}",
                 worker_id,
-                best_guided_eval,
+                guidance_distance(&current, guidance, GUIDE_BAY_MISMATCH_PENALTY),
                 current_eval
             );
         }
@@ -373,17 +372,12 @@ fn run_annealing_worker(
             }
         }
 
-        let temp = if guided_phase {
-            let progress =
-                ((elapsed - start) / (guided_deadline - start).max(1e-4)).clamp(0.0, 1.0);
-            temp_scale * guide_start_temp * (guide_end_temp / guide_start_temp).powf(progress)
+        let phase_progress = if guided_phase {
+            ((elapsed - start) / (guided_deadline - start).max(1e-4)).clamp(0.0, 1.0)
         } else {
-            let progress = ((elapsed - guided_deadline) / (deadline - guided_deadline).max(1e-4))
-                .clamp(0.0, 1.0);
-            let start_temp = (problem.weights.w1 / TEMP_WEIGHT_DIVISOR).max(1e-9);
-            let end_temp = (problem.weights.w3 / TEMP_WEIGHT_DIVISOR).max(1e-9);
-            temp_scale * start_temp * (end_temp / start_temp).powf(progress)
+            ((elapsed - guided_deadline) / (deadline - guided_deadline).max(1e-4)).clamp(0.0, 1.0)
         };
+        let temp = temp_scale * start_temp * (end_temp / start_temp).powf(phase_progress);
         let active_guidance = guided_phase.then_some(guidance);
 
         let neighbor = sample_neighbor(&mut rng, NEIGHBOR_PROBS);
@@ -398,7 +392,7 @@ fn run_annealing_worker(
                 pre,
                 &current,
                 &mut rng,
-                (!guided_phase).then_some(accept_threshold),
+                Some(accept_threshold),
                 active_guidance,
             ),
             NeighborKind::Shift => {
@@ -422,18 +416,10 @@ fn run_annealing_worker(
 
         let candidate_hash = hash_schedule(&candidate);
         let tabu = tabu_set.contains(&candidate_hash);
-        let candidate_eval = if guided_phase {
-            guidance_distance(&candidate, guidance, GUIDE_BAY_MISMATCH_PENALTY)
-        } else {
-            score_schedule(problem, pre, &candidate)
-        };
-        let candidate_actual_score = if guided_phase {
-            score_schedule(problem, pre, &candidate)
-        } else {
-            candidate_eval
-        };
+        let candidate_eval = score_schedule(problem, pre, &candidate);
+        let candidate_actual_score = candidate_eval;
         let aspiration = if guided_phase {
-            candidate_eval + 1e-9 < best_guided_eval
+            candidate_eval + 1e-9 < best_fixed_bay_score
         } else {
             candidate_actual_score + 1e-9 < best_score
         };
@@ -454,11 +440,11 @@ fn run_annealing_worker(
             accepted += 1;
             neighbor_stats[neighbor_idx].accepted += 1;
 
-            if guided_phase && current_eval + 1e-9 < best_guided_eval {
-                best_guided_eval = current_eval;
+            if guided_phase && current_eval + 1e-9 < best_fixed_bay_score {
+                best_fixed_bay_score = current_eval;
                 log!(
                     timer,
-                    "worker {} new best distance: {:.3}",
+                    "worker {} new best fixed-bay score: {:.3}",
                     worker_id,
                     current_eval
                 );
@@ -545,12 +531,7 @@ fn search_initial_schedule(
             if state
                 .best
                 .as_ref()
-                .is_none_or(|(best_distance, best_score, _)| {
-                    distance
-                        .total_cmp(best_distance)
-                        .then(score.total_cmp(best_score))
-                        .is_lt()
-                })
+                .is_none_or(|(_, best_score, _)| score + 1e-9 < *best_score)
             {
                 log!(
                     timer,
@@ -609,14 +590,10 @@ fn update_good_weight_pool(
     let worst_idx = pool
         .iter()
         .enumerate()
-        .max_by(|(_, a), (_, b)| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)))
+        .max_by(|(_, a), (_, b)| a.1.total_cmp(&b.1))
         .map(|(idx, _)| idx)
         .unwrap();
-    if distance
-        .total_cmp(&pool[worst_idx].0)
-        .then(score.total_cmp(&pool[worst_idx].1))
-        .is_lt()
-    {
+    if score + 1e-9 < pool[worst_idx].1 {
         pool[worst_idx] = (distance, score, weights);
     }
 }
@@ -696,8 +673,8 @@ fn build_initial_schedule_with_order(
             orient_idx: 0,
             x: 0,
             y: 0,
-            entry_time: target.entry_time,
-            exit_time: target.entry_time + block.processing_time,
+            entry_time: block.release_time,
+            exit_time: block.release_time + block.processing_time,
         };
         let fixed_bay = [target.bay_id];
         let scheduled = insert_greedy(
@@ -708,9 +685,7 @@ fn build_initial_schedule_with_order(
             &loads,
             INSERT_PARAMS,
             &fixed_bay,
-            InsertMode::ClosestTo {
-                target_time: target.entry_time,
-            },
+            InsertMode::Earliest,
         )?;
         loads[scheduled.bay_id] += block.workload as f64;
         schedule.push(scheduled);
@@ -719,10 +694,8 @@ fn build_initial_schedule_with_order(
     Some(schedule)
 }
 
-fn insert_mode(guidance: Option<&[PreoptimizedBlock]>, block_id: usize) -> InsertMode {
-    guidance.map_or(InsertMode::Earliest, |guidance| InsertMode::ClosestTo {
-        target_time: guidance[block_id].entry_time,
-    })
+fn insert_mode(_guidance: Option<&[PreoptimizedBlock]>, _block_id: usize) -> InsertMode {
+    InsertMode::Earliest
 }
 
 fn try_large_reconstruct<R: Random>(
@@ -1095,26 +1068,8 @@ fn try_move_neighbor<R: Random>(
     indices.truncate(MOVE_SMALL_POOL_SIZE.min(indices.len()));
 
     let idx = indices.into_iter().max_by(|&a, &b| {
-        let sa = guidance.map_or_else(
-            || move_obj13(problem, pre, schedule[a]),
-            |guidance| {
-                guidance_block_distance(
-                    schedule[a],
-                    guidance[schedule[a].block_id],
-                    GUIDE_BAY_MISMATCH_PENALTY,
-                )
-            },
-        );
-        let sb = guidance.map_or_else(
-            || move_obj13(problem, pre, schedule[b]),
-            |guidance| {
-                guidance_block_distance(
-                    schedule[b],
-                    guidance[schedule[b].block_id],
-                    GUIDE_BAY_MISMATCH_PENALTY,
-                )
-            },
-        );
+        let sa = move_obj13(problem, pre, schedule[a]);
+        let sb = move_obj13(problem, pre, schedule[b]);
         sa.total_cmp(&sb).then(
             pre.block_area[schedule[b].block_id].total_cmp(&pre.block_area[schedule[a].block_id]),
         )
@@ -1165,7 +1120,7 @@ fn choose_removed_blocks<R: Random>(
     schedule: &[ScheduledBlock],
     k: usize,
     rng: &mut R,
-    guidance: Option<&[PreoptimizedBlock]>,
+    _guidance: Option<&[PreoptimizedBlock]>,
 ) -> Vec<usize> {
     fn scheduled_center(pre: &Precompute, s: ScheduledBlock) -> (f64, f64) {
         let (cx, cy) = pre.orientation_bbox_center[s.block_id][s.orient_idx];
@@ -1207,21 +1162,16 @@ fn choose_removed_blocks<R: Random>(
 
     let mut badness = vec![0.0; problem.blocks.len()];
     for &s in schedule {
-        badness[s.block_id] = guidance.map_or_else(
-            || {
-                let block = &problem.blocks[s.block_id];
-                let tardiness = (s.exit_time - block.due_date).max(0);
-                let pref_penalty = pre.pref_penalty[s.block_id][s.bay_id];
-                tardiness as f64 * problem.weights.w1
-                    + pref_penalty as f64 * problem.weights.w3
-                    + if Some(s.bay_id) == heavy_bay {
-                        problem.weights.w2
-                    } else {
-                        0.
-                    }
-            },
-            |guidance| guidance_block_distance(s, guidance[s.block_id], GUIDE_BAY_MISMATCH_PENALTY),
-        );
+        let block = &problem.blocks[s.block_id];
+        let tardiness = (s.exit_time - block.due_date).max(0);
+        let pref_penalty = pre.pref_penalty[s.block_id][s.bay_id];
+        badness[s.block_id] = tardiness as f64 * problem.weights.w1
+            + pref_penalty as f64 * problem.weights.w3
+            + if Some(s.bay_id) == heavy_bay {
+                problem.weights.w2
+            } else {
+                0.
+            };
     }
 
     let mut by_block = vec![None; problem.blocks.len()];

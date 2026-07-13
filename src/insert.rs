@@ -12,6 +12,7 @@ pub(crate) struct InsertSearchParams {
     pub y_buffer: i64,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub(crate) enum InsertMode {
     Earliest,
