@@ -66,21 +66,3 @@ s = 抽象解（bay-id, entry-t）
 
 note:
 - 3.まではbayの大きさ・ブロックの数ごとにリソースを比例して与えられる
-
-```
-initialize P
-current-state := None
-while elapsed-time < deadline {
-  abstract-state := preoptimize(\alpha, \beta, state)
-
-  if state is None {
-    state = initialize(abstract-state)
-  }
-
-  while state.score > abstract-state.score {
-    optimize with abstract-state
-  }
-  
-  P <- \eta * P
-}
-```
