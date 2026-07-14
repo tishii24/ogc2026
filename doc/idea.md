@@ -20,22 +20,54 @@ preoptimize: MILPソルバーによって近似問題の解を求める
     - b_i := ブロックiの各layerのunionを取った図形のbboxの面積
     - c_j := bay jに一つ配置することで増える占有面積（多いブロックほど配置しづらくなることを表す）
       - c_j := \beta * min(bay.width, bay.height)
-- 占有面積のパラメータとして、(\alpha, \beta)がある
-- MILPソルバーによって、(\alpha, \beta)の元での(bay-id, entry-t)が得られる
+- 占有面積のパラメータとして、Pがある
+- MILPソルバーによって、Pの元での(bay-id, entry-t)が得られる
 - note: \alpha = \beta = 0 とすると、充填率100%となり、厳密な下界が得られるはず？
 
-最適化
-1. (\alpha, \beta)を適当な値に設定して、preoptimizeを実行することで誘導解Sを得る
-2. 実行可能な初期解をSに近づけるように貪欲法で作成する
-  - bayの割り当てを固定して、ブロックの挿入順序を調整して挿入する
-3. 局所探索
-  - E := (1-\gamma) * D(s, S) + \gamma * E(s)
-    - D(s, S) := 誘導解Sとの距離
-    - E(s) := 実スコア
-  - 実行可能性は崩さないまま探索をする
-  -　E_sがpreoptimizeで得られた解のスコアを達成した場合
-    - より良いスコアを持つ解が得られるまで(\alpha, \beta)を小さくしてpreoptimizeを実行して、Sを更新する
-  - D(s,S) := \sum_{i} (s.entry_t[i] - S.entry_t[i])^2 + (if s.bay-id[i] != S.bay-id[i] then \lambda else 0)
-    - とりあえず、\gamma=0,1の時だけ考え、0の時にはbayを跨がない移動とする
-  - \gamma(p) \in [0,1]
-    - 最初はスケジュールせず、一定時間過ぎたら0->1にする
+課題:
+- Pの設定
+  - 無駄な誘導解Sに向かう時間を無くしたい
+  - 実行不可能な(alpha,beta)に向かう時間も避けたい
+- いつ制約を無くすべきか
+- どのように誘導解に向かうか
+
+解法:
+P = (alpha, beta)
+1. Pを適当な値に設定して、preoptimizeを実行することで誘導解Sを得る
+  - 評価: (E(s'), D(s,s'))
+    - E(s) := 状態sの生スコア
+    - D(s,s') := 状態s,s'の距離
+      - bayごとに異なる
+  - 現在の状態から離れ過ぎないように正則化をかける
+  - TODO: 詰めやすさをタイブレークのスコアとして導入する
+2. 順序制約を計算する
+  - is_before[i][j] := (i,j)について、end[i]<=start[j]なら順序を固定する
+  - befores[i] := iより前におく必要があるブロック
+3. bayごとに、前から順に詰めて貪欲解を作成する
+  - 順序制約を守った範囲内で、ブロックの順番をランダムに選ぶ
+4. bayごとに独立にannealing
+  - 順序制約を守る
+  - 目標tardinessに達成したら、そのbayでの探索は行わない
+5. bay間の移動も許してannealing
+  - TODO: より良いスコアを持つ解が得られるまでPを小さくして preoptimize を実行して、Sを更新する
+
+note:
+- 3.まではbayの大きさ・ブロックの数ごとにリソースを比例して与えられる
+
+```
+initialize P
+current-state := None
+while elapsed-time < deadline {
+  abstract-state := preoptimize(\alpha, \beta, state)
+
+  if state is None {
+    state = initialize(abstract-state)
+  }
+
+  while state.score > abstract-state.score {
+    optimize with abstract-state
+  }
+  
+  P <- \eta * P
+}
+```

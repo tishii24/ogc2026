@@ -43,6 +43,8 @@ solver:
 - 初期解改善
 - 高速化
   - insert-greedy
+- 評価の改善
+  - 同じような時刻のブロックを近くに集めると、後のブロックを入れやすくなる
 - 調整
   - start-temp,end-tempの推定
   - dx,dyをnon-positiveに限定する
