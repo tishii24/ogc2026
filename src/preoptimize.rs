@@ -1,9 +1,9 @@
 use crate::{
     Bay, Orientation, Problem,
+    solver::{PreoptimizeState, PreoptimizedBlock},
     util::rand::{RandPcg64Mcg, Random},
 };
 use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
-use serde::Serialize;
 use std::time::Instant;
 
 #[derive(Clone, Copy, Debug)]
@@ -19,23 +19,6 @@ pub struct PreoptimizeParams {
     pub max_relocate_attempts: usize,
     pub max_time_shift: i64,
     pub end_temperature_ratio: f64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub struct PreoptimizedBlock {
-    pub bay_id: usize,
-    pub entry_time: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PreoptimizeResult {
-    pub objective: f64,
-    pub regularized_objective: f64,
-    pub z1: f64,
-    pub z2: f64,
-    pub z3: f64,
-    pub bay_distance: usize,
-    pub blocks: Vec<PreoptimizedBlock>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -153,8 +136,9 @@ impl PreoptimizePrecompute {
 
 struct PreoptimizeContext<'a> {
     pre: &'a PreoptimizePrecompute,
-    reference: Option<&'a [PreoptimizedBlock]>,
+    reference: Option<&'a PreoptimizeState>,
     occupancy: Vec<Vec<Option<f64>>>,
+    bay_capacities: Vec<f64>,
     max_time: i64,
 }
 
@@ -264,8 +248,7 @@ fn build_occupancy(
             problem
                 .bays
                 .iter()
-                .enumerate()
-                .map(|(bay_id, bay)| {
+                .map(|bay| {
                     let extra = params.beta * bay.width.min(bay.height) as f64;
                     areas
                         .iter()
@@ -276,7 +259,6 @@ fn build_occupancy(
                                 + params.alpha * (area.bbox_area - area.union_area)
                                 + extra
                         })
-                        .filter(|&area| area <= pre.bay_areas[bay_id] + 1e-9)
                         .min_by(f64::total_cmp)
                 })
                 .collect()
@@ -290,11 +272,68 @@ fn build_occupancy(
     Ok(occupancy)
 }
 
+fn build_reference_state(
+    problem: &Problem,
+    context: &mut PreoptimizeContext<'_>,
+) -> Result<AnnealingState, String> {
+    let reference = context.reference.unwrap();
+    let reference_max_exit = reference
+        .blocks
+        .iter()
+        .enumerate()
+        .map(|(block_id, selected)| selected.entry_time + problem.blocks[block_id].processing_time)
+        .max()
+        .unwrap_or(context.pre.min_time);
+
+    let max_due = problem
+        .blocks
+        .iter()
+        .map(|block| block.due_date)
+        .max()
+        .unwrap();
+    context.max_time = reference_max_exit.max(max_due.min(context.pre.search_horizon));
+    let time_count: usize = (context.max_time - context.pre.min_time)
+        .try_into()
+        .map_err(|_| "reference time range is too large".to_string())?;
+    let mut used_area = vec![vec![0.0; time_count]; problem.bays.len()];
+    let mut loads = vec![0.0; problem.bays.len()];
+    for (block_id, &selected) in reference.blocks.iter().enumerate() {
+        add_used_area(problem, context, &mut used_area, block_id, selected, 1.0);
+        loads[selected.bay_id] += problem.blocks[block_id].workload as f64;
+    }
+    for (bay_id, row) in used_area.iter().enumerate() {
+        let peak = row.iter().copied().fold(0.0, f64::max);
+        context.bay_capacities[bay_id] = context.bay_capacities[bay_id].max(peak);
+    }
+
+    let schedule = reference.blocks.clone();
+    let (_, z1, z2, z3) = evaluate_schedule(
+        problem,
+        &context.pre.pref_penalty,
+        &context.pre.bay_load_scale,
+        &schedule,
+    );
+    Ok(AnnealingState {
+        schedule,
+        used_area,
+        loads,
+        z1,
+        z2,
+        z3,
+        objective: reference.score,
+        bay_distance: 0,
+    })
+}
+
 fn build_initial_state(
     problem: &Problem,
     context: &mut PreoptimizeContext<'_>,
     params: PreoptimizeParams,
 ) -> Result<AnnealingState, String> {
+    if context.reference.is_some() {
+        return build_reference_state(problem, context);
+    }
+
     let time_count: usize = (context.pre.search_horizon - context.pre.min_time)
         .try_into()
         .map_err(|_| "greedy time range is too large".to_string())?;
@@ -336,7 +375,7 @@ fn build_initial_state(
             let entry_time = (block.release_time..=last_entry).find(|&entry_time| {
                 (entry_time..entry_time + block.processing_time).all(|time| {
                     used_area[bay_id][(time - context.pre.min_time) as usize] + occupied_area
-                        <= context.pre.bay_areas[bay_id] + 1e-9
+                        <= context.bay_capacities[bay_id] + 1e-9
                 })
             });
             let Some(entry_time) = entry_time else {
@@ -348,7 +387,7 @@ fn build_initial_state(
             let tardiness = (entry_time + block.processing_time - block.due_date).max(0);
             let distance = context
                 .reference
-                .is_some_and(|reference| reference[block_id].bay_id != bay_id);
+                .is_some_and(|reference| reference.blocks[block_id].bay_id != bay_id);
             let score = problem.weights.w1 * tardiness as f64
                 + problem.weights.w2
                     * (normalized_imbalance(&next_loads, &context.pre.bay_load_scale)
@@ -412,7 +451,7 @@ fn build_initial_state(
     let bay_distance = context.reference.map_or(0, |reference| {
         schedule
             .iter()
-            .zip(reference)
+            .zip(&reference.blocks)
             .filter(|(selected, reference)| selected.bay_id != reference.bay_id)
             .count()
     });
@@ -444,7 +483,7 @@ fn block_distance(
 ) -> usize {
     context
         .reference
-        .is_some_and(|reference| reference[block_id].bay_id != selected.bay_id) as usize
+        .is_some_and(|reference| reference.blocks[block_id].bay_id != selected.bay_id) as usize
 }
 
 fn add_used_area(
@@ -480,7 +519,7 @@ fn can_place(
     };
     (selected.entry_time..selected.entry_time + block.processing_time).all(|time| {
         used_area[selected.bay_id][(time - context.pre.min_time) as usize] + area
-            <= context.pre.bay_areas[selected.bay_id] + 1e-9
+            <= context.bay_capacities[selected.bay_id] + 1e-9
     })
 }
 
@@ -701,14 +740,15 @@ fn try_swap(
 pub fn preoptimize(
     problem: &Problem,
     pre: &PreoptimizePrecompute,
-    reference: Option<&[PreoptimizedBlock]>,
+    reference: Option<&PreoptimizeState>,
     params: PreoptimizeParams,
-) -> Result<PreoptimizeResult, String> {
+) -> Result<PreoptimizeState, String> {
     let occupancy = build_occupancy(problem, pre, params)?;
     let mut context = PreoptimizeContext {
         pre,
         reference,
         occupancy,
+        bay_capacities: pre.bay_areas.clone(),
         max_time: pre.search_horizon,
     };
     let mut state = build_initial_state(problem, &mut context, params)?;
@@ -753,25 +793,14 @@ pub fn preoptimize(
         }
     }
 
-    let (objective, z1, z2, z3) = evaluate_schedule(
+    let (objective, _, _, _) = evaluate_schedule(
         problem,
         &context.pre.pref_penalty,
         &context.pre.bay_load_scale,
         &best,
     );
-    let bay_distance = reference.map_or(0, |reference| {
-        best.iter()
-            .zip(reference)
-            .filter(|(selected, reference)| selected.bay_id != reference.bay_id)
-            .count()
-    });
-    Ok(PreoptimizeResult {
-        objective,
-        regularized_objective: objective + params.distance_weight * bay_distance as f64,
-        z1,
-        z2,
-        z3,
-        bay_distance,
+    Ok(PreoptimizeState {
+        score: objective,
         blocks: best,
     })
 }

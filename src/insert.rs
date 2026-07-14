@@ -58,6 +58,8 @@ pub(crate) fn insert_greedy(
     problem: &Problem,
     pre: &Precompute,
     original: ScheduledBlock,
+    min_entry_time: i64,
+    max_entry_time: i64,
     schedule: &[ScheduledBlock],
     loads: &[f64],
     params: InsertSearchParams,
@@ -76,8 +78,11 @@ pub(crate) fn insert_greedy(
     let block_id = original.block_id;
     let block = &problem.blocks[block_id];
     let process_t = block.processing_time;
-    let min_t = block.release_time;
-    let max_t = i64::MAX;
+    let min_t = block.release_time.max(min_entry_time);
+    let max_t = max_entry_time;
+    if min_t > max_t {
+        return None;
+    }
 
     let current_obj2 = normalized_imbalance(pre, loads);
     let original_tardiness = (original.exit_time - block.due_date).max(0);
@@ -270,6 +275,8 @@ pub(crate) fn try_place_block(
     orient_idx: usize,
     x: i64,
     y: i64,
+    min_entry_time: i64,
+    max_entry_time: i64,
 ) -> Option<ScheduledBlock> {
     let block = &problem.blocks[block_id];
     let tentative = ScheduledBlock {
@@ -281,7 +288,11 @@ pub(crate) fn try_place_block(
         entry_time: 0,
         exit_time: block.processing_time,
     };
-    let entry_time = get_insert_t(pre, tentative, schedule, block.release_time, i64::MAX)?;
+    let min_entry_time = block.release_time.max(min_entry_time);
+    if min_entry_time > max_entry_time {
+        return None;
+    }
+    let entry_time = get_insert_t(pre, tentative, schedule, min_entry_time, max_entry_time)?;
     Some(ScheduledBlock {
         entry_time,
         exit_time: entry_time + block.processing_time,

@@ -59,7 +59,7 @@ fn run() -> Result<(), String> {
 
     eprintln!(
         "preoptimize: objective={:.3}, elapsed={:.3}s",
-        result.objective,
+        result.score,
         start.elapsed().as_secs_f64()
     );
     let output = serde_json::to_string(&result)
