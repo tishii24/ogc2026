@@ -19,7 +19,6 @@ pub struct PreoptimizeParams {
     pub alpha: f64,
     pub beta: f64,
     pub time_limit: f64,
-    pub horizon_margin: i64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -44,7 +43,6 @@ pub struct PreoptimizeResult {
     pub z2: f64,
     pub z3: f64,
     pub blocks: Vec<PreoptimizedBlock>,
-    pub horizon: i64,
     pub variable_count: usize,
     pub constraint_count: usize,
     pub mip_gap: Option<f64>,
@@ -58,10 +56,9 @@ pub(crate) struct PreoptimizeData {
     pub bay_load_scale: Vec<f64>,
     pub pref_penalty: Vec<Vec<i64>>,
     pub min_time: i64,
-    pub horizon: i64,
+    pub max_time: i64,
     pub initial: Vec<PreoptimizedBlock>,
     pub initial_objective: f64,
-    pub initial_z2: f64,
 }
 
 struct AnnealingState {
@@ -95,7 +92,7 @@ fn normalized_imbalance(loads: &[f64], bay_load_scale: &[f64]) -> f64 {
         min_load = min_load.min(normalized);
         max_load = max_load.max(normalized);
     }
-    max_load - min_load
+    (max_load - min_load).floor()
 }
 
 pub(crate) fn evaluate_schedule(
@@ -322,9 +319,6 @@ pub(crate) fn prepare_preoptimize(
     if !params.time_limit.is_finite() || params.time_limit <= 0.0 {
         return Err("time_limit must be a finite positive number".to_string());
     }
-    if params.horizon_margin < 0 {
-        return Err("horizon_margin must be non-negative".to_string());
-    }
     for (block_id, block) in problem.blocks.iter().enumerate() {
         if block.processing_time <= 0 {
             return Err(format!("block {block_id} has non-positive processing_time"));
@@ -370,10 +364,9 @@ pub(crate) fn prepare_preoptimize(
             bay_load_scale,
             pref_penalty,
             min_time: 0,
-            horizon: 0,
+            max_time: 0,
             initial: Vec::new(),
             initial_objective: 0.0,
-            initial_z2: 0.0,
         });
     }
 
@@ -404,24 +397,15 @@ pub(crate) fn prepare_preoptimize(
         min_time,
         search_horizon,
     )?;
-    let (initial_objective, _, initial_z2, _) =
+    let (initial_objective, _, _, _) =
         evaluate_schedule(problem, &pref_penalty, &bay_load_scale, &initial);
-    let greedy_max_exit = initial
+
+    let max_time = initial
         .iter()
         .enumerate()
         .map(|(block_id, selected)| selected.entry_time + problem.blocks[block_id].processing_time)
         .max()
-        .unwrap();
-    let max_due = problem
-        .blocks
-        .iter()
-        .map(|block| block.due_date)
-        .max()
-        .unwrap();
-    let horizon = greedy_max_exit
-        .max(max_due)
-        .checked_add(params.horizon_margin)
-        .ok_or_else(|| "preoptimize horizon overflowed i64".to_string())?;
+        .unwrap_or(0);
 
     Ok(PreoptimizeData {
         occupancy,
@@ -429,10 +413,9 @@ pub(crate) fn prepare_preoptimize(
         bay_load_scale,
         pref_penalty,
         min_time,
-        horizon,
+        max_time,
         initial,
         initial_objective,
-        initial_z2,
     })
 }
 
@@ -468,11 +451,6 @@ fn can_place(
     selected: PreoptimizedBlock,
 ) -> bool {
     let block = &problem.blocks[block_id];
-    if selected.entry_time < block.release_time
-        || selected.entry_time + block.processing_time > data.horizon
-    {
-        return false;
-    }
     let Some(area) = data.occupancy[block_id][selected.bay_id] else {
         return false;
     };
@@ -483,7 +461,7 @@ fn can_place(
 }
 
 fn build_state(problem: &Problem, data: &PreoptimizeData) -> AnnealingState {
-    let time_count = (data.horizon - data.min_time) as usize;
+    let time_count = (data.max_time - data.min_time) as usize + 50;
     let mut used_area = vec![vec![0.0; time_count]; problem.bays.len()];
     let mut loads = vec![0.0; problem.bays.len()];
     for (block_id, &selected) in data.initial.iter().enumerate() {
@@ -540,7 +518,7 @@ fn sample_entry_time(
 ) -> i64 {
     let block = &problem.blocks[block_id];
     let min_time = block.release_time;
-    let max_time = data.horizon - block.processing_time;
+    let max_time = data.max_time - block.processing_time;
     match rng.gen_range(0, 4) {
         0 => min_time,
         1 => (block.due_date - block.processing_time).clamp(min_time, max_time),
@@ -750,7 +728,6 @@ pub fn preoptimize_annealing(
         z2,
         z3,
         blocks: best,
-        horizon: data.horizon,
         variable_count: 0,
         constraint_count: 0,
         mip_gap: None,

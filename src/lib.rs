@@ -2,7 +2,6 @@ pub mod collision;
 pub mod insert;
 pub mod precompute;
 pub mod preoptimize;
-pub mod preoptimize_highs;
 pub mod solver;
 pub mod solver_util;
 pub mod util;

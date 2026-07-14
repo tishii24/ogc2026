@@ -4,13 +4,11 @@ use std::io::{self, Read};
 use std::process;
 use std::time::Instant;
 
-use ogc2026::preoptimize_highs::preoptimize_highs;
 use ogc2026::{Problem, preoptimize::PreoptimizeParams, preoptimize::preoptimize_annealing};
 
 const DEFAULT_TIMELIMIT_SECONDS: f64 = 60.0;
 const DEFAULT_ALPHA: f64 = 0.0;
 const DEFAULT_BETA: f64 = 0.0;
-const DEFAULT_HORIZON_MARGIN: i64 = 10;
 
 enum Method {
     Milp,
@@ -23,7 +21,6 @@ struct Args {
     time_limit: f64,
     alpha: f64,
     beta: f64,
-    horizon_margin: i64,
 }
 
 fn main() {
@@ -43,17 +40,15 @@ fn run() -> Result<(), String> {
         alpha: args.alpha,
         beta: args.beta,
         time_limit: args.time_limit,
-        horizon_margin: args.horizon_margin,
     };
     let result = match args.method {
-        Method::Milp => preoptimize_highs(&problem, params),
+        Method::Milp => panic!("milp is not supported"),
         Method::Annealing => preoptimize_annealing(&problem, params),
     }?;
 
     eprintln!(
-        "preoptimize: status={:?}, horizon={}, variables={}, constraints={}, elapsed={:.3}s",
+        "preoptimize: status={:?}, variables={}, constraints={}, elapsed={:.3}s",
         result.status,
-        result.horizon,
         result.variable_count,
         result.constraint_count,
         start.elapsed().as_secs_f64()
@@ -94,11 +89,6 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
         time_limit: parse(2, "timelimit", DEFAULT_TIMELIMIT_SECONDS)?,
         alpha: parse(3, "alpha", DEFAULT_ALPHA)?,
         beta: parse(4, "beta", DEFAULT_BETA)?,
-        horizon_margin: args.get(5).map_or(Ok(DEFAULT_HORIZON_MARGIN), |value| {
-            value
-                .parse::<i64>()
-                .map_err(|err| format!("invalid horizon-margin '{value}': {err}"))
-        })?,
     })
 }
 
