@@ -1,14 +1,6 @@
-課題:
-- 大きいケースで良い解を作る
-  - 良い初期解を作る
-    - beam-search?
-    - パラメータを増やす
-  - 高速化
-- 最適解が得やすいケースを小さいケースを落とさない
-  - 幅広く探索する
-
 todo:
-- preblock-area
+- pre.block-areaの修正
+  - unionを使う
 - reconstructの改善
   - targeted-reconstruct
   - obj23を軽視する

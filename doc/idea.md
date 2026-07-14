@@ -62,17 +62,18 @@ s = 抽象解（bay-id, entry-t）
   - 目標tardinessに達成したら、そのbayでの探索は行わない
   - 全てのbayで目標tardinessを達成したらPを小さくして1に戻る
   - 残り時間が一定時間が20secを切ったら、5に行く
+  - tardinessだけを考慮すれば良いので、tardinessとして温度を0.1~0.001に設定する
 5. bay間の移動も許してannealing
-
-note:
-- 3.まではbayの大きさ・ブロックの数ごとにリソースを比例して与えられる
 
 1. preoptimize.rs` を参照解初期化・有効容量対応にする。
 2. `insert.rs` に `min_entry_time`, `max_entry_time` を追加する。
 3. `solver.rs` に `ScheduledBlock → Vec<PreoptimizedBlock>` を追加する。
 4. 同一ベイ内の順序制約 `befores/afters` を構築する。
 5. 制約付きトポロジカル順序生成とベイ別貪欲構築を追加する。
-6. Shift/Rotateだけでベイ別SAを実装する。
+6. ベイ別SAを実装する。
 7. `P` の外側ループを接続する。
-8. LargeReconstructなどを順序制約対応する。
-9. 残り時間で現行のベイ間移動あり全体SAへ切り替える。
+
+todo:
+- rayによる並列化
+  - bay.area * block-count に比例してリソースを与える
+- preoptimizeの改善
