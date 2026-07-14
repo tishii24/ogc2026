@@ -33,21 +33,31 @@ preoptimize: MILPソルバーによって近似問題の解を求める
 
 解法:
 P = (alpha, beta)
-1. Pを適当な値に設定して、preoptimizeを実行することで誘導解Sを得る
-  - 評価: (E(s'), D(s,s'))
+S = 状態
+s = 抽象解（bay-id, entry-t）
+1. Pを適当な値に設定して、preoptimizeを実行することで抽象解sを得る
+  - s_cur := S.to_s()
+  - 評価: (E(s), D(s, s_cur))
     - E(s) := 状態sの生スコア
-    - D(s,s') := 状態s,s'の距離
-      - bayごとに異なる
-  - 現在の状態から離れ過ぎないように正則化をかける
+    - D(s, s_cur) := 状態s,s_curの距離
+      - bay-idが異なるblockの数
+  - s_curから離れ過ぎないように正則化をかける
+  - Sのスコアより改善しなかったらPを小さくして1に戻る
   - TODO: 詰めやすさをタイブレークのスコアとして導入する
-2. 順序制約を計算する
+2. sをもとに順序制約を計算する
   - is_before[i][j] := (i,j)について、end[i]<=start[j]なら順序を固定する
   - befores[i] := iより前におく必要があるブロック
-3. bayごとに、前から順に詰めて貪欲解を作成する
-  - 順序制約を守った範囲内で、ブロックの順番をランダムに選ぶ
+3. bayごとに前から順に詰めて貪欲解を作成する
+  - reconstruct-orderのように、ブロックごとの評価を試行ごとに計算する
+  - orderを作成する
+    - beforesを使ってトポロジカル順で取り出す
+    - binaryheapに入れて、先頭を取り出すことを繰り返す
+  - orderはhashで重複除去をする
+  - bayごとに独立にbestを作成する
 4. bayごとに独立にannealing
   - 順序制約を守る
-  - 目標tardinessに達成したら、そのbayでの探索は行わない
+  - 目標tardinessに達成したら、そのbayでの探索は行わなくて良い
+  - 全てのbayで目標tardinessを達成したらPを小さくして1に戻る
 5. bay間の移動も許してannealing
   - TODO: より良いスコアを持つ解が得られるまでPを小さくして preoptimize を実行して、Sを更新する
 

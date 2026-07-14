@@ -4,11 +4,8 @@ use std::io::{self, Read};
 use std::process;
 use std::time::Instant;
 
-use ogc2026::{
-    Problem,
-    preoptimize::{PreoptimizeParams, preoptimize},
-    preoptimize2::preoptimize_annealing,
-};
+use ogc2026::preoptimize_highs::preoptimize_highs;
+use ogc2026::{Problem, preoptimize::PreoptimizeParams, preoptimize::preoptimize_annealing};
 
 const DEFAULT_TIMELIMIT_SECONDS: f64 = 60.0;
 const DEFAULT_ALPHA: f64 = 0.0;
@@ -49,7 +46,7 @@ fn run() -> Result<(), String> {
         horizon_margin: args.horizon_margin,
     };
     let result = match args.method {
-        Method::Milp => preoptimize(&problem, params),
+        Method::Milp => preoptimize_highs(&problem, params),
         Method::Annealing => preoptimize_annealing(&problem, params),
     }?;
 
