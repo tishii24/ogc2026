@@ -178,3 +178,28 @@ pub(crate) fn format_neighbor_stats(
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+pub fn gen_rangef(rng: &mut impl Random, r: (f64, f64)) -> f64 {
+    rng.gen_rangef(r.0, r.1)
+}
+
+/// TODO: precomputeに持っていく
+pub fn block_pref_spread(problem: &Problem, block_id: usize) -> i64 {
+    let prefs = &problem.blocks[block_id].bay_preferences;
+    let min_pref = prefs.iter().copied().min().unwrap_or(0);
+    let max_pref = prefs.iter().copied().max().unwrap_or(min_pref);
+    max_pref - min_pref
+}
+
+/// TODO: precomputeに持っていく
+pub fn block_slack(problem: &Problem, block_id: usize) -> i64 {
+    let block = &problem.blocks[block_id];
+    block.due_date - block.release_time - block.processing_time
+}
+
+pub fn bay_tardiness(problem: &Problem, schedule: &[ScheduledBlock]) -> i64 {
+    schedule
+        .iter()
+        .map(|scheduled| (scheduled.exit_time - problem.blocks[scheduled.block_id].due_date).max(0))
+        .sum()
+}

@@ -3,22 +3,18 @@ use crate::{
     precompute::Precompute,
     preoptimize::{PreoptimizeParams, PreoptimizePrecompute, preoptimize},
     solver_util::{
-        NeighborKind, NeighborStats, format_neighbor_stats, sample_neighbor, schedule_to_solution,
-        score_schedule, score13_block,
+        NeighborKind, bay_tardiness, block_pref_spread, block_slack, gen_rangef,
+        schedule_to_solution, score_schedule, score13_block,
     },
-    tabu::ScheduleTabu,
     util::{
         rand::{RandPcg64Mcg, Random},
         time::Timer,
     },
     *,
 };
-use rayon::prelude::*;
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashSet},
-    sync::Mutex,
-    time::Instant,
 };
 
 macro_rules! log {
@@ -27,23 +23,9 @@ macro_rules! log {
     };
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
-pub struct PreoptimizedBlock {
-    pub bay_id: usize,
-    pub entry_time: i64,
-}
+mod annealing;
 
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct PreoptimizeState {
-    pub score: f64,
-    pub blocks: Vec<PreoptimizedBlock>,
-}
-
-#[derive(Clone, Debug)]
-pub struct OptimizeState {
-    pub score: f64,
-    pub blocks: Vec<ScheduledBlock>,
-}
+use annealing::{BayAnnealing, GlobalAnnealing};
 
 const RNG_SEED: u64 = 1;
 const MAX_WORKER_COUNT: usize = 4;
@@ -60,8 +42,8 @@ pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
 
-const INITIAL_PREOPTIMIZE_ALPHA: f64 = 1.0;
-const INITIAL_PREOPTIMIZE_BETA: f64 = 0.0;
+const INITIAL_PREOPTIMIZE_ALPHA: f64 = 0.5;
+const INITIAL_PREOPTIMIZE_BETA: f64 = 1.0;
 const INITIAL_PREOPTIMIZE_TIME_RATIO: f64 = 0.1;
 const INITIAL_PREOPTIMIZE_MAX_SECONDS: f64 = 10.0;
 const PREOPTIMIZE_RNG_SEED: u64 = 2;
@@ -114,18 +96,6 @@ const RECONSTRUCT_DUE_URGENCY_WEIGHT_RANGE: (f64, f64) = (0., 1.);
 const RECONSTRUCT_SLACK_URGENCY_WEIGHT_RANGE: (f64, f64) = (0., 1.);
 const RECONSTRUCT_ORDER_RANDOM_WEIGHT_RANGE: (f64, f64) = (0., 0.5);
 
-fn get_temp_scale(worker_id: usize, worker_count: usize) -> f64 {
-    if worker_count <= 1 {
-        return 1.0;
-    }
-    let ratio = worker_id as f64 / (worker_count - 1) as f64;
-    1. + WORKER_TEMP_SCALE * ratio.powf(2.)
-}
-
-fn gen_rangef(rng: &mut impl Random, r: (f64, f64)) -> f64 {
-    rng.gen_rangef(r.0, r.1)
-}
-
 fn sample_reconstruct_order_weights(rng: &mut impl Random) -> BlockOrderWeights {
     BlockOrderWeights {
         workload: gen_rangef(rng, RECONSTRUCT_WORKLOAD_WEIGHT_RANGE),
@@ -135,6 +105,24 @@ fn sample_reconstruct_order_weights(rng: &mut impl Random) -> BlockOrderWeights 
         slack_urgency: gen_rangef(rng, RECONSTRUCT_SLACK_URGENCY_WEIGHT_RANGE),
         random: gen_rangef(rng, RECONSTRUCT_ORDER_RANDOM_WEIGHT_RANGE),
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct PreoptimizedBlock {
+    pub bay_id: usize,
+    pub entry_time: i64,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct PreoptimizeState {
+    pub score: f64,
+    pub blocks: Vec<PreoptimizedBlock>,
+}
+
+#[derive(Clone, Debug)]
+pub struct OptimizeState {
+    pub score: f64,
+    pub blocks: Vec<ScheduledBlock>,
 }
 
 #[derive(Clone, Copy)]
@@ -160,27 +148,6 @@ struct BlockOrderContext {
 struct PrecedenceConstraints {
     befores: Vec<Vec<usize>>,
     afters: Vec<Vec<usize>>,
-}
-
-struct AnnealingResult {
-    worker_id: usize,
-    state: OptimizeState,
-    current_score: f64,
-    iter: usize,
-    accepted: usize,
-    improved: usize,
-    neighbor_stats: [NeighborStats; NEIGHBOR_KIND_COUNT],
-}
-
-struct BayAnnealingResult {
-    bay_id: usize,
-    blocks: Vec<ScheduledBlock>,
-    tardiness: i64,
-    target_tardiness: i64,
-    iter: usize,
-    accepted: usize,
-    improved: usize,
-    neighbor_stats: [NeighborStats; NEIGHBOR_KIND_COUNT],
 }
 
 pub fn to_preoptimize_state(state: &OptimizeState) -> PreoptimizeState {
@@ -262,17 +229,11 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
     log!(timer, "initial optimize score: {:.3}", initial.score);
 
     let bay_deadline = deadline - GLOBAL_ANNEALING_REMAINING_SECONDS;
-    let initial = run_bay_annealing(
-        problem,
-        &pre,
-        &initial_abstract,
-        initial,
-        bay_deadline,
-        timer,
-    );
+    let initial =
+        BayAnnealing::new(problem, &pre, &initial_abstract, timer).run(initial, bay_deadline);
     log!(timer, "bay annealing score: {:.3}", initial.score);
 
-    let best = run_global_annealing(problem, &pre, initial, deadline, timer)?;
+    let best = GlobalAnnealing::new(problem, &pre, timer).run(initial, deadline);
     Ok(schedule_to_solution(&best.blocks))
 }
 
@@ -332,347 +293,7 @@ pub fn build_optimize_state(
     Some(OptimizeState { score, blocks })
 }
 
-fn run_bay_annealing(
-    problem: &Problem,
-    pre: &Precompute,
-    abstract_state: &PreoptimizeState,
-    initial: OptimizeState,
-    deadline: f64,
-    timer: Timer,
-) -> OptimizeState {
-    if timer.elapsed_seconds() >= deadline {
-        return initial;
-    }
-
-    let constraints = build_precedence_constraints(problem, abstract_state);
-    let mut blocks_by_bay = vec![Vec::new(); problem.bays.len()];
-    for block in initial.blocks {
-        blocks_by_bay[block.bay_id].push(block);
-    }
-
-    let mut target_tardiness = vec![0i64; problem.bays.len()];
-    for (block_id, scheduled) in abstract_state.blocks.iter().enumerate() {
-        let block = &problem.blocks[block_id];
-        let exit_time = scheduled.entry_time + block.processing_time;
-        target_tardiness[scheduled.bay_id] += (exit_time - block.due_date).max(0);
-    }
-
-    let results: Vec<_> = blocks_by_bay
-        .into_par_iter()
-        .enumerate()
-        .map(|(bay_id, blocks)| {
-            run_single_bay_annealing(
-                problem,
-                pre,
-                &constraints,
-                blocks,
-                target_tardiness[bay_id],
-                deadline,
-                bay_id,
-                timer,
-            )
-        })
-        .collect();
-
-    let mut blocks = Vec::with_capacity(problem.blocks.len());
-    for result in results {
-        eprintln!(
-            "[{:.4}] [bay={}] iter={}, best_tardiness={}, target={}, accepted={}, improved={}\nneighbor stats:\n{}",
-            timer.elapsed_seconds(),
-            result.bay_id,
-            result.iter,
-            result.tardiness,
-            result.target_tardiness,
-            result.accepted,
-            result.improved,
-            format_neighbor_stats(&result.neighbor_stats, BAY_NEIGHBOR_PROBS),
-        );
-        blocks.extend(result.blocks);
-    }
-    let score = score_schedule(problem, pre, &blocks);
-    OptimizeState { score, blocks }
-}
-
-fn run_single_bay_annealing(
-    problem: &Problem,
-    pre: &Precompute,
-    constraints: &PrecedenceConstraints,
-    initial: Vec<ScheduledBlock>,
-    target_tardiness: i64,
-    deadline: f64,
-    bay_id: usize,
-    timer: Timer,
-) -> BayAnnealingResult {
-    let mut rng = RandPcg64Mcg::new(RNG_SEED.wrapping_add(10_000).wrapping_add(bay_id as u64));
-    let mut current = initial;
-    let mut current_tardiness = bay_tardiness(problem, &current);
-    let mut current_score = problem.weights.w1 * current_tardiness as f64;
-    let mut best = current.clone();
-    let mut best_tardiness = current_tardiness;
-    let mut iter = 0usize;
-    let mut accepted = 0usize;
-    let mut improved = 0usize;
-    let mut neighbor_stats = [NeighborStats::default(); NEIGHBOR_KIND_COUNT];
-    let start = timer.elapsed_seconds();
-
-    while best_tardiness > target_tardiness {
-        let elapsed = timer.elapsed_seconds();
-        if elapsed >= deadline {
-            break;
-        }
-        iter += 1;
-        let progress = ((elapsed - start) / (deadline - start).max(1e-4)).clamp(0.0, 1.0);
-        let start_temp = (problem.weights.w1 / TEMP_WEIGHT_DIVISOR).max(1e-9);
-        let end_temp = (start_temp * BAY_END_TEMPERATURE_RATIO).max(1e-9);
-        let temp = start_temp * (end_temp / start_temp).powf(progress);
-        let accept_threshold = current_score - temp * rng.nextf().ln();
-
-        let neighbor = sample_neighbor(&mut rng, BAY_NEIGHBOR_PROBS);
-        let neighbor_idx = neighbor.index();
-        let neighbor_start = Instant::now();
-        neighbor_stats[neighbor_idx].selected += 1;
-        let candidate = match neighbor {
-            NeighborKind::LargeReconstruct => try_bay_large_reconstruct(
-                problem,
-                pre,
-                constraints,
-                &current,
-                &mut rng,
-                accept_threshold,
-                bay_id,
-            ),
-            NeighborKind::Shift => {
-                try_shift_neighbor(problem, pre, &current, &mut rng, Some(constraints))
-            }
-            NeighborKind::Move => try_move_neighbor(
-                problem,
-                pre,
-                &current,
-                &mut rng,
-                Some(constraints),
-                Some(bay_id),
-            ),
-            NeighborKind::Rotate => {
-                try_rotate_neighbor(problem, pre, &current, &mut rng, Some(constraints))
-            }
-            NeighborKind::Swap => None,
-        };
-        let Some(candidate) = candidate else {
-            neighbor_stats[neighbor_idx].time_sec += neighbor_start.elapsed().as_secs_f64();
-            continue;
-        };
-        neighbor_stats[neighbor_idx].succeeded += 1;
-
-        let candidate_tardiness = bay_tardiness(problem, &candidate);
-        let score = problem.weights.w1 * candidate_tardiness as f64;
-        let delta = score - current_score;
-        if delta < -1e-9 {
-            neighbor_stats[neighbor_idx].improved += 1;
-            neighbor_stats[neighbor_idx].improved_delta_sum += -delta;
-        }
-        if score <= accept_threshold {
-            current = candidate;
-            current_tardiness = candidate_tardiness;
-            current_score = score;
-            accepted += 1;
-            neighbor_stats[neighbor_idx].accepted += 1;
-            if current_tardiness < best_tardiness {
-                best = current.clone();
-                best_tardiness = current_tardiness;
-                improved += 1;
-            }
-        }
-        neighbor_stats[neighbor_idx].time_sec += neighbor_start.elapsed().as_secs_f64();
-    }
-
-    BayAnnealingResult {
-        bay_id,
-        blocks: best,
-        tardiness: best_tardiness,
-        target_tardiness,
-        iter,
-        accepted,
-        improved,
-        neighbor_stats,
-    }
-}
-
-fn run_global_annealing(
-    problem: &Problem,
-    pre: &Precompute,
-    initial: OptimizeState,
-    deadline: f64,
-    timer: Timer,
-) -> Result<OptimizeState, String> {
-    let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
-    log!(timer, "annealing workers: {}", worker_count);
-    let state = Mutex::new(initial.clone());
-    let worker_timers = vec![timer; worker_count];
-    let results: Vec<_> = worker_timers
-        .into_par_iter()
-        .enumerate()
-        .map(|(worker_id, worker_timer)| {
-            run_annealing_worker(
-                problem,
-                pre,
-                &state,
-                &initial,
-                deadline,
-                worker_id,
-                worker_count,
-                worker_timer,
-            )
-        })
-        .collect::<Vec<AnnealingResult>>();
-
-    let mut best: Option<OptimizeState> = None;
-    let mut best_score = f64::INFINITY;
-    for result in results {
-        eprintln!(
-            "[{:.4}] [id={}] iter={}, best={:.3}, accepted={}, improved={}, current={:.3}\nneighbor stats:\n{}",
-            timer.elapsed_seconds(),
-            result.worker_id,
-            result.iter,
-            result.state.score,
-            result.accepted,
-            result.improved,
-            result.current_score,
-            format_neighbor_stats(&result.neighbor_stats, NEIGHBOR_PROBS),
-        );
-        if result.state.score + 1e-9 < best_score {
-            best_score = result.state.score;
-            best = Some(result.state);
-        }
-    }
-    best.ok_or_else(|| "no annealing worker result".to_string())
-}
-
-fn run_annealing_worker(
-    problem: &Problem,
-    pre: &Precompute,
-    state: &Mutex<OptimizeState>,
-    initial: &OptimizeState,
-    deadline: f64,
-    worker_id: usize,
-    worker_count: usize,
-    timer: Timer,
-) -> AnnealingResult {
-    let mut rng = RandPcg64Mcg::new(RNG_SEED.wrapping_add(worker_id as u64));
-    let temp_scale = get_temp_scale(worker_id, worker_count);
-    let mut current = initial.blocks.clone();
-    let mut current_score = initial.score;
-    let mut best = current.clone();
-    let mut best_score = current_score;
-    let mut tabu = ScheduleTabu::new(TABU_SIZE);
-    tabu.insert_schedule(&current);
-    let mut iter = 0usize;
-    let mut accepted = 0usize;
-    let mut improved = 0usize;
-    let mut neighbor_stats = [NeighborStats::default(); NEIGHBOR_KIND_COUNT];
-    let start = timer.elapsed_seconds();
-
-    loop {
-        let elapsed = timer.elapsed_seconds();
-        if elapsed >= deadline {
-            break;
-        }
-        iter += 1;
-        if iter % BEST_EXCHANGE_INTERVAL == 0 {
-            let shared = state.lock().unwrap();
-            if shared.score + problem.weights.w1 + 1e-9 < current_score {
-                current = shared.blocks.clone();
-                current_score = shared.score;
-                tabu.insert_schedule(&current);
-                if shared.score + 1e-9 < best_score {
-                    best = current.clone();
-                    best_score = current_score;
-                }
-            }
-        }
-
-        let progress = (elapsed / (deadline - start).max(1e-4)).clamp(0.0, 1.0);
-        let start_temp = (problem.weights.w1 / TEMP_WEIGHT_DIVISOR).max(1e-9);
-        let end_temp = (problem.weights.w3 / TEMP_WEIGHT_DIVISOR).max(1e-9);
-        let temp = temp_scale * start_temp * (end_temp / start_temp).powf(progress);
-
-        let neighbor = sample_neighbor(&mut rng, NEIGHBOR_PROBS);
-        let neighbor_idx = neighbor.index();
-        let neighbor_start = Instant::now();
-        neighbor_stats[neighbor_idx].selected += 1;
-        let accept_threshold = current_score - temp * rng.nextf().ln();
-
-        let candidate = match neighbor {
-            NeighborKind::LargeReconstruct => {
-                try_large_reconstruct(problem, pre, &current, &mut rng, accept_threshold)
-            }
-            NeighborKind::Shift => try_shift_neighbor(problem, pre, &current, &mut rng, None),
-            NeighborKind::Move => try_move_neighbor(problem, pre, &current, &mut rng, None, None),
-            NeighborKind::Rotate => try_rotate_neighbor(problem, pre, &current, &mut rng, None),
-            NeighborKind::Swap => try_swap_neighbor(problem, pre, &current, &mut rng),
-        };
-        let Some(candidate) = candidate else {
-            neighbor_stats[neighbor_idx].time_sec += neighbor_start.elapsed().as_secs_f64();
-            continue;
-        };
-        neighbor_stats[neighbor_idx].succeeded += 1;
-
-        let candidate_key = ScheduleTabu::key(&candidate);
-        let is_tabu = tabu.contains(candidate_key);
-        let score = score_schedule(problem, pre, &candidate);
-        if is_tabu && score + 1e-9 >= best_score {
-            neighbor_stats[neighbor_idx].time_sec += neighbor_start.elapsed().as_secs_f64();
-            continue;
-        }
-
-        let delta = score - current_score;
-        let improved_current = delta < -1e-9;
-        if improved_current {
-            neighbor_stats[neighbor_idx].improved += 1;
-            neighbor_stats[neighbor_idx].improved_delta_sum += -delta;
-        }
-        if score <= accept_threshold {
-            current = candidate;
-            current_score = score;
-            tabu.insert(candidate_key);
-            accepted += 1;
-            neighbor_stats[neighbor_idx].accepted += 1;
-
-            if current_score + 1e-9 < best_score {
-                log!(
-                    timer,
-                    "worker {} new best score: {:.3}",
-                    worker_id,
-                    current_score
-                );
-                best = current.clone();
-                best_score = current_score;
-                improved += 1;
-
-                let mut shared = state.lock().unwrap();
-                if current_score + 1e-9 < shared.score {
-                    shared.score = current_score;
-                    shared.blocks = current.clone();
-                }
-            }
-        }
-        neighbor_stats[neighbor_idx].time_sec += neighbor_start.elapsed().as_secs_f64();
-    }
-
-    AnnealingResult {
-        worker_id,
-        state: OptimizeState {
-            score: best_score,
-            blocks: best,
-        },
-        current_score,
-        iter,
-        accepted,
-        improved,
-        neighbor_stats,
-    }
-}
-
-pub fn hash_order(order: &[usize]) -> u64 {
+fn hash_order(order: &[usize]) -> u64 {
     let mut hash = 1469598103934665603u64;
     for &block_id in order {
         hash ^= block_id as u64;
@@ -1337,18 +958,6 @@ fn choose_removed_blocks<R: Random>(
     selected
 }
 
-fn block_pref_spread(problem: &Problem, block_id: usize) -> i64 {
-    let prefs = &problem.blocks[block_id].bay_preferences;
-    let min_pref = prefs.iter().copied().min().unwrap_or(0);
-    let max_pref = prefs.iter().copied().max().unwrap_or(min_pref);
-    max_pref - min_pref
-}
-
-fn block_slack(problem: &Problem, block_id: usize) -> i64 {
-    let block = &problem.blocks[block_id];
-    block.due_date - block.release_time - block.processing_time
-}
-
 fn build_block_order_context(
     problem: &Problem,
     pre: &Precompute,
@@ -1570,11 +1179,4 @@ fn build_bay_schedule(
         schedule.push(scheduled);
     }
     Some(schedule)
-}
-
-fn bay_tardiness(problem: &Problem, schedule: &[ScheduledBlock]) -> i64 {
-    schedule
-        .iter()
-        .map(|scheduled| (scheduled.exit_time - problem.blocks[scheduled.block_id].due_date).max(0))
-        .sum()
 }

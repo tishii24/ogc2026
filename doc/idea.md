@@ -74,6 +74,8 @@ s = 抽象解（bay-id, entry-t）
 7. `P` の外側ループを接続する。
 
 todo:
+- refactor
 - rayによる並列化
   - bay.area * block-count に比例してリソースを与える
 - preoptimizeの改善
+- swapを使う
