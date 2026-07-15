@@ -130,6 +130,10 @@ impl AnnealingDelegate for BayAnnealingDelegate<'_> {
         NEIGHBOR_KIND_COUNT
     }
 
+    fn exchange_threshold(&self, _domain: usize) -> f64 {
+        2.0
+    }
+
     fn propose(
         &self,
         domain: usize,
@@ -280,6 +284,10 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
 
     fn neighbor_kind_count(&self) -> usize {
         NEIGHBOR_KIND_COUNT
+    }
+
+    fn exchange_threshold(&self, _domain: usize) -> f64 {
+        self.problem.weights.w1
     }
 
     fn is_finished(&self, _domain: usize, _state: &Self::State) -> bool {

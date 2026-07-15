@@ -39,7 +39,7 @@ pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
 
 const INITIAL_PREOPTIMIZE_ALPHA: f64 = 1.0;
-const INITIAL_PREOPTIMIZE_BETA: f64 = 1.0;
+const INITIAL_PREOPTIMIZE_BETA: f64 = 0.;
 const INITIAL_PREOPTIMIZE_TIME_RATIO: f64 = 0.1;
 const INITIAL_PREOPTIMIZE_MAX_SECONDS: f64 = 10.0;
 pub const PREOPTIMIZE_DISTANCE_WEIGHT: f64 = 0.0;
@@ -60,9 +60,9 @@ const GLOBAL_ANNEALING_PARAMS: AnnealingParams = AnnealingParams {
 };
 const BAY_ANNEALING_PARAMS: AnnealingParams = AnnealingParams {
     exchange_interval: 2048,
-    start_temperature: 1e-1,
+    start_temperature: 1e-2,
     end_temperature: 1e-4,
-    worker_temperature_scale: 5.,
+    worker_temperature_scale: 1.,
     tabu_capacity: 4096,
 };
 
@@ -139,8 +139,8 @@ const GLOBAL_NEIGHBOR_PARAMS: NeighborParams = NeighborParams {
 
 const BAY_NEIGHBOR_PARAMS: NeighborParams = NeighborParams {
     probabilities: BAY_NEIGHBOR_PROBS,
-    min_removed_blocks: 3,
-    max_removed_blocks: 7,
+    min_removed_blocks: 7,
+    max_removed_blocks: 13,
     remove_pool_factor: 4,
     remove_count_sample_power: 2.0,
     remove_seed_per_block: 4,
@@ -489,21 +489,21 @@ fn try_bay_large_reconstruct<R: Random>(
 
     let mut cur = Vec::with_capacity(schedule.len());
     let mut loads = vec![0.0; problem.bays.len()];
-    let mut fixed_score = 0.0;
+    let mut fixed_tardiness = 0.0;
     for &scheduled in schedule {
         if removed[scheduled.block_id] {
             continue;
         }
         loads[bay_id] += problem.blocks[scheduled.block_id].workload as f64;
-        fixed_score += problem.weights.w1
-            * (scheduled.exit_time - problem.blocks[scheduled.block_id].due_date).max(0) as f64;
+        fixed_tardiness +=
+            (scheduled.exit_time - problem.blocks[scheduled.block_id].due_date).max(0) as f64;
         cur.push(scheduled);
     }
     let mut current_by_id = scheduled_by_id(problem, &cur);
     let bay_order = [bay_id];
 
     for block_id in order {
-        if fixed_score > accept_threshold + 1e-9 {
+        if fixed_tardiness > accept_threshold + 1e-9 {
             return None;
         }
         let old = original_by_id[block_id]?;
@@ -523,8 +523,7 @@ fn try_bay_large_reconstruct<R: Random>(
             &bay_order,
         )?;
         loads[bay_id] += problem.blocks[block_id].workload as f64;
-        fixed_score += problem.weights.w1
-            * (scheduled.exit_time - problem.blocks[block_id].due_date).max(0) as f64;
+        fixed_tardiness += (scheduled.exit_time - problem.blocks[block_id].due_date).max(0) as f64;
         current_by_id[block_id] = Some(scheduled);
         cur.push(scheduled);
     }

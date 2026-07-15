@@ -39,9 +39,9 @@ impl<S: AnnealingState> SharedBest<S> {
         true
     }
 
-    pub fn get_if_better(&self, current_score: f64) -> Option<S> {
+    pub fn get_if_better(&self, current_score: f64, exchange_threshold: f64) -> Option<S> {
         let best = self.inner.lock().unwrap();
-        (best.annealing_score() + EPS < current_score).then(|| best.clone())
+        (best.annealing_score() + exchange_threshold + EPS < current_score).then(|| best.clone())
     }
 
     pub fn score(&self) -> f64 {
@@ -187,6 +187,8 @@ pub trait AnnealingDelegate: Sync {
     fn initial_states(&self) -> Vec<Self::State>;
 
     fn neighbor_kind_count(&self) -> usize;
+
+    fn exchange_threshold(&self, domain: usize) -> f64;
 
     fn propose(
         &self,
@@ -428,7 +430,10 @@ impl<D: AnnealingDelegate> Annealer<D> {
         active_domains.clear();
         for domain in 0..domains.len() {
             let local = &mut domains[domain];
-            if let Some(best) = shared[domain].get_if_better(local.current.annealing_score()) {
+            let exchange_threshold = self.delegate.exchange_threshold(domain);
+            if let Some(best) =
+                shared[domain].get_if_better(local.current.annealing_score(), exchange_threshold)
+            {
                 let score = best.annealing_score();
                 if let Some(key) = best.tabu_key() {
                     local.tabu.insert(key);
