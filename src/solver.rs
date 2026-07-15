@@ -42,17 +42,18 @@ pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
 
-const INITIAL_PREOPTIMIZE_ALPHA: f64 = 0.5;
-const INITIAL_PREOPTIMIZE_BETA: f64 = 1.0;
+const INITIAL_PREOPTIMIZE_ALPHA: f64 = 1.0;
+const INITIAL_PREOPTIMIZE_BETA: f64 = 0.0;
 const INITIAL_PREOPTIMIZE_TIME_RATIO: f64 = 0.1;
 const INITIAL_PREOPTIMIZE_MAX_SECONDS: f64 = 10.0;
-const PREOPTIMIZE_RNG_SEED: u64 = 2;
-const PREOPTIMIZE_SWAP_PROBABILITY: f64 = 0.15;
-const PREOPTIMIZE_BAD_BLOCK_SAMPLE_COUNT: usize = 8;
-const PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY: f64 = 0.75;
-const PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS: usize = 8;
-const PREOPTIMIZE_MAX_TIME_SHIFT: i64 = 10;
-const PREOPTIMIZE_END_TEMPERATURE_RATIO: f64 = 1e-4;
+pub const PREOPTIMIZE_DISTANCE_WEIGHT: f64 = 0.0;
+pub const PREOPTIMIZE_RNG_SEED: u64 = 2;
+pub const PREOPTIMIZE_SWAP_PROBABILITY: f64 = 0.15;
+pub const PREOPTIMIZE_BAD_BLOCK_SAMPLE_COUNT: usize = 8;
+pub const PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY: f64 = 0.75;
+pub const PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS: usize = 8;
+pub const PREOPTIMIZE_MAX_TIME_SHIFT: i64 = 10;
+pub const PREOPTIMIZE_END_TEMPERATURE_RATIO: f64 = 1e-4;
 
 const MIN_REMOVED_BLOCKS: usize = 7;
 const MAX_REMOVED_BLOCKS: usize = 13;
@@ -165,28 +166,6 @@ pub fn to_preoptimize_state(state: &OptimizeState) -> PreoptimizeState {
     }
 }
 
-fn make_preoptimize_params(
-    alpha: f64,
-    beta: f64,
-    time_limit: f64,
-    distance_weight: f64,
-    rng_seed: u64,
-) -> PreoptimizeParams {
-    PreoptimizeParams {
-        alpha,
-        beta,
-        time_limit,
-        distance_weight,
-        rng_seed,
-        swap_probability: PREOPTIMIZE_SWAP_PROBABILITY,
-        bad_block_sample_count: PREOPTIMIZE_BAD_BLOCK_SAMPLE_COUNT,
-        bad_block_select_probability: PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY,
-        max_relocate_attempts: PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS,
-        max_time_shift: PREOPTIMIZE_MAX_TIME_SHIFT,
-        end_temperature_ratio: PREOPTIMIZE_END_TEMPERATURE_RATIO,
-    }
-}
-
 fn preoptimize_time_limit(timelimit: f64, ratio: f64, max_seconds: f64) -> f64 {
     (timelimit * ratio).min(max_seconds).max(1e-4)
 }
@@ -211,13 +190,11 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
         problem,
         &preoptimize_pre,
         None,
-        make_preoptimize_params(
-            INITIAL_PREOPTIMIZE_ALPHA,
-            INITIAL_PREOPTIMIZE_BETA,
-            initial_time_limit,
-            0.0,
-            PREOPTIMIZE_RNG_SEED,
-        ),
+        PreoptimizeParams {
+            alpha: INITIAL_PREOPTIMIZE_ALPHA,
+            beta: INITIAL_PREOPTIMIZE_BETA,
+            time_limit: initial_time_limit,
+        },
     )?;
     log!(
         timer,

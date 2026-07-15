@@ -12,14 +12,6 @@ use ogc2026::{
 const DEFAULT_TIMELIMIT_SECONDS: f64 = 60.0;
 const DEFAULT_ALPHA: f64 = 0.0;
 const DEFAULT_BETA: f64 = 0.0;
-const DISTANCE_WEIGHT: f64 = 0.0;
-const RNG_SEED: u64 = 2;
-const SWAP_PROBABILITY: f64 = 0.15;
-const BAD_BLOCK_SAMPLE_COUNT: usize = 8;
-const BAD_BLOCK_SELECT_PROBABILITY: f64 = 0.75;
-const MAX_RELOCATE_ATTEMPTS: usize = 8;
-const MAX_TIME_SHIFT: i64 = 10;
-const END_TEMPERATURE_RATIO: f64 = 1e-4;
 
 struct Args {
     input_path: String,
@@ -46,14 +38,6 @@ fn run() -> Result<(), String> {
         alpha: args.alpha,
         beta: args.beta,
         time_limit: args.time_limit,
-        distance_weight: DISTANCE_WEIGHT,
-        rng_seed: RNG_SEED,
-        swap_probability: SWAP_PROBABILITY,
-        bad_block_sample_count: BAD_BLOCK_SAMPLE_COUNT,
-        bad_block_select_probability: BAD_BLOCK_SELECT_PROBABILITY,
-        max_relocate_attempts: MAX_RELOCATE_ATTEMPTS,
-        max_time_shift: MAX_TIME_SHIFT,
-        end_temperature_ratio: END_TEMPERATURE_RATIO,
     };
     let result = preoptimize(&problem, &pre, None, params)?;
 

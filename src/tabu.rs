@@ -3,16 +3,16 @@ use std::collections::{HashSet, VecDeque};
 use crate::ScheduledBlock;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct ScheduleKey(u64);
+pub struct ScheduleKey(u64);
 
-pub(crate) struct ScheduleTabu {
+pub struct ScheduleTabu {
     capacity: usize,
     queue: VecDeque<ScheduleKey>,
     set: HashSet<ScheduleKey>,
 }
 
 impl ScheduleTabu {
-    pub(crate) fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize) -> Self {
         Self {
             capacity,
             queue: VecDeque::with_capacity(capacity),
@@ -20,7 +20,7 @@ impl ScheduleTabu {
         }
     }
 
-    pub(crate) fn key(schedule: &[ScheduledBlock]) -> ScheduleKey {
+    pub fn key(schedule: &[ScheduledBlock]) -> ScheduleKey {
         let mut hash = mix_hash(1469598103934665603, schedule.len() as u64);
         for &block in schedule {
             hash ^= hash_scheduled_block(block);
@@ -28,11 +28,11 @@ impl ScheduleTabu {
         ScheduleKey(hash)
     }
 
-    pub(crate) fn contains(&self, key: ScheduleKey) -> bool {
+    pub fn contains(&self, key: ScheduleKey) -> bool {
         self.set.contains(&key)
     }
 
-    pub(crate) fn insert(&mut self, key: ScheduleKey) {
+    pub fn insert(&mut self, key: ScheduleKey) {
         if !self.set.insert(key) {
             return;
         }
@@ -44,7 +44,7 @@ impl ScheduleTabu {
         }
     }
 
-    pub(crate) fn insert_schedule(&mut self, schedule: &[ScheduledBlock]) {
+    pub fn insert_schedule(&mut self, schedule: &[ScheduledBlock]) {
         self.insert(Self::key(schedule));
     }
 }

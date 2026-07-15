@@ -1,6 +1,11 @@
 use crate::{
     Bay, Orientation, Problem,
-    solver::{PreoptimizeState, PreoptimizedBlock},
+    solver::{
+        PREOPTIMIZE_BAD_BLOCK_SAMPLE_COUNT, PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY,
+        PREOPTIMIZE_DISTANCE_WEIGHT, PREOPTIMIZE_END_TEMPERATURE_RATIO,
+        PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS, PREOPTIMIZE_MAX_TIME_SHIFT, PREOPTIMIZE_RNG_SEED,
+        PREOPTIMIZE_SWAP_PROBABILITY, PreoptimizeState, PreoptimizedBlock,
+    },
     util::rand::{RandPcg64Mcg, Random},
 };
 use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
@@ -11,14 +16,6 @@ pub struct PreoptimizeParams {
     pub alpha: f64,
     pub beta: f64,
     pub time_limit: f64,
-    pub distance_weight: f64,
-    pub rng_seed: u64,
-    pub swap_probability: f64,
-    pub bad_block_sample_count: usize,
-    pub bad_block_select_probability: f64,
-    pub max_relocate_attempts: usize,
-    pub max_time_shift: i64,
-    pub end_temperature_ratio: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -328,7 +325,6 @@ fn build_reference_state(
 fn build_initial_state(
     problem: &Problem,
     context: &mut PreoptimizeContext<'_>,
-    params: PreoptimizeParams,
 ) -> Result<AnnealingState, String> {
     if context.reference.is_some() {
         return build_reference_state(problem, context);
@@ -393,7 +389,7 @@ fn build_initial_state(
                     * (normalized_imbalance(&next_loads, &context.pre.bay_load_scale)
                         - current_imbalance)
                 + problem.weights.w3 * context.pre.pref_penalty[block_id][bay_id] as f64
-                + params.distance_weight * distance as usize as f64;
+                + PREOPTIMIZE_DISTANCE_WEIGHT * distance as usize as f64;
             let candidate = (score, entry_time, bay_id);
             if best.as_ref().is_none_or(|best| {
                 candidate
@@ -527,20 +523,19 @@ fn select_block(
     problem: &Problem,
     context: &PreoptimizeContext<'_>,
     state: &AnnealingState,
-    params: PreoptimizeParams,
     rng: &mut impl Random,
 ) -> usize {
-    if rng.nextf() >= params.bad_block_select_probability {
+    if rng.nextf() >= PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY {
         return rng.gen_index(problem.blocks.len());
     }
     let mut best = rng.gen_index(problem.blocks.len());
     let mut best_cost = f64::NEG_INFINITY;
-    for _ in 0..params.bad_block_sample_count {
+    for _ in 0..PREOPTIMIZE_BAD_BLOCK_SAMPLE_COUNT {
         let block_id = rng.gen_index(problem.blocks.len());
         let selected = state.schedule[block_id];
         let cost = problem.weights.w1 * block_z1(problem, block_id, selected)
             + problem.weights.w3 * block_z3(context, block_id, selected)
-            + params.distance_weight * block_distance(context, block_id, selected) as f64;
+            + PREOPTIMIZE_DISTANCE_WEIGHT * block_distance(context, block_id, selected) as f64;
         if cost > best_cost {
             best = block_id;
             best_cost = cost;
@@ -554,7 +549,6 @@ fn sample_entry_time(
     context: &PreoptimizeContext<'_>,
     block_id: usize,
     current: i64,
-    max_time_shift: i64,
     rng: &mut impl Random,
 ) -> i64 {
     let block = &problem.blocks[block_id];
@@ -564,7 +558,8 @@ fn sample_entry_time(
         0 => min_time,
         1 => (block.due_date - block.processing_time).clamp(min_time, max_time),
         2 => {
-            let delta = rng.gen_range(0, (2 * max_time_shift + 1) as usize) as i64 - max_time_shift;
+            let delta = rng.gen_range(0, (2 * PREOPTIMIZE_MAX_TIME_SHIFT + 1) as usize) as i64
+                - PREOPTIMIZE_MAX_TIME_SHIFT;
             current.saturating_add(delta).clamp(min_time, max_time)
         }
         _ => min_time + rng.gen_range(0, (max_time - min_time + 1) as usize) as i64,
@@ -579,25 +574,17 @@ fn try_relocate(
     problem: &Problem,
     context: &PreoptimizeContext<'_>,
     state: &mut AnnealingState,
-    params: PreoptimizeParams,
     temperature: f64,
     rng: &mut impl Random,
 ) -> bool {
-    let block_id = select_block(problem, context, state, params, rng);
+    let block_id = select_block(problem, context, state, rng);
     let old = state.schedule[block_id];
     add_used_area(problem, context, &mut state.used_area, block_id, old, -1.0);
 
     let mut candidate = None;
-    for _ in 0..params.max_relocate_attempts {
+    for _ in 0..PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS {
         let bay_id = rng.gen_index(problem.bays.len());
-        let entry_time = sample_entry_time(
-            problem,
-            context,
-            block_id,
-            old.entry_time,
-            params.max_time_shift,
-            rng,
-        );
+        let entry_time = sample_entry_time(problem, context, block_id, old.entry_time, rng);
         let selected = PreoptimizedBlock { bay_id, entry_time };
         if selected != old && can_place(problem, context, &state.used_area, block_id, selected) {
             candidate = Some(selected);
@@ -624,7 +611,7 @@ fn try_relocate(
         + problem.weights.w2 * (new_z2 - state.z2)
         + problem.weights.w3 * (new_z3 - old_z3);
     let distance_delta = new_distance as i64 - old_distance as i64;
-    let delta = raw_delta + params.distance_weight * distance_delta as f64;
+    let delta = raw_delta + PREOPTIMIZE_DISTANCE_WEIGHT * distance_delta as f64;
 
     if accept(delta, temperature, rng) {
         add_used_area(
@@ -653,14 +640,13 @@ fn try_swap(
     problem: &Problem,
     context: &PreoptimizeContext<'_>,
     state: &mut AnnealingState,
-    params: PreoptimizeParams,
     temperature: f64,
     rng: &mut impl Random,
 ) -> bool {
     if problem.blocks.len() < 2 {
         return false;
     }
-    let a = select_block(problem, context, state, params, rng);
+    let a = select_block(problem, context, state, rng);
     let mut b = rng.gen_index(problem.blocks.len() - 1);
     if b >= a {
         b += 1;
@@ -716,7 +702,7 @@ fn try_swap(
         + problem.weights.w2 * (new_z2 - state.z2)
         + problem.weights.w3 * (new_z3 - old_z3);
     let distance_delta = new_distance as i64 - old_distance as i64;
-    let delta = raw_delta + params.distance_weight * distance_delta as f64;
+    let delta = raw_delta + PREOPTIMIZE_DISTANCE_WEIGHT * distance_delta as f64;
 
     if accept(delta, temperature, rng) {
         state.schedule[a] = new_a;
@@ -751,16 +737,17 @@ pub fn preoptimize(
         bay_capacities: pre.bay_areas.clone(),
         max_time: pre.search_horizon,
     };
-    let mut state = build_initial_state(problem, &mut context, params)?;
+    let mut state = build_initial_state(problem, &mut context)?;
     let mut best = state.schedule.clone();
-    let mut best_regularized = state.objective + params.distance_weight * state.bay_distance as f64;
-    let mut rng = RandPcg64Mcg::new(params.rng_seed);
+    let mut best_regularized =
+        state.objective + PREOPTIMIZE_DISTANCE_WEIGHT * state.bay_distance as f64;
+    let mut rng = RandPcg64Mcg::new(PREOPTIMIZE_RNG_SEED);
     let start_temperature = (best_regularized / problem.blocks.len() as f64)
         .max(problem.weights.w1)
         .max(problem.weights.w3)
-        .max(params.distance_weight)
+        .max(PREOPTIMIZE_DISTANCE_WEIGHT)
         .max(1.0);
-    let end_temperature = start_temperature * params.end_temperature_ratio;
+    let end_temperature = start_temperature * PREOPTIMIZE_END_TEMPERATURE_RATIO;
     let solve_start = Instant::now();
     let mut iter = 0usize;
 
@@ -772,12 +759,12 @@ pub fn preoptimize(
         iter += 1;
         let progress = (elapsed / params.time_limit).clamp(0.0, 1.0);
         let temperature = start_temperature * (end_temperature / start_temperature).powf(progress);
-        if rng.nextf() < params.swap_probability {
-            try_swap(problem, &context, &mut state, params, temperature, &mut rng);
+        if rng.nextf() < PREOPTIMIZE_SWAP_PROBABILITY {
+            try_swap(problem, &context, &mut state, temperature, &mut rng);
         } else {
-            try_relocate(problem, &context, &mut state, params, temperature, &mut rng);
+            try_relocate(problem, &context, &mut state, temperature, &mut rng);
         }
-        let regularized = state.objective + params.distance_weight * state.bay_distance as f64;
+        let regularized = state.objective + PREOPTIMIZE_DISTANCE_WEIGHT * state.bay_distance as f64;
         if regularized + 1e-9 < best_regularized {
             best_regularized = regularized;
             best.clone_from(&state.schedule);

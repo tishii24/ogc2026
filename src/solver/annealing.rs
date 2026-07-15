@@ -153,7 +153,7 @@ struct BayTask {
     result: Option<BayAnnealingResult>,
 }
 
-pub(super) struct BayAnnealing<'a> {
+pub struct BayAnnealing<'a> {
     problem: &'a Problem,
     pre: &'a Precompute,
     constraints: PrecedenceConstraints,
@@ -162,7 +162,7 @@ pub(super) struct BayAnnealing<'a> {
 }
 
 impl<'a> BayAnnealing<'a> {
-    pub(super) fn new(
+    pub fn new(
         problem: &'a Problem,
         pre: &'a Precompute,
         abstract_state: &PreoptimizeState,
@@ -184,7 +184,7 @@ impl<'a> BayAnnealing<'a> {
         }
     }
 
-    pub(super) fn run(&self, initial: OptimizeState, deadline: f64) -> OptimizeState {
+    pub fn run(&self, initial: OptimizeState, deadline: f64) -> OptimizeState {
         if self.timer.elapsed_seconds() >= deadline {
             return initial;
         }
@@ -360,14 +360,14 @@ impl<'a> BayAnnealing<'a> {
     }
 }
 
-pub(super) struct GlobalAnnealing<'a> {
+pub struct GlobalAnnealing<'a> {
     problem: &'a Problem,
     pre: &'a Precompute,
     timer: Timer,
 }
 
 impl<'a> GlobalAnnealing<'a> {
-    pub(super) fn new(problem: &'a Problem, pre: &'a Precompute, timer: Timer) -> Self {
+    pub fn new(problem: &'a Problem, pre: &'a Precompute, timer: Timer) -> Self {
         Self {
             problem,
             pre,
@@ -375,7 +375,7 @@ impl<'a> GlobalAnnealing<'a> {
         }
     }
 
-    pub(super) fn run(&self, initial: OptimizeState, deadline: f64) -> OptimizeState {
+    pub fn run(&self, initial: OptimizeState, deadline: f64) -> OptimizeState {
         let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
         log!(self.timer, "annealing workers: {}", worker_count);
         let shared = Mutex::new(initial.clone());

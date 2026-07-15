@@ -8,7 +8,7 @@ use crate::{
 type Interval = (i64, i64);
 
 #[derive(Clone, Copy)]
-pub(crate) struct InsertSearchParams {
+pub struct InsertSearchParams {
     pub y_buffer: i64,
 }
 
@@ -54,7 +54,7 @@ struct OldTimeInfo {
     overlap_entry_time_max: i64,
 }
 
-pub(crate) fn insert_greedy(
+pub fn insert_greedy(
     problem: &Problem,
     pre: &Precompute,
     original: ScheduledBlock,
@@ -266,7 +266,7 @@ pub(crate) fn insert_greedy(
     best.map(|candidate| candidate.scheduled)
 }
 
-pub(crate) fn try_place_block(
+pub fn try_place_block(
     problem: &Problem,
     pre: &Precompute,
     schedule: &[ScheduledBlock],

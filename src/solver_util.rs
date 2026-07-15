@@ -5,7 +5,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum NeighborKind {
+pub enum NeighborKind {
     LargeReconstruct,
     Shift,
     Move,
@@ -24,7 +24,7 @@ impl NeighborKind {
         }
     }
 
-    pub(crate) fn index(&self) -> usize {
+    pub fn index(&self) -> usize {
         match self {
             NeighborKind::LargeReconstruct => 0,
             NeighborKind::Shift => 1,
@@ -36,7 +36,7 @@ impl NeighborKind {
 }
 
 #[derive(Clone, Copy, Default)]
-pub(crate) struct NeighborStats {
+pub struct NeighborStats {
     pub selected: usize,
     pub succeeded: usize,
     pub improved: usize,
@@ -45,18 +45,14 @@ pub(crate) struct NeighborStats {
     pub time_sec: f64,
 }
 
-pub(crate) fn score13_block(problem: &Problem, pre: &Precompute, s: ScheduledBlock) -> f64 {
+pub fn score13_block(problem: &Problem, pre: &Precompute, s: ScheduledBlock) -> f64 {
     let block = &problem.blocks[s.block_id];
     let tardiness = (s.exit_time - block.due_date).max(0);
     let pref_penalty = pre.pref_penalty[s.block_id][s.bay_id];
     problem.weights.w1 * tardiness as f64 + problem.weights.w3 * pref_penalty as f64
 }
 
-pub(crate) fn score_schedule(
-    problem: &Problem,
-    pre: &Precompute,
-    schedule: &[ScheduledBlock],
-) -> f64 {
+pub fn score_schedule(problem: &Problem, pre: &Precompute, schedule: &[ScheduledBlock]) -> f64 {
     let mut obj1 = 0.0;
     let mut obj3 = 0.0;
     let mut loads = vec![0.0; problem.bays.len()];
@@ -72,7 +68,7 @@ pub(crate) fn score_schedule(
     problem.weights.w1 * obj1 + problem.weights.w2 * obj2 + problem.weights.w3 * obj3
 }
 
-pub(crate) fn normalized_imbalance(pre: &Precompute, loads: &[f64]) -> f64 {
+pub fn normalized_imbalance(pre: &Precompute, loads: &[f64]) -> f64 {
     if loads.len() < 2 {
         return 0.0;
     }
@@ -87,7 +83,7 @@ pub(crate) fn normalized_imbalance(pre: &Precompute, loads: &[f64]) -> f64 {
     (max_value - min_value).floor()
 }
 
-pub(crate) fn schedule_to_solution(schedule: &[ScheduledBlock]) -> Solution {
+pub fn schedule_to_solution(schedule: &[ScheduledBlock]) -> Solution {
     let mut operations: BTreeMap<i64, Vec<Operation>> = BTreeMap::new();
 
     for s in schedule {
@@ -115,10 +111,7 @@ pub(crate) fn schedule_to_solution(schedule: &[ScheduledBlock]) -> Solution {
     Solution { operations }
 }
 
-pub(crate) fn sample_neighbor<R: Random>(
-    rng: &mut R,
-    probs: &[(NeighborKind, f64)],
-) -> NeighborKind {
+pub fn sample_neighbor<R: Random>(rng: &mut R, probs: &[(NeighborKind, f64)]) -> NeighborKind {
     let total = probs.iter().map(|&(_, prob)| prob).sum::<f64>();
     debug_assert!(total > 0.0);
 
@@ -132,10 +125,7 @@ pub(crate) fn sample_neighbor<R: Random>(
     probs.last().unwrap().0
 }
 
-pub(crate) fn format_neighbor_stats(
-    stats: &[NeighborStats],
-    probs: &[(NeighborKind, f64)],
-) -> String {
+pub fn format_neighbor_stats(stats: &[NeighborStats], probs: &[(NeighborKind, f64)]) -> String {
     fn ratio(num: usize, den: usize) -> f64 {
         if den == 0 {
             0.0
