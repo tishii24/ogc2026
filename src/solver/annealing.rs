@@ -1,10 +1,11 @@
 use super::*;
 use crate::{
+    annealing::{AnnealingWorkerContext, SharedBest},
     solver_util::{NeighborStats, format_neighbor_stats, sample_neighbor},
     tabu::ScheduleTabu,
 };
 use rayon::prelude::*;
-use std::{sync::Mutex, time::Instant};
+use std::time::Instant;
 
 #[derive(Default)]
 struct AnnealingStats {
@@ -109,30 +110,6 @@ impl ScheduleAnnealingState {
     }
 }
 
-struct TemperatureSchedule {
-    start_time: f64,
-    deadline: f64,
-    start_temperature: f64,
-    end_temperature: f64,
-}
-
-impl TemperatureSchedule {
-    fn new(start_time: f64, deadline: f64, start_temperature: f64, end_temperature: f64) -> Self {
-        Self {
-            start_time,
-            deadline,
-            start_temperature,
-            end_temperature,
-        }
-    }
-
-    fn temperature(&self, elapsed: f64) -> f64 {
-        let progress = ((elapsed - self.start_time) / (self.deadline - self.start_time).max(1e-4))
-            .clamp(0.0, 1.0);
-        self.start_temperature * (self.end_temperature / self.start_temperature).powf(progress)
-    }
-}
-
 struct AnnealingResult {
     worker_id: usize,
     state: OptimizeState,
@@ -140,9 +117,11 @@ struct AnnealingResult {
     stats: AnnealingStats,
 }
 
-struct SharedBayBest {
-    blocks: Vec<ScheduledBlock>,
-    tardiness: i64,
+#[derive(Clone)]
+pub struct BayOptimizeState {
+    pub bay_id: usize,
+    pub score: f64,
+    pub blocks: Vec<ScheduledBlock>,
 }
 
 struct BayAnnealingWorkerResult {
@@ -205,11 +184,17 @@ impl<'a> BayAnnealing<'a> {
 
         let shared: Vec<_> = initial_bays
             .iter()
-            .map(|blocks| {
-                Mutex::new(SharedBayBest {
-                    tardiness: bay_tardiness(self.problem, blocks),
-                    blocks: blocks.clone(),
-                })
+            .enumerate()
+            .map(|(bay_id, blocks)| {
+                let tardiness = bay_tardiness(self.problem, blocks) as f64;
+                SharedBest::new(
+                    tardiness,
+                    BayOptimizeState {
+                        bay_id,
+                        score: tardiness,
+                        blocks: blocks.clone(),
+                    },
+                )
             })
             .collect();
         let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
@@ -240,14 +225,14 @@ impl<'a> BayAnnealing<'a> {
         }
 
         let mut blocks = Vec::with_capacity(self.problem.blocks.len());
-        for (bay_id, shared) in shared.into_iter().enumerate() {
-            let best = shared.into_inner().unwrap();
+        for shared in shared {
+            let best = shared.into_inner();
             eprintln!(
                 "[{:.4}] [bay={}] best_tardiness={}, target={}",
                 self.timer.elapsed_seconds(),
-                bay_id,
-                best.tardiness,
-                self.target_tardiness[bay_id],
+                best.bay_id,
+                best.score,
+                self.target_tardiness[best.bay_id],
             );
             blocks.extend(best.blocks);
         }
@@ -257,14 +242,13 @@ impl<'a> BayAnnealing<'a> {
 
     fn run_worker(
         &self,
-        shared: &[Mutex<SharedBayBest>],
+        shared: &[SharedBest<BayOptimizeState>],
         initial_bays: &[Vec<ScheduledBlock>],
         deadline: f64,
         worker_id: usize,
         worker_count: usize,
     ) -> BayAnnealingWorkerResult {
-        let mut rng =
-            RandPcg64Mcg::new(RNG_SEED.wrapping_add(10_000).wrapping_add(worker_id as u64));
+        let rng_seed = RNG_SEED.wrapping_add(10_000).wrapping_add(worker_id as u64);
         let mut states: Vec<_> = initial_bays
             .iter()
             .map(|blocks| {
@@ -280,37 +264,33 @@ impl<'a> BayAnnealing<'a> {
             .filter(|&bay_id| states[bay_id].best_metric > self.target_tardiness[bay_id] as f64)
             .collect();
         let temp_scale = get_temp_scale(worker_id, worker_count);
-        let start = self.timer.elapsed_seconds();
         let start_temperature =
             temp_scale * (self.problem.weights.w1 / TEMP_WEIGHT_DIVISOR).max(1e-9);
-        let temperature = TemperatureSchedule::new(
-            start,
+        let mut context = AnnealingWorkerContext::new(
+            self.timer,
             deadline,
             start_temperature,
             (start_temperature * BAY_END_TEMPERATURE_RATIO).max(1e-9),
+            rng_seed,
         );
-        let mut turn = 0usize;
 
         while !active_bays.is_empty() {
-            let elapsed = self.timer.elapsed_seconds();
-            if elapsed >= deadline {
+            let Some(temp) = context.next(self.timer) else {
                 break;
-            }
-            turn += 1;
-            if turn % BAY_BEST_EXCHANGE_INTERVAL == 0 {
+            };
+            if context.should_exchange(BAY_BEST_EXCHANGE_INTERVAL) {
                 self.exchange_shared(shared, &mut states, &mut active_bays);
                 if active_bays.is_empty() {
                     break;
                 }
             }
 
-            let active_index = rng.gen_index(active_bays.len());
+            let active_index = context.rng.gen_index(active_bays.len());
             let bay_id = active_bays[active_index];
             let state = &mut states[bay_id];
             state.stats.iter += 1;
-            let temp = temperature.temperature(elapsed);
-            let accept_threshold = state.current_score - temp * rng.nextf().ln();
-            let neighbor = sample_neighbor(&mut rng, BAY_NEIGHBOR_PROBS);
+            let accept_threshold = state.current_score - temp * context.rng.nextf().ln();
+            let neighbor = sample_neighbor(&mut context.rng, BAY_NEIGHBOR_PROBS);
             let neighbor_idx = neighbor.index();
             let neighbor_start = Instant::now();
             state.stats.neighbor_stats[neighbor_idx].selected += 1;
@@ -321,7 +301,7 @@ impl<'a> BayAnnealing<'a> {
                     self.pre,
                     &self.constraints,
                     &state.current,
-                    &mut rng,
+                    &mut context.rng,
                     accept_threshold,
                     bay_id,
                 ),
@@ -329,14 +309,14 @@ impl<'a> BayAnnealing<'a> {
                     self.problem,
                     self.pre,
                     &state.current,
-                    &mut rng,
+                    &mut context.rng,
                     Some(&self.constraints),
                 ),
                 NeighborKind::Move => try_move_neighbor(
                     self.problem,
                     self.pre,
                     &state.current,
-                    &mut rng,
+                    &mut context.rng,
                     Some(&self.constraints),
                     Some(bay_id),
                 ),
@@ -344,7 +324,7 @@ impl<'a> BayAnnealing<'a> {
                     self.problem,
                     self.pre,
                     &state.current,
-                    &mut rng,
+                    &mut context.rng,
                     Some(&self.constraints),
                 ),
                 NeighborKind::Swap => None,
@@ -368,10 +348,12 @@ impl<'a> BayAnnealing<'a> {
             let mut target_reached = false;
             if outcome.new_best {
                 let best_tardiness = state.best_metric as i64;
-                let mut shared = shared[bay_id].lock().unwrap();
-                if best_tardiness < shared.tardiness {
-                    shared.tardiness = best_tardiness;
-                    shared.blocks.clone_from(&state.best);
+                let best = BayOptimizeState {
+                    bay_id,
+                    score: state.best_metric,
+                    blocks: state.best.clone(),
+                };
+                if shared[bay_id].update(best.score, &best) {
                     log!(
                         self.timer,
                         "worker {} bay {} new shared best tardiness: {} (target={})",
@@ -412,21 +394,16 @@ impl<'a> BayAnnealing<'a> {
 
     fn exchange_shared(
         &self,
-        shared: &[Mutex<SharedBayBest>],
+        shared: &[SharedBest<BayOptimizeState>],
         states: &mut [ScheduleAnnealingState],
         active_bays: &mut Vec<usize>,
     ) {
         active_bays.clear();
         for (bay_id, (shared, state)) in shared.iter().zip(states).enumerate() {
-            let shared = shared.lock().unwrap();
-            if shared.tardiness as f64 + 1e-9 < state.current_metric {
-                state.adopt_external(
-                    &shared.blocks,
-                    self.problem.weights.w1 * shared.tardiness as f64,
-                    shared.tardiness as f64,
-                );
+            if let Some((score, best)) = shared.get_if_better(state.current_metric) {
+                state.adopt_external(&best.blocks, self.problem.weights.w1 * score, score);
             }
-            if shared.tardiness > self.target_tardiness[bay_id] {
+            if shared.key() > self.target_tardiness[bay_id] as f64 {
                 active_bays.push(bay_id);
             }
         }
@@ -451,13 +428,12 @@ impl<'a> GlobalAnnealing<'a> {
     pub fn run(&self, initial: OptimizeState, deadline: f64) -> OptimizeState {
         let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
         log!(self.timer, "annealing workers: {}", worker_count);
-        let shared = Mutex::new(initial.clone());
+        let shared = SharedBest::new(initial.score, initial.clone());
         let results: Vec<_> = (0..worker_count)
             .into_par_iter()
             .map(|worker_id| self.run_worker(&shared, &initial, deadline, worker_id, worker_count))
             .collect();
 
-        let mut best = initial;
         for result in results {
             eprintln!(
                 "[{:.4}] [id={}] iter={}, best={:.3}, accepted={}, improved={}, current={:.3}\nneighbor stats:\n{}",
@@ -470,52 +446,47 @@ impl<'a> GlobalAnnealing<'a> {
                 result.current_score,
                 format_neighbor_stats(&result.stats.neighbor_stats, NEIGHBOR_PROBS),
             );
-            if result.state.score + 1e-9 < best.score {
-                best = result.state;
-            }
         }
-        best
+        shared.into_inner()
     }
 
     fn run_worker(
         &self,
-        shared: &Mutex<OptimizeState>,
+        shared: &SharedBest<OptimizeState>,
         initial: &OptimizeState,
         deadline: f64,
         worker_id: usize,
         worker_count: usize,
     ) -> AnnealingResult {
-        let mut rng = RandPcg64Mcg::new(RNG_SEED.wrapping_add(worker_id as u64));
+        let rng_seed = RNG_SEED.wrapping_add(worker_id as u64);
         let temp_scale = get_temp_scale(worker_id, worker_count);
         let mut state =
             ScheduleAnnealingState::new(initial.blocks.clone(), initial.score, initial.score);
         let mut tabu = ScheduleTabu::new(TABU_SIZE);
         tabu.insert_schedule(&state.current);
-        let start = self.timer.elapsed_seconds();
         let start_temperature =
             temp_scale * (self.problem.weights.w1 / TEMP_WEIGHT_DIVISOR).max(1e-9);
         let end_temperature =
             temp_scale * (self.problem.weights.w3 / TEMP_WEIGHT_DIVISOR).max(1e-9);
-        let temperature =
-            TemperatureSchedule::new(start, deadline, start_temperature, end_temperature);
+        let mut context = AnnealingWorkerContext::new(
+            self.timer,
+            deadline,
+            start_temperature,
+            end_temperature,
+            rng_seed,
+        );
 
-        loop {
-            let elapsed = self.timer.elapsed_seconds();
-            if elapsed >= deadline {
-                break;
-            }
+        while let Some(temp) = context.next(self.timer) {
             state.stats.iter += 1;
-            if state.stats.iter % BEST_EXCHANGE_INTERVAL == 0 {
-                let shared = shared.lock().unwrap();
-                if shared.score + self.problem.weights.w1 + 1e-9 < state.current_score {
-                    state.adopt_external(&shared.blocks, shared.score, shared.score);
+            if context.should_exchange(BEST_EXCHANGE_INTERVAL) {
+                if let Some((score, best)) = shared.get_if_better(state.current_score) {
+                    state.adopt_external(&best.blocks, score, score);
                     tabu.insert_schedule(&state.current);
                 }
             }
 
-            let temp = temperature.temperature(elapsed);
-            let accept_threshold = state.current_score - temp * rng.nextf().ln();
-            let neighbor = sample_neighbor(&mut rng, NEIGHBOR_PROBS);
+            let accept_threshold = state.current_score - temp * context.rng.nextf().ln();
+            let neighbor = sample_neighbor(&mut context.rng, NEIGHBOR_PROBS);
             let neighbor_idx = neighbor.index();
             let neighbor_start = Instant::now();
             state.stats.neighbor_stats[neighbor_idx].selected += 1;
@@ -525,20 +496,33 @@ impl<'a> GlobalAnnealing<'a> {
                     self.problem,
                     self.pre,
                     &state.current,
-                    &mut rng,
+                    &mut context.rng,
                     accept_threshold,
                 ),
-                NeighborKind::Shift => {
-                    try_shift_neighbor(self.problem, self.pre, &state.current, &mut rng, None)
-                }
-                NeighborKind::Move => {
-                    try_move_neighbor(self.problem, self.pre, &state.current, &mut rng, None, None)
-                }
-                NeighborKind::Rotate => {
-                    try_rotate_neighbor(self.problem, self.pre, &state.current, &mut rng, None)
-                }
+                NeighborKind::Shift => try_shift_neighbor(
+                    self.problem,
+                    self.pre,
+                    &state.current,
+                    &mut context.rng,
+                    None,
+                ),
+                NeighborKind::Move => try_move_neighbor(
+                    self.problem,
+                    self.pre,
+                    &state.current,
+                    &mut context.rng,
+                    None,
+                    None,
+                ),
+                NeighborKind::Rotate => try_rotate_neighbor(
+                    self.problem,
+                    self.pre,
+                    &state.current,
+                    &mut context.rng,
+                    None,
+                ),
                 NeighborKind::Swap => {
-                    try_swap_neighbor(self.problem, self.pre, &state.current, &mut rng)
+                    try_swap_neighbor(self.problem, self.pre, &state.current, &mut context.rng)
                 }
             };
             let Some(candidate) = candidate else {
@@ -563,16 +547,17 @@ impl<'a> GlobalAnnealing<'a> {
                 tabu.insert(candidate_key);
             }
             if outcome.new_best {
-                log!(
-                    self.timer,
-                    "worker {} new best score: {:.3}",
-                    worker_id,
-                    state.best_score
-                );
-                let mut shared = shared.lock().unwrap();
-                if state.best_score + 1e-9 < shared.score {
-                    shared.score = state.best_score;
-                    shared.blocks = state.best.clone();
+                let best = OptimizeState {
+                    score: state.best_score,
+                    blocks: state.best.clone(),
+                };
+                if shared.update(best.score, &best) {
+                    log!(
+                        self.timer,
+                        "worker {} new shared best score: {:.3}",
+                        worker_id,
+                        best.score
+                    );
                 }
             }
             state.stats.neighbor_stats[neighbor_idx].time_sec +=

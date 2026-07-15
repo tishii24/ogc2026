@@ -1,3 +1,4 @@
+pub mod annealing;
 pub mod collision;
 pub mod insert;
 pub mod precompute;

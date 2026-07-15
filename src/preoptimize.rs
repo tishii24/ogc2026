@@ -1,15 +1,15 @@
 use crate::{
     Bay, Orientation, Problem,
+    annealing::{AnnealingWorkerContext, SharedBest, accept},
     solver::{
         PREOPTIMIZE_BAD_BLOCK_SAMPLE_COUNT, PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY,
         PREOPTIMIZE_DISTANCE_WEIGHT, PREOPTIMIZE_END_TEMPERATURE_RATIO,
         PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS, PREOPTIMIZE_MAX_TIME_SHIFT, PREOPTIMIZE_RNG_SEED,
         PREOPTIMIZE_SWAP_PROBABILITY, PreoptimizeState, PreoptimizedBlock,
     },
-    util::rand::{RandPcg64Mcg, Random},
+    util::{rand::Random, time::Timer},
 };
 use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
-use std::time::Instant;
 
 #[derive(Clone, Copy, Debug)]
 pub struct PreoptimizeParams {
@@ -566,10 +566,6 @@ fn sample_entry_time(
     }
 }
 
-fn accept(delta: f64, temperature: f64, rng: &mut impl Random) -> bool {
-    delta <= 0.0 || rng.nextf() < (-delta / temperature).exp()
-}
-
 fn try_relocate(
     problem: &Problem,
     context: &PreoptimizeContext<'_>,
@@ -738,40 +734,47 @@ pub fn preoptimize(
         max_time: pre.search_horizon,
     };
     let mut state = build_initial_state(problem, &mut context)?;
-    let mut best = state.schedule.clone();
-    let mut best_regularized =
-        state.objective + PREOPTIMIZE_DISTANCE_WEIGHT * state.bay_distance as f64;
-    let mut rng = RandPcg64Mcg::new(PREOPTIMIZE_RNG_SEED);
-    let start_temperature = (best_regularized / problem.blocks.len() as f64)
+    let initial_key = state.objective + PREOPTIMIZE_DISTANCE_WEIGHT * state.bay_distance as f64;
+    let mut local_best_key = initial_key;
+    let shared = SharedBest::new(
+        initial_key,
+        PreoptimizeState {
+            score: state.objective,
+            blocks: state.schedule.clone(),
+        },
+    );
+    let start_temperature = (initial_key / problem.blocks.len() as f64)
         .max(problem.weights.w1)
         .max(problem.weights.w3)
         .max(PREOPTIMIZE_DISTANCE_WEIGHT)
         .max(1.0);
-    let end_temperature = start_temperature * PREOPTIMIZE_END_TEMPERATURE_RATIO;
-    let solve_start = Instant::now();
-    let mut iter = 0usize;
+    let timer = Timer::start(1.0);
+    let mut worker = AnnealingWorkerContext::new(
+        timer,
+        params.time_limit,
+        start_temperature,
+        start_temperature * PREOPTIMIZE_END_TEMPERATURE_RATIO,
+        PREOPTIMIZE_RNG_SEED,
+    );
 
-    loop {
-        let elapsed = solve_start.elapsed().as_secs_f64();
-        if elapsed >= params.time_limit {
-            break;
-        }
-        iter += 1;
-        let progress = (elapsed / params.time_limit).clamp(0.0, 1.0);
-        let temperature = start_temperature * (end_temperature / start_temperature).powf(progress);
-        if rng.nextf() < PREOPTIMIZE_SWAP_PROBABILITY {
-            try_swap(problem, &context, &mut state, temperature, &mut rng);
+    while let Some(temperature) = worker.next(timer) {
+        if worker.rng.nextf() < PREOPTIMIZE_SWAP_PROBABILITY {
+            try_swap(problem, &context, &mut state, temperature, &mut worker.rng);
         } else {
-            try_relocate(problem, &context, &mut state, temperature, &mut rng);
+            try_relocate(problem, &context, &mut state, temperature, &mut worker.rng);
         }
         let regularized = state.objective + PREOPTIMIZE_DISTANCE_WEIGHT * state.bay_distance as f64;
-        if regularized + 1e-9 < best_regularized {
-            best_regularized = regularized;
-            best.clone_from(&state.schedule);
+        if regularized + 1e-9 < local_best_key {
+            local_best_key = regularized;
+            let candidate = PreoptimizeState {
+                score: state.objective,
+                blocks: state.schedule.clone(),
+            };
+            shared.update(regularized, &candidate);
             eprintln!(
                 "[{:.4}] annealing new best: iter={:8}, score={:.3}, z1={:.3}, z2={:.3}, z3={:.3}",
-                solve_start.elapsed().as_secs_f64(),
-                iter,
+                timer.elapsed_seconds(),
+                worker.iterations(),
                 regularized,
                 state.z1,
                 state.z2,
@@ -780,14 +783,13 @@ pub fn preoptimize(
         }
     }
 
-    let (objective, _, _, _) = evaluate_schedule(
+    let mut best = shared.into_inner();
+    best.score = evaluate_schedule(
         problem,
         &context.pre.pref_penalty,
         &context.pre.bay_load_scale,
-        &best,
-    );
-    Ok(PreoptimizeState {
-        score: objective,
-        blocks: best,
-    })
+        &best.blocks,
+    )
+    .0;
+    Ok(best)
 }
