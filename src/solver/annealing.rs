@@ -17,7 +17,11 @@ pub struct BayOptimizeState {
 
 impl AnnealingState for BayOptimizeState {
     fn annealing_score(&self) -> f64 {
-        self.score
+        self.tardiness as f64
+    }
+
+    fn tabu_key(&self) -> Option<u64> {
+        Some(hash_schedule(&self.blocks))
     }
 }
 
@@ -62,7 +66,13 @@ impl<'a> BayAnnealing<'a> {
         }
     }
 
-    pub fn run(&self, initial: OptimizeState, deadline: f64) -> OptimizeState {
+    pub fn run(
+        &self,
+        initial: OptimizeState,
+        deadline: f64,
+        params: AnnealingParams,
+        seed: u64,
+    ) -> OptimizeState {
         if self.timer.elapsed_seconds() >= deadline {
             return initial;
         }
@@ -85,29 +95,16 @@ impl<'a> BayAnnealing<'a> {
             })
             .collect();
         let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
-        let start_temperature = (self.problem.weights.w1 / TEMP_WEIGHT_DIVISOR).max(1e-9);
         let delegate = BayAnnealingDelegate {
             problem: self.problem,
             pre: self.pre,
             constraints: &self.constraints,
             target_tardiness: &self.target_tardiness,
             initial_states,
+            params: &BAY_NEIGHBOR_PARAMS,
             timer: self.timer,
         };
-        Annealer::new(
-            AnnealingParams {
-                deadline,
-                worker_count,
-                exchange_interval: BAY_BEST_EXCHANGE_INTERVAL,
-                rng_seed: RNG_SEED.wrapping_add(10_000),
-                start_temperature,
-                end_temperature: (start_temperature * BAY_END_TEMPERATURE_RATIO).max(1e-9),
-                worker_temperature_scale: WORKER_TEMP_SCALE,
-                tabu_capacity: 0,
-            },
-            delegate,
-        )
-        .run(self.timer)
+        Annealer::new(deadline, worker_count, seed, params, delegate).run(self.timer)
     }
 }
 
@@ -117,6 +114,7 @@ struct BayAnnealingDelegate<'a> {
     constraints: &'a PrecedenceConstraints,
     target_tardiness: &'a [i64],
     initial_states: Vec<BayOptimizeState>,
+    params: &'static NeighborParams,
     timer: Timer,
 }
 
@@ -140,7 +138,7 @@ impl AnnealingDelegate for BayAnnealingDelegate<'_> {
         rng: &mut RandPcg64Mcg,
     ) -> AnnealingAttempt<Self::State> {
         debug_assert_eq!(domain, current.bay_id);
-        let neighbor = sample_neighbor(rng, BAY_NEIGHBOR_PROBS);
+        let neighbor = sample_neighbor(rng, self.params.probabilities);
         let blocks = match neighbor {
             NeighborKind::LargeReconstruct => try_bay_large_reconstruct(
                 self.problem,
@@ -150,6 +148,7 @@ impl AnnealingDelegate for BayAnnealingDelegate<'_> {
                 rng,
                 accept_threshold,
                 current.bay_id,
+                self.params,
             ),
             NeighborKind::Shift => try_shift_neighbor(
                 self.problem,
@@ -157,6 +156,7 @@ impl AnnealingDelegate for BayAnnealingDelegate<'_> {
                 &current.blocks,
                 rng,
                 Some(self.constraints),
+                self.params,
             ),
             NeighborKind::Move => try_move_neighbor(
                 self.problem,
@@ -165,6 +165,7 @@ impl AnnealingDelegate for BayAnnealingDelegate<'_> {
                 rng,
                 Some(self.constraints),
                 Some(current.bay_id),
+                self.params,
             ),
             NeighborKind::Rotate => try_rotate_neighbor(
                 self.problem,
@@ -172,6 +173,7 @@ impl AnnealingDelegate for BayAnnealingDelegate<'_> {
                 &current.blocks,
                 rng,
                 Some(self.constraints),
+                self.params,
             ),
             NeighborKind::Swap => None,
         };
@@ -205,7 +207,7 @@ impl AnnealingDelegate for BayAnnealingDelegate<'_> {
                 worker.active_domains,
                 worker.start_temperature,
                 worker.end_temperature,
-                format_neighbor_stats(&worker.neighbor_stats, BAY_NEIGHBOR_PROBS),
+                format_neighbor_stats(&worker.neighbor_stats, self.params.probabilities),
             );
         }
 
@@ -241,28 +243,22 @@ impl<'a> GlobalAnnealing<'a> {
         }
     }
 
-    pub fn run(&self, initial: OptimizeState, deadline: f64) -> OptimizeState {
+    pub fn run(
+        &self,
+        initial: OptimizeState,
+        deadline: f64,
+        params: AnnealingParams,
+        seed: u64,
+    ) -> OptimizeState {
         let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
         let delegate = GlobalAnnealingDelegate {
             problem: self.problem,
             pre: self.pre,
             initial,
+            params: &GLOBAL_NEIGHBOR_PARAMS,
             timer: self.timer,
         };
-        Annealer::new(
-            AnnealingParams {
-                deadline,
-                worker_count,
-                exchange_interval: BEST_EXCHANGE_INTERVAL,
-                rng_seed: RNG_SEED,
-                start_temperature: (self.problem.weights.w1 / TEMP_WEIGHT_DIVISOR).max(1e-9),
-                end_temperature: (self.problem.weights.w3 / TEMP_WEIGHT_DIVISOR).max(1e-9),
-                worker_temperature_scale: WORKER_TEMP_SCALE,
-                tabu_capacity: TABU_SIZE,
-            },
-            delegate,
-        )
-        .run(self.timer)
+        Annealer::new(deadline, worker_count, seed, params, delegate).run(self.timer)
     }
 }
 
@@ -270,6 +266,7 @@ struct GlobalAnnealingDelegate<'a> {
     problem: &'a Problem,
     pre: &'a Precompute,
     initial: OptimizeState,
+    params: &'static NeighborParams,
     timer: Timer,
 }
 
@@ -285,6 +282,10 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
         NEIGHBOR_KIND_COUNT
     }
 
+    fn is_finished(&self, _domain: usize, _state: &Self::State) -> bool {
+        false
+    }
+
     fn propose(
         &self,
         _domain: usize,
@@ -292,7 +293,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
         accept_threshold: f64,
         rng: &mut RandPcg64Mcg,
     ) -> AnnealingAttempt<Self::State> {
-        let neighbor = sample_neighbor(rng, NEIGHBOR_PROBS);
+        let neighbor = sample_neighbor(rng, self.params.probabilities);
         let blocks = match neighbor {
             NeighborKind::LargeReconstruct => try_large_reconstruct(
                 self.problem,
@@ -300,17 +301,36 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 &current.blocks,
                 rng,
                 accept_threshold,
+                self.params,
             ),
-            NeighborKind::Shift => {
-                try_shift_neighbor(self.problem, self.pre, &current.blocks, rng, None)
+            NeighborKind::Shift => try_shift_neighbor(
+                self.problem,
+                self.pre,
+                &current.blocks,
+                rng,
+                None,
+                self.params,
+            ),
+            NeighborKind::Move => try_move_neighbor(
+                self.problem,
+                self.pre,
+                &current.blocks,
+                rng,
+                None,
+                None,
+                self.params,
+            ),
+            NeighborKind::Rotate => try_rotate_neighbor(
+                self.problem,
+                self.pre,
+                &current.blocks,
+                rng,
+                None,
+                self.params,
+            ),
+            NeighborKind::Swap => {
+                try_swap_neighbor(self.problem, self.pre, &current.blocks, rng, self.params)
             }
-            NeighborKind::Move => {
-                try_move_neighbor(self.problem, self.pre, &current.blocks, rng, None, None)
-            }
-            NeighborKind::Rotate => {
-                try_rotate_neighbor(self.problem, self.pre, &current.blocks, rng, None)
-            }
-            NeighborKind::Swap => try_swap_neighbor(self.problem, self.pre, &current.blocks, rng),
         };
         AnnealingAttempt {
             neighbor_kind: neighbor.index(),
@@ -334,7 +354,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 worker.current_scores[0],
                 worker.start_temperature,
                 worker.end_temperature,
-                format_neighbor_stats(&worker.neighbor_stats, NEIGHBOR_PROBS),
+                format_neighbor_stats(&worker.neighbor_stats, self.params.probabilities),
             );
         }
         let best = states.pop().unwrap();

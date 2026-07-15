@@ -16,9 +16,7 @@ const EPS: f64 = 1e-9;
 pub trait AnnealingState: Clone + Send + Sync {
     fn annealing_score(&self) -> f64;
 
-    fn tabu_key(&self) -> Option<u64> {
-        None
-    }
+    fn tabu_key(&self) -> Option<u64>;
 }
 
 pub struct SharedBest<S: AnnealingState> {
@@ -147,10 +145,7 @@ pub fn worker_temperature_scale(worker_id: usize, worker_count: usize, scale: f6
 }
 
 pub struct AnnealingParams {
-    pub deadline: f64,
-    pub worker_count: usize,
     pub exchange_interval: usize,
-    pub rng_seed: u64,
     pub start_temperature: f64,
     pub end_temperature: f64,
     pub worker_temperature_scale: f64,
@@ -201,10 +196,7 @@ pub trait AnnealingDelegate: Sync {
         rng: &mut RandPcg64Mcg,
     ) -> AnnealingAttempt<Self::State>;
 
-    fn is_finished(&self, domain: usize, state: &Self::State) -> bool {
-        let _ = (domain, state);
-        false
-    }
+    fn is_finished(&self, domain: usize, state: &Self::State) -> bool;
 
     fn finish(&self, states: Vec<Self::State>, workers: Vec<WorkerSummary>) -> Self::Output;
 }
@@ -248,19 +240,34 @@ struct WorkerDomain<S> {
 }
 
 pub struct Annealer<D> {
-    params: AnnealingParams,
-    delegate: D,
+    pub deadline: f64,
+    pub worker_count: usize,
+    pub rng_seed: u64,
+    pub params: AnnealingParams,
+    pub delegate: D,
 }
 
 impl<D: AnnealingDelegate> Annealer<D> {
-    pub fn new(params: AnnealingParams, delegate: D) -> Self {
-        Self { params, delegate }
+    pub fn new(
+        deadline: f64,
+        worker_count: usize,
+        rng_seed: u64,
+        params: AnnealingParams,
+        delegate: D,
+    ) -> Self {
+        Self {
+            deadline,
+            worker_count,
+            rng_seed,
+            params,
+            delegate,
+        }
     }
 
     pub fn run(self, timer: Timer) -> D::Output {
         let initial_states = self.delegate.initial_states();
         assert!(!initial_states.is_empty());
-        assert!(self.params.worker_count > 0);
+        assert!(self.worker_count > 0);
         assert!(self.params.exchange_interval > 0);
 
         let shared: Vec<_> = initial_states
@@ -268,7 +275,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
             .cloned()
             .map(SharedBest::new)
             .collect();
-        let worker_results: Vec<_> = (0..self.params.worker_count)
+        let worker_results: Vec<_> = (0..self.worker_count)
             .into_par_iter()
             .map(|worker_id| self.run_worker(&initial_states, &shared, timer, worker_id))
             .collect();
@@ -309,17 +316,17 @@ impl<D: AnnealingDelegate> Annealer<D> {
 
         let scale = worker_temperature_scale(
             worker_id,
-            self.params.worker_count,
+            self.worker_count,
             self.params.worker_temperature_scale,
         );
         let start_temperature = self.params.start_temperature * scale;
         let end_temperature = self.params.end_temperature * scale;
         let mut context = AnnealingWorkerContext::new(
             timer,
-            self.params.deadline,
+            self.deadline,
             start_temperature,
             end_temperature,
-            self.params.rng_seed.wrapping_add(worker_id as u64),
+            self.rng_seed.wrapping_add(worker_id as u64),
         );
         let mut accepted = 0usize;
         let mut improved = 0usize;

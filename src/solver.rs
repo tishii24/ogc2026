@@ -1,4 +1,5 @@
 use crate::{
+    annealing::AnnealingParams,
     insert::{InsertSearchParams, insert_greedy, try_place_block},
     precompute::Precompute,
     preoptimize::{PreoptimizeParams, PreoptimizePrecompute, preoptimize},
@@ -32,19 +33,13 @@ const MAX_WORKER_COUNT: usize = 4;
 
 const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
 const GLOBAL_ANNEALING_REMAINING_SECONDS: f64 = 20.;
-const TEMP_WEIGHT_DIVISOR: f64 = 10.0;
-const BAY_END_TEMPERATURE_RATIO: f64 = 1e-3;
-const WORKER_TEMP_SCALE: f64 = 10.;
-const BEST_EXCHANGE_INTERVAL: usize = 2_000;
-const BAY_BEST_EXCHANGE_INTERVAL: usize = 2_000;
-const TABU_SIZE: usize = 4_096;
 
 pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
 
 const INITIAL_PREOPTIMIZE_ALPHA: f64 = 1.0;
-const INITIAL_PREOPTIMIZE_BETA: f64 = 0.0;
+const INITIAL_PREOPTIMIZE_BETA: f64 = 1.0;
 const INITIAL_PREOPTIMIZE_TIME_RATIO: f64 = 0.1;
 const INITIAL_PREOPTIMIZE_MAX_SECONDS: f64 = 10.0;
 pub const PREOPTIMIZE_DISTANCE_WEIGHT: f64 = 0.0;
@@ -56,56 +51,129 @@ pub const PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS: usize = 8;
 pub const PREOPTIMIZE_MAX_TIME_SHIFT: i64 = 10;
 pub const PREOPTIMIZE_END_TEMPERATURE_RATIO: f64 = 1e-4;
 
-const MIN_REMOVED_BLOCKS: usize = 7;
-const MAX_REMOVED_BLOCKS: usize = 13;
-const REMOVE_POOL_FACTOR: usize = 4;
-const REMOVE_COUNT_SAMPLE_POWER: f64 = 2.0;
-const REMOVE_SEED_PER_BLOCK: usize = 4;
-const REMOVE_RANDOM_SEED_RATIO: f64 = 0.25;
-const REMOVE_X_DISTANCE_WEIGHT_MAX: f64 = 3.0;
-const REMOVE_Y_DISTANCE_WEIGHT_MAX: f64 = 3.0;
-const INSERT_PARAMS: InsertSearchParams = InsertSearchParams { y_buffer: 10 };
+const GLOBAL_ANNEALING_PARAMS: AnnealingParams = AnnealingParams {
+    exchange_interval: 2048,
+    start_temperature: 1e1,
+    end_temperature: 1e-2,
+    worker_temperature_scale: 10.,
+    tabu_capacity: 4096,
+};
+const BAY_ANNEALING_PARAMS: AnnealingParams = AnnealingParams {
+    exchange_interval: 2048,
+    start_temperature: 1e-1,
+    end_temperature: 1e-4,
+    worker_temperature_scale: 5.,
+    tabu_capacity: 4096,
+};
+
 const BAY_GREEDY_ORDER_TRIALS: usize = 32;
 const BAY_GREEDY_MAX_DUPLICATE_TRIALS: usize = 128;
-
-const SHIFT_MAX_SHIFT_X: i64 = 5;
-const SHIFT_MAX_SHIFT_Y: i64 = 5;
-const ROTATE_MAX_SHIFT_DELTA: i64 = 2;
-const SWAP_NEIGHBOR_TOP_K: usize = 32;
-const SWAP_MAX_SHIFT_DELTA: i64 = 2;
-const MOVE_SAMPLE_BLOCKS: usize = 16;
-const MOVE_SMALL_POOL_SIZE: usize = 8;
-
 const NEIGHBOR_KIND_COUNT: usize = 5;
-const NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
+
+const GLOBAL_NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
     (NeighborKind::LargeReconstruct, 0.2),
-    (NeighborKind::Shift, 8.),
+    (NeighborKind::Shift, 8.0),
     (NeighborKind::Move, 0.1),
-    (NeighborKind::Rotate, 8.),
-    (NeighborKind::Swap, 3.),
+    (NeighborKind::Rotate, 8.0),
+    (NeighborKind::Swap, 3.0),
 ];
 const BAY_NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
     (NeighborKind::LargeReconstruct, 0.2),
-    (NeighborKind::Shift, 8.),
+    (NeighborKind::Shift, 8.0),
     (NeighborKind::Move, 0.1),
-    (NeighborKind::Rotate, 8.),
+    (NeighborKind::Rotate, 8.0),
+    (NeighborKind::Swap, 0.0),
 ];
 
-const RECONSTRUCT_WORKLOAD_WEIGHT_RANGE: (f64, f64) = (0., 1.);
-const RECONSTRUCT_AREA_WEIGHT_RANGE: (f64, f64) = (-0.2, 1.);
-const RECONSTRUCT_PREF_SPREAD_WEIGHT_RANGE: (f64, f64) = (0., 1.);
-const RECONSTRUCT_DUE_URGENCY_WEIGHT_RANGE: (f64, f64) = (0., 1.);
-const RECONSTRUCT_SLACK_URGENCY_WEIGHT_RANGE: (f64, f64) = (0., 1.);
-const RECONSTRUCT_ORDER_RANDOM_WEIGHT_RANGE: (f64, f64) = (0., 0.5);
+pub struct NeighborParams {
+    pub probabilities: &'static [(NeighborKind, f64)],
+    pub min_removed_blocks: usize,
+    pub max_removed_blocks: usize,
+    pub remove_pool_factor: usize,
+    pub remove_count_sample_power: f64,
+    pub remove_seed_per_block: usize,
+    pub remove_random_seed_ratio: f64,
+    pub remove_x_distance_weight_max: f64,
+    pub remove_y_distance_weight_max: f64,
+    pub reconstruct_workload_weight_range: (f64, f64),
+    pub reconstruct_area_weight_range: (f64, f64),
+    pub reconstruct_pref_spread_weight_range: (f64, f64),
+    pub reconstruct_due_urgency_weight_range: (f64, f64),
+    pub reconstruct_slack_urgency_weight_range: (f64, f64),
+    pub reconstruct_order_random_weight_range: (f64, f64),
+    pub insert_y_buffer: i64,
+    pub shift_max_x: i64,
+    pub shift_max_y: i64,
+    pub rotate_max_shift_delta: i64,
+    pub swap_neighbor_top_k: usize,
+    pub swap_max_shift_delta: i64,
+    pub move_sample_blocks: usize,
+    pub move_small_pool_size: usize,
+}
 
-fn sample_reconstruct_order_weights(rng: &mut impl Random) -> BlockOrderWeights {
+const GLOBAL_NEIGHBOR_PARAMS: NeighborParams = NeighborParams {
+    probabilities: GLOBAL_NEIGHBOR_PROBS,
+    min_removed_blocks: 7,
+    max_removed_blocks: 13,
+    remove_pool_factor: 4,
+    remove_count_sample_power: 2.0,
+    remove_seed_per_block: 4,
+    remove_random_seed_ratio: 0.25,
+    remove_x_distance_weight_max: 3.0,
+    remove_y_distance_weight_max: 3.0,
+    reconstruct_workload_weight_range: (0.0, 1.0),
+    reconstruct_area_weight_range: (-0.2, 1.0),
+    reconstruct_pref_spread_weight_range: (0.0, 1.0),
+    reconstruct_due_urgency_weight_range: (0.0, 1.0),
+    reconstruct_slack_urgency_weight_range: (0.0, 1.0),
+    reconstruct_order_random_weight_range: (0.0, 0.5),
+    insert_y_buffer: 10,
+    shift_max_x: 5,
+    shift_max_y: 5,
+    rotate_max_shift_delta: 2,
+    swap_neighbor_top_k: 32,
+    swap_max_shift_delta: 2,
+    move_sample_blocks: 16,
+    move_small_pool_size: 8,
+};
+
+const BAY_NEIGHBOR_PARAMS: NeighborParams = NeighborParams {
+    probabilities: BAY_NEIGHBOR_PROBS,
+    min_removed_blocks: 3,
+    max_removed_blocks: 7,
+    remove_pool_factor: 4,
+    remove_count_sample_power: 2.0,
+    remove_seed_per_block: 4,
+    remove_random_seed_ratio: 0.25,
+    remove_x_distance_weight_max: 3.0,
+    remove_y_distance_weight_max: 3.0,
+    reconstruct_workload_weight_range: (0.0, 1.0),
+    reconstruct_area_weight_range: (-0.2, 1.0),
+    reconstruct_pref_spread_weight_range: (0.0, 1.0),
+    reconstruct_due_urgency_weight_range: (0.0, 1.0),
+    reconstruct_slack_urgency_weight_range: (0.0, 1.0),
+    reconstruct_order_random_weight_range: (0.0, 0.5),
+    insert_y_buffer: 10,
+    shift_max_x: 5,
+    shift_max_y: 5,
+    rotate_max_shift_delta: 2,
+    swap_neighbor_top_k: 32,
+    swap_max_shift_delta: 2,
+    move_sample_blocks: 16,
+    move_small_pool_size: 8,
+};
+
+fn sample_reconstruct_order_weights(
+    rng: &mut impl Random,
+    params: &NeighborParams,
+) -> BlockOrderWeights {
     BlockOrderWeights {
-        workload: gen_rangef(rng, RECONSTRUCT_WORKLOAD_WEIGHT_RANGE),
-        area: gen_rangef(rng, RECONSTRUCT_AREA_WEIGHT_RANGE),
-        pref_spread: gen_rangef(rng, RECONSTRUCT_PREF_SPREAD_WEIGHT_RANGE),
-        due_urgency: gen_rangef(rng, RECONSTRUCT_DUE_URGENCY_WEIGHT_RANGE),
-        slack_urgency: gen_rangef(rng, RECONSTRUCT_SLACK_URGENCY_WEIGHT_RANGE),
-        random: gen_rangef(rng, RECONSTRUCT_ORDER_RANDOM_WEIGHT_RANGE),
+        workload: gen_rangef(rng, params.reconstruct_workload_weight_range),
+        area: gen_rangef(rng, params.reconstruct_area_weight_range),
+        pref_spread: gen_rangef(rng, params.reconstruct_pref_spread_weight_range),
+        due_urgency: gen_rangef(rng, params.reconstruct_due_urgency_weight_range),
+        slack_urgency: gen_rangef(rng, params.reconstruct_slack_urgency_weight_range),
+        random: gen_rangef(rng, params.reconstruct_order_random_weight_range),
     }
 }
 
@@ -124,6 +192,10 @@ pub struct PreoptimizeState {
 impl crate::annealing::AnnealingState for PreoptimizeState {
     fn annealing_score(&self) -> f64 {
         self.score
+    }
+
+    fn tabu_key(&self) -> Option<u64> {
+        None
     }
 }
 
@@ -213,11 +285,20 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
     log!(timer, "initial optimize score: {:.3}", initial.score);
 
     let bay_deadline = deadline - GLOBAL_ANNEALING_REMAINING_SECONDS;
-    let initial =
-        BayAnnealing::new(problem, &pre, &initial_abstract, timer).run(initial, bay_deadline);
+    let initial = BayAnnealing::new(problem, &pre, &initial_abstract, timer).run(
+        initial,
+        bay_deadline,
+        BAY_ANNEALING_PARAMS,
+        RNG_SEED,
+    );
     log!(timer, "bay annealing score: {:.3}", initial.score);
 
-    let best = GlobalAnnealing::new(problem, &pre, timer).run(initial, deadline);
+    let best = GlobalAnnealing::new(problem, &pre, timer).run(
+        initial,
+        deadline,
+        GLOBAL_ANNEALING_PARAMS,
+        RNG_SEED,
+    );
     Ok(schedule_to_solution(&best.blocks))
 }
 
@@ -245,7 +326,7 @@ pub fn build_optimize_state(
         while seen_order_hashes.len() < BAY_GREEDY_ORDER_TRIALS
             && duplicate_trials < BAY_GREEDY_MAX_DUPLICATE_TRIALS
         {
-            let weights = sample_reconstruct_order_weights(&mut rng);
+            let weights = sample_reconstruct_order_weights(&mut rng, &BAY_NEIGHBOR_PARAMS);
             let order = build_topological_order(
                 problem,
                 pre,
@@ -258,8 +339,14 @@ pub fn build_optimize_state(
                 duplicate_trials += 1;
                 continue;
             }
-            let Some(schedule) = build_bay_schedule(problem, pre, bay_id, &order, &constraints)
-            else {
+            let Some(schedule) = build_bay_schedule(
+                problem,
+                pre,
+                bay_id,
+                &order,
+                &constraints,
+                &BAY_NEIGHBOR_PARAMS,
+            ) else {
                 continue;
             };
             let tardiness = bay_tardiness(problem, &schedule);
@@ -292,14 +379,15 @@ fn try_large_reconstruct<R: Random>(
     schedule: &[ScheduledBlock],
     rng: &mut R,
     accept_threshold: f64,
+    params: &NeighborParams,
 ) -> Option<Vec<ScheduledBlock>> {
-    let k = sample_removed_count(rng).min(problem.blocks.len());
+    let k = sample_removed_count(rng, params).min(problem.blocks.len());
 
-    let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng);
+    let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng, params);
     if removed_ids.is_empty() {
         return None;
     }
-    let w = sample_reconstruct_order_weights(rng);
+    let w = sample_reconstruct_order_weights(rng, params);
     sort_block_order(problem, pre, &mut removed_ids, w, rng);
 
     let mut removed_ordered = vec![None; removed_ids.len()];
@@ -333,7 +421,9 @@ fn try_large_reconstruct<R: Random>(
             i64::MAX,
             &cur,
             &loads,
-            INSERT_PARAMS,
+            InsertSearchParams {
+                y_buffer: params.insert_y_buffer,
+            },
             &pre.bay_order_by_pref[old.block_id],
         )?;
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
@@ -381,14 +471,15 @@ fn try_bay_large_reconstruct<R: Random>(
     rng: &mut R,
     accept_threshold: f64,
     bay_id: usize,
+    params: &NeighborParams,
 ) -> Option<Vec<ScheduledBlock>> {
-    let k = sample_removed_count(rng).min(schedule.len());
-    let removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng);
+    let k = sample_removed_count(rng, params).min(schedule.len());
+    let removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng, params);
     if removed_ids.is_empty() {
         return None;
     }
 
-    let weights = sample_reconstruct_order_weights(rng);
+    let weights = sample_reconstruct_order_weights(rng, params);
     let order = build_topological_order(problem, pre, &removed_ids, constraints, weights, rng);
     let original_by_id = scheduled_by_id(problem, schedule);
     let mut removed = vec![false; problem.blocks.len()];
@@ -426,7 +517,9 @@ fn try_bay_large_reconstruct<R: Random>(
             max_entry_time,
             &cur,
             &loads,
-            INSERT_PARAMS,
+            InsertSearchParams {
+                y_buffer: params.insert_y_buffer,
+            },
             &bay_order,
         )?;
         loads[bay_id] += problem.blocks[block_id].workload as f64;
@@ -462,6 +555,7 @@ fn try_shift_neighbor<R: Random>(
     schedule: &[ScheduledBlock],
     rng: &mut R,
     constraints: Option<&PrecedenceConstraints>,
+    params: &NeighborParams,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.is_empty() {
         return None;
@@ -488,9 +582,9 @@ fn try_shift_neighbor<R: Random>(
         .fit_range(old.bay_id, old.block_id, old.orient_idx)?;
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
 
-    for dist in (1..=SHIFT_MAX_SHIFT_X + SHIFT_MAX_SHIFT_Y).rev() {
-        let min_abs_dx = (dist - SHIFT_MAX_SHIFT_Y).max(0);
-        let max_abs_dx = dist.min(SHIFT_MAX_SHIFT_X);
+    for dist in (1..=params.shift_max_x + params.shift_max_y).rev() {
+        let min_abs_dx = (dist - params.shift_max_y).max(0);
+        let max_abs_dx = dist.min(params.shift_max_x);
 
         for abs_dx in min_abs_dx..=max_abs_dx {
             let abs_dy = dist - abs_dx;
@@ -532,6 +626,7 @@ fn try_rotate_neighbor<R: Random>(
     schedule: &[ScheduledBlock],
     rng: &mut R,
     constraints: Option<&PrecedenceConstraints>,
+    params: &NeighborParams,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.is_empty() {
         return None;
@@ -566,8 +661,8 @@ fn try_rotate_neighbor<R: Random>(
             continue;
         };
 
-        for ddx in -ROTATE_MAX_SHIFT_DELTA..=ROTATE_MAX_SHIFT_DELTA {
-            for ddy in -ROTATE_MAX_SHIFT_DELTA..=ROTATE_MAX_SHIFT_DELTA {
+        for ddx in -params.rotate_max_shift_delta..=params.rotate_max_shift_delta {
+            for ddy in -params.rotate_max_shift_delta..=params.rotate_max_shift_delta {
                 let x = old.x + dx + ddx;
                 let y = old.y + dy + ddy;
                 if !range.contains(x, y) {
@@ -611,12 +706,13 @@ fn try_swap_place(
     orient_idx: usize,
     base_x: i64,
     base_y: i64,
+    params: &NeighborParams,
 ) -> Option<ScheduledBlock> {
     let range = pre.collision.fit_range(bay_id, old.block_id, orient_idx)?;
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
 
-    for ddx in -SWAP_MAX_SHIFT_DELTA..=SWAP_MAX_SHIFT_DELTA {
-        for ddy in -SWAP_MAX_SHIFT_DELTA..=SWAP_MAX_SHIFT_DELTA {
+    for ddx in -params.swap_max_shift_delta..=params.swap_max_shift_delta {
+        for ddy in -params.swap_max_shift_delta..=params.swap_max_shift_delta {
             let x = base_x + ddx;
             let y = base_y + ddy;
             if !range.contains(x, y) {
@@ -649,6 +745,7 @@ fn try_swap_neighbor<R: Random>(
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     rng: &mut R,
+    params: &NeighborParams,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.len() < 2 {
         return None;
@@ -660,7 +757,7 @@ fn try_swap_neighbor<R: Random>(
     if candidates.is_empty() {
         return None;
     }
-    let candidate_count = SWAP_NEIGHBOR_TOP_K.min(candidates.len());
+    let candidate_count = params.swap_neighbor_top_k.min(candidates.len());
     let candidate = candidates[rng.gen_index(candidate_count)];
     let b_idx = schedule
         .iter()
@@ -688,6 +785,7 @@ fn try_swap_neighbor<R: Random>(
         a_old.orient_idx,
         a_base_x,
         a_base_y,
+        params,
     )?;
     cur.push(a_new);
 
@@ -702,6 +800,7 @@ fn try_swap_neighbor<R: Random>(
         candidate.orient_idx,
         b_base_x,
         b_base_y,
+        params,
     )?;
     cur.push(b_new);
 
@@ -715,6 +814,7 @@ fn try_move_neighbor<R: Random>(
     rng: &mut R,
     constraints: Option<&PrecedenceConstraints>,
     fixed_bay_id: Option<usize>,
+    params: &NeighborParams,
 ) -> Option<Vec<ScheduledBlock>> {
     fn move_obj13(problem: &Problem, pre: &Precompute, s: ScheduledBlock) -> f64 {
         let block = &problem.blocks[s.block_id];
@@ -727,7 +827,7 @@ fn try_move_neighbor<R: Random>(
         return None;
     }
 
-    let sample_count = MOVE_SAMPLE_BLOCKS.min(schedule.len());
+    let sample_count = params.move_sample_blocks.min(schedule.len());
     let mut indices: Vec<usize> = (0..schedule.len()).collect();
     rng.shuffle(&mut indices);
     indices.truncate(sample_count);
@@ -736,7 +836,7 @@ fn try_move_neighbor<R: Random>(
             .total_cmp(&pre.block_area[schedule[b].block_id])
             .then(schedule[a].block_id.cmp(&schedule[b].block_id))
     });
-    indices.truncate(MOVE_SMALL_POOL_SIZE.min(indices.len()));
+    indices.truncate(params.move_small_pool_size.min(indices.len()));
 
     let idx = indices.into_iter().max_by(|&a, &b| {
         let sa = move_obj13(problem, pre, schedule[a]);
@@ -777,7 +877,9 @@ fn try_move_neighbor<R: Random>(
         max_entry_time,
         &base,
         &loads,
-        INSERT_PARAMS,
+        InsertSearchParams {
+            y_buffer: params.insert_y_buffer,
+        },
         bay_order,
     )?;
     if scheduled == old {
@@ -788,10 +890,10 @@ fn try_move_neighbor<R: Random>(
     Some(base)
 }
 
-fn sample_removed_count<R: Random>(rng: &mut R) -> usize {
-    let span = MAX_REMOVED_BLOCKS - MIN_REMOVED_BLOCKS + 1;
-    let u = rng.nextf().powf(REMOVE_COUNT_SAMPLE_POWER);
-    MIN_REMOVED_BLOCKS + ((u * span as f64) as usize).min(span - 1)
+fn sample_removed_count<R: Random>(rng: &mut R, params: &NeighborParams) -> usize {
+    let span = params.max_removed_blocks - params.min_removed_blocks + 1;
+    let u = rng.nextf().powf(params.remove_count_sample_power);
+    params.min_removed_blocks + ((u * span as f64) as usize).min(span - 1)
 }
 
 fn choose_removed_blocks<R: Random>(
@@ -800,6 +902,7 @@ fn choose_removed_blocks<R: Random>(
     schedule: &[ScheduledBlock],
     k: usize,
     rng: &mut R,
+    params: &NeighborParams,
 ) -> Vec<usize> {
     fn scheduled_center(pre: &Precompute, s: ScheduledBlock) -> (f64, f64) {
         let (cx, cy) = pre.orientation_bbox_center[s.block_id][s.orient_idx];
@@ -836,8 +939,8 @@ fn choose_removed_blocks<R: Random>(
     }
     let heavy_bay = most_loaded_bay(pre, &loads);
 
-    let remove_x_distance_weight = rng.gen_rangef(0.0, REMOVE_X_DISTANCE_WEIGHT_MAX);
-    let remove_y_distance_weight = rng.gen_rangef(0.0, REMOVE_Y_DISTANCE_WEIGHT_MAX);
+    let remove_x_distance_weight = rng.gen_rangef(0.0, params.remove_x_distance_weight_max);
+    let remove_y_distance_weight = rng.gen_rangef(0.0, params.remove_y_distance_weight_max);
 
     let mut badness = vec![0i64; problem.blocks.len()];
     for s in schedule {
@@ -868,16 +971,16 @@ fn choose_removed_blocks<R: Random>(
 
     rng.shuffle(&mut ids);
     ids.sort_by_key(|&block_id| Reverse(badness[block_id]));
-    let pool_len = (k * REMOVE_POOL_FACTOR).min(ids.len()).max(k);
+    let pool_len = (k * params.remove_pool_factor).min(ids.len()).max(k);
     ids.truncate(pool_len);
     let bad_pool = ids;
 
     let mut selected = Vec::with_capacity(k);
     let mut used = vec![false; problem.blocks.len()];
-    let seed_count = k.div_ceil(REMOVE_SEED_PER_BLOCK);
+    let seed_count = k.div_ceil(params.remove_seed_per_block);
     let mut random_seed_count = 0;
     for _ in 0..seed_count {
-        if rng.nextf() < REMOVE_RANDOM_SEED_RATIO {
+        if rng.nextf() < params.remove_random_seed_ratio {
             random_seed_count += 1;
         }
     }
@@ -1126,6 +1229,7 @@ fn build_bay_schedule(
     bay_id: usize,
     order: &[usize],
     constraints: &PrecedenceConstraints,
+    params: &NeighborParams,
 ) -> Option<Vec<ScheduledBlock>> {
     let mut schedule = Vec::with_capacity(order.len());
     let mut scheduled_by_id: Vec<Option<ScheduledBlock>> = vec![None; problem.blocks.len()];
@@ -1155,7 +1259,9 @@ fn build_bay_schedule(
             i64::MAX,
             &schedule,
             &loads,
-            INSERT_PARAMS,
+            InsertSearchParams {
+                y_buffer: params.insert_y_buffer,
+            },
             &bay_order,
         )?;
         loads[bay_id] += block.workload as f64;

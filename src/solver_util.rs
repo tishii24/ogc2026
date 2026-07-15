@@ -113,7 +113,7 @@ pub fn sample_neighbor<R: Random>(rng: &mut R, probs: &[(NeighborKind, f64)]) ->
         }
         x -= prob;
     }
-    probs.last().unwrap().0
+    probs.iter().rev().find(|&&(_, prob)| prob > 0.0).unwrap().0
 }
 
 pub fn format_neighbor_stats(stats: &[NeighborStats], probs: &[(NeighborKind, f64)]) -> String {
