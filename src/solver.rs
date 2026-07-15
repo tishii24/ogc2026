@@ -121,6 +121,12 @@ pub struct PreoptimizeState {
     pub blocks: Vec<PreoptimizedBlock>,
 }
 
+impl crate::annealing::AnnealingState for PreoptimizeState {
+    fn annealing_score(&self) -> f64 {
+        self.score
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct OptimizeState {
     pub score: f64,

@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    Operation, Problem, ScheduledBlock, Solution, precompute::Precompute, util::rand::Random,
+    Operation, Problem, ScheduledBlock, Solution, annealing::NeighborStats, precompute::Precompute,
+    util::rand::Random,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -33,16 +34,6 @@ impl NeighborKind {
             NeighborKind::Swap => 4,
         }
     }
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct NeighborStats {
-    pub selected: usize,
-    pub succeeded: usize,
-    pub improved: usize,
-    pub accepted: usize,
-    pub improved_delta_sum: f64,
-    pub time_sec: f64,
 }
 
 pub fn score13_block(problem: &Problem, pre: &Precompute, s: ScheduledBlock) -> f64 {
@@ -149,7 +140,7 @@ pub fn format_neighbor_stats(stats: &[NeighborStats], probs: &[(NeighborKind, f6
     probs
         .iter()
         .map(|&(kind, _)| {
-            let stat = stats[kind.index()];
+            let stat = &stats[kind.index()];
             format!(
                 "  {:<8}: selected={:7}, succeeded={:7} ({:7.3}%), improved={:7} ({:7.3}%, avg={:10.2}), accepted={:7} ({:7.3}%), time={:7.3}s, avg={:7.3}ms",
                 kind.name(),

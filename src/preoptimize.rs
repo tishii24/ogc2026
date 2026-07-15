@@ -736,13 +736,10 @@ pub fn preoptimize(
     let mut state = build_initial_state(problem, &mut context)?;
     let initial_key = state.objective + PREOPTIMIZE_DISTANCE_WEIGHT * state.bay_distance as f64;
     let mut local_best_key = initial_key;
-    let shared = SharedBest::new(
-        initial_key,
-        PreoptimizeState {
-            score: state.objective,
-            blocks: state.schedule.clone(),
-        },
-    );
+    let shared = SharedBest::new(PreoptimizeState {
+        score: state.objective,
+        blocks: state.schedule.clone(),
+    });
     let start_temperature = (initial_key / problem.blocks.len() as f64)
         .max(problem.weights.w1)
         .max(problem.weights.w3)
@@ -770,7 +767,7 @@ pub fn preoptimize(
                 score: state.objective,
                 blocks: state.schedule.clone(),
             };
-            shared.update(regularized, &candidate);
+            shared.update(&candidate);
             eprintln!(
                 "[{:.4}] annealing new best: iter={:8}, score={:.3}, z1={:.3}, z2={:.3}, z3={:.3}",
                 timer.elapsed_seconds(),

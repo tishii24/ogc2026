@@ -5,7 +5,6 @@ pub mod precompute;
 pub mod preoptimize;
 pub mod solver;
 pub mod solver_util;
-mod tabu;
 pub mod util;
 pub mod vis;
 
