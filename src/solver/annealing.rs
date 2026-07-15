@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    annealing::{AnnealingWorkerContext, SharedBest},
+    annealing::{AnnealingWorkerContext, SharedBest, acceptance_threshold},
     solver_util::{NeighborStats, format_neighbor_stats, sample_neighbor},
     tabu::ScheduleTabu,
 };
@@ -289,7 +289,8 @@ impl<'a> BayAnnealing<'a> {
             let bay_id = active_bays[active_index];
             let state = &mut states[bay_id];
             state.stats.iter += 1;
-            let accept_threshold = state.current_score - temp * context.rng.nextf().ln();
+            let accept_threshold =
+                acceptance_threshold(state.current_score, temp, &mut context.rng);
             let neighbor = sample_neighbor(&mut context.rng, BAY_NEIGHBOR_PROBS);
             let neighbor_idx = neighbor.index();
             let neighbor_start = Instant::now();
@@ -346,7 +347,7 @@ impl<'a> BayAnnealing<'a> {
                 neighbor_idx,
             );
             let mut target_reached = false;
-            if outcome.new_best {
+            if outcome.new_best && state.best_metric + 1e-9 < shared[bay_id].key() {
                 let best_tardiness = state.best_metric as i64;
                 let best = BayOptimizeState {
                     bay_id,
@@ -485,7 +486,8 @@ impl<'a> GlobalAnnealing<'a> {
                 }
             }
 
-            let accept_threshold = state.current_score - temp * context.rng.nextf().ln();
+            let accept_threshold =
+                acceptance_threshold(state.current_score, temp, &mut context.rng);
             let neighbor = sample_neighbor(&mut context.rng, NEIGHBOR_PROBS);
             let neighbor_idx = neighbor.index();
             let neighbor_start = Instant::now();
@@ -546,7 +548,7 @@ impl<'a> GlobalAnnealing<'a> {
             if outcome.accepted {
                 tabu.insert(candidate_key);
             }
-            if outcome.new_best {
+            if outcome.new_best && state.best_score + 1e-9 < shared.key() {
                 let best = OptimizeState {
                     score: state.best_score,
                     blocks: state.best.clone(),

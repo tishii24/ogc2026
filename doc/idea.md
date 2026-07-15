@@ -70,8 +70,12 @@ s = 抽象解（bay-id, entry-t）
 
 todo:
 - refactor
-- rayによる並列化
-  - bay.area * block-count に比例してリソースを与える
 - preoptimizeの改善
-- bay-annealingでもswapを使う
+  - 並列化
+  - 再構築近傍の追加
+- build-optimize-stateの並列化
+- 温度の確認
+- shared-best.update-thresholdの導入
 - Pの外側
+- bay.area * block-count に比例してリソースを与える
+- bay-annealingでもin-bay swapを使う

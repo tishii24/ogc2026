@@ -118,3 +118,8 @@ impl AnnealingWorkerContext {
 pub fn accept(delta: f64, temperature: f64, rng: &mut impl Random) -> bool {
     delta <= 0.0 || rng.nextf() < (-delta / temperature).exp()
 }
+
+pub fn acceptance_threshold(current_score: f64, temperature: f64, rng: &mut impl Random) -> f64 {
+    current_score - temperature * rng.nextf().ln()
+}
+

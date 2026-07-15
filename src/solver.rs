@@ -23,9 +23,9 @@ macro_rules! log {
     };
 }
 
-mod annealing;
+pub mod annealing;
 
-use annealing::{BayAnnealing, GlobalAnnealing};
+pub use annealing::{BayAnnealing, BayOptimizeState, GlobalAnnealing};
 
 const RNG_SEED: u64 = 1;
 const MAX_WORKER_COUNT: usize = 4;
