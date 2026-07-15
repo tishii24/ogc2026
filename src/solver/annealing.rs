@@ -14,9 +14,26 @@ struct AnnealingStats {
     neighbor_stats: [NeighborStats; NEIGHBOR_KIND_COUNT],
 }
 
+impl AnnealingStats {
+    fn merge(&mut self, other: Self) {
+        self.iter += other.iter;
+        self.accepted += other.accepted;
+        self.improved += other.improved;
+        for (stats, other) in self.neighbor_stats.iter_mut().zip(other.neighbor_stats) {
+            stats.selected += other.selected;
+            stats.succeeded += other.succeeded;
+            stats.improved += other.improved;
+            stats.accepted += other.accepted;
+            stats.improved_delta_sum += other.improved_delta_sum;
+            stats.time_sec += other.time_sec;
+        }
+    }
+}
+
 struct ScheduleAnnealingState {
     current: Vec<ScheduledBlock>,
     current_score: f64,
+    current_metric: f64,
     best: Vec<ScheduledBlock>,
     best_score: f64,
     best_metric: f64,
@@ -33,6 +50,7 @@ impl ScheduleAnnealingState {
         Self {
             current: initial.clone(),
             current_score: score,
+            current_metric: metric,
             best: initial,
             best_score: score,
             best_metric: metric,
@@ -62,6 +80,7 @@ impl ScheduleAnnealingState {
 
         self.current = candidate;
         self.current_score = score;
+        self.current_metric = metric;
         self.stats.accepted += 1;
         self.stats.neighbor_stats[neighbor_idx].accepted += 1;
 
@@ -78,13 +97,14 @@ impl ScheduleAnnealingState {
         }
     }
 
-    fn adopt_external(&mut self, state: &OptimizeState) {
-        self.current = state.blocks.clone();
-        self.current_score = state.score;
-        if state.score + 1e-9 < self.best_metric {
-            self.best = state.blocks.clone();
-            self.best_score = state.score;
-            self.best_metric = state.score;
+    fn adopt_external(&mut self, blocks: &[ScheduledBlock], score: f64, metric: f64) {
+        self.current = blocks.to_vec();
+        self.current_score = score;
+        self.current_metric = metric;
+        if metric + 1e-9 < self.best_metric {
+            self.best = blocks.to_vec();
+            self.best_score = score;
+            self.best_metric = metric;
         }
     }
 }
@@ -120,37 +140,15 @@ struct AnnealingResult {
     stats: AnnealingStats,
 }
 
-struct BayAnnealingResult {
-    bay_id: usize,
+struct SharedBayBest {
     blocks: Vec<ScheduledBlock>,
     tardiness: i64,
-    target_tardiness: i64,
+}
+
+struct BayAnnealingWorkerResult {
+    worker_id: usize,
+    active_bays: usize,
     stats: AnnealingStats,
-}
-
-impl BayAnnealingResult {
-    fn idle(
-        problem: &Problem,
-        bay_id: usize,
-        blocks: Vec<ScheduledBlock>,
-        target_tardiness: i64,
-    ) -> Self {
-        let tardiness = bay_tardiness(problem, &blocks);
-        Self {
-            bay_id,
-            blocks,
-            tardiness,
-            target_tardiness,
-            stats: AnnealingStats::default(),
-        }
-    }
-}
-
-struct BayTask {
-    bay_id: usize,
-    blocks: Vec<ScheduledBlock>,
-    target_tardiness: i64,
-    result: Option<BayAnnealingResult>,
 }
 
 pub struct BayAnnealing<'a> {
@@ -189,105 +187,126 @@ impl<'a> BayAnnealing<'a> {
             return initial;
         }
 
-        let mut blocks_by_bay = vec![Vec::new(); self.problem.bays.len()];
-        for block in initial.blocks {
-            blocks_by_bay[block.bay_id].push(block);
+        let mut initial_bays = vec![Vec::new(); self.problem.bays.len()];
+        for block in &initial.blocks {
+            initial_bays[block.bay_id].push(*block);
+        }
+        let active_bay_count = initial_bays
+            .iter()
+            .enumerate()
+            .filter(|(bay_id, blocks)| {
+                bay_tardiness(self.problem, blocks) > self.target_tardiness[*bay_id]
+            })
+            .count();
+        if active_bay_count == 0 {
+            log!(self.timer, "bay annealing: active_bays=0, workers=0");
+            return initial;
         }
 
-        let mut results: Vec<Option<BayAnnealingResult>> =
-            (0..self.problem.bays.len()).map(|_| None).collect();
-        let mut active = Vec::new();
-        for (bay_id, blocks) in blocks_by_bay.into_iter().enumerate() {
-            let target = self.target_tardiness[bay_id];
-            if bay_tardiness(self.problem, &blocks) <= target {
-                results[bay_id] = Some(BayAnnealingResult::idle(
-                    self.problem,
-                    bay_id,
-                    blocks,
-                    target,
-                ));
-            } else {
-                active.push(BayTask {
-                    bay_id,
-                    blocks,
-                    target_tardiness: target,
-                    result: None,
-                });
-            }
-        }
+        let shared: Vec<_> = initial_bays
+            .iter()
+            .map(|blocks| {
+                Mutex::new(SharedBayBest {
+                    tardiness: bay_tardiness(self.problem, blocks),
+                    blocks: blocks.clone(),
+                })
+            })
+            .collect();
+        let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
+        log!(
+            self.timer,
+            "bay annealing: active_bays={}, workers={}",
+            active_bay_count,
+            worker_count
+        );
+        let results: Vec<_> = (0..worker_count)
+            .into_par_iter()
+            .map(|worker_id| {
+                self.run_worker(&shared, &initial_bays, deadline, worker_id, worker_count)
+            })
+            .collect();
 
-        if !active.is_empty() {
-            let worker_count = rayon::current_num_threads()
-                .clamp(1, MAX_WORKER_COUNT)
-                .min(active.len());
-            let batch_count = active.len().div_ceil(worker_count);
-            for batch_index in 0..batch_count {
-                let elapsed = self.timer.elapsed_seconds();
-                let remaining_batches = batch_count - batch_index;
-                let batch_deadline =
-                    elapsed + (deadline - elapsed).max(0.0) / remaining_batches as f64;
-                let begin = batch_index * worker_count;
-                let end = (begin + worker_count).min(active.len());
-                active[begin..end].par_iter_mut().for_each(|task| {
-                    task.result = Some(self.run_single(
-                        std::mem::take(&mut task.blocks),
-                        task.target_tardiness,
-                        batch_deadline,
-                        task.bay_id,
-                    ));
-                });
-            }
-        }
-
-        for task in active {
-            results[task.bay_id] = task.result;
+        for result in results {
+            eprintln!(
+                "[{:.4}] [bay-worker={}] iter={}, accepted={}, improved={}, active_bays={}\nneighbor stats:\n{}",
+                self.timer.elapsed_seconds(),
+                result.worker_id,
+                result.stats.iter,
+                result.stats.accepted,
+                result.stats.improved,
+                result.active_bays,
+                format_neighbor_stats(&result.stats.neighbor_stats, BAY_NEIGHBOR_PROBS),
+            );
         }
 
         let mut blocks = Vec::with_capacity(self.problem.blocks.len());
-        for result in results.into_iter().flatten() {
+        for (bay_id, shared) in shared.into_iter().enumerate() {
+            let best = shared.into_inner().unwrap();
             eprintln!(
-                "[{:.4}] [bay={}] iter={}, best_tardiness={}, target={}, accepted={}, improved={}\nneighbor stats:\n{}",
+                "[{:.4}] [bay={}] best_tardiness={}, target={}",
                 self.timer.elapsed_seconds(),
-                result.bay_id,
-                result.stats.iter,
-                result.tardiness,
-                result.target_tardiness,
-                result.stats.accepted,
-                result.stats.improved,
-                format_neighbor_stats(&result.stats.neighbor_stats, BAY_NEIGHBOR_PROBS),
+                bay_id,
+                best.tardiness,
+                self.target_tardiness[bay_id],
             );
-            blocks.extend(result.blocks);
+            blocks.extend(best.blocks);
         }
         let score = score_schedule(self.problem, self.pre, &blocks);
         OptimizeState { score, blocks }
     }
 
-    fn run_single(
+    fn run_worker(
         &self,
-        initial: Vec<ScheduledBlock>,
-        target_tardiness: i64,
+        shared: &[Mutex<SharedBayBest>],
+        initial_bays: &[Vec<ScheduledBlock>],
         deadline: f64,
-        bay_id: usize,
-    ) -> BayAnnealingResult {
-        let mut rng = RandPcg64Mcg::new(RNG_SEED.wrapping_add(10_000).wrapping_add(bay_id as u64));
-        let initial_tardiness = bay_tardiness(self.problem, &initial);
-        let initial_score = self.problem.weights.w1 * initial_tardiness as f64;
-        let mut state =
-            ScheduleAnnealingState::new(initial, initial_score, initial_tardiness as f64);
+        worker_id: usize,
+        worker_count: usize,
+    ) -> BayAnnealingWorkerResult {
+        let mut rng =
+            RandPcg64Mcg::new(RNG_SEED.wrapping_add(10_000).wrapping_add(worker_id as u64));
+        let mut states: Vec<_> = initial_bays
+            .iter()
+            .map(|blocks| {
+                let tardiness = bay_tardiness(self.problem, blocks);
+                ScheduleAnnealingState::new(
+                    blocks.clone(),
+                    self.problem.weights.w1 * tardiness as f64,
+                    tardiness as f64,
+                )
+            })
+            .collect();
+        let mut active_bays: Vec<_> = (0..states.len())
+            .filter(|&bay_id| states[bay_id].best_metric > self.target_tardiness[bay_id] as f64)
+            .collect();
+        let temp_scale = get_temp_scale(worker_id, worker_count);
         let start = self.timer.elapsed_seconds();
-        let start_temperature = (self.problem.weights.w1 / TEMP_WEIGHT_DIVISOR).max(1e-9);
+        let start_temperature =
+            temp_scale * (self.problem.weights.w1 / TEMP_WEIGHT_DIVISOR).max(1e-9);
         let temperature = TemperatureSchedule::new(
             start,
             deadline,
             start_temperature,
             (start_temperature * BAY_END_TEMPERATURE_RATIO).max(1e-9),
         );
+        let mut turn = 0usize;
 
-        while state.best_metric > target_tardiness as f64 {
+        while !active_bays.is_empty() {
             let elapsed = self.timer.elapsed_seconds();
             if elapsed >= deadline {
                 break;
             }
+            turn += 1;
+            if turn % BAY_BEST_EXCHANGE_INTERVAL == 0 {
+                self.exchange_shared(shared, &mut states, &mut active_bays);
+                if active_bays.is_empty() {
+                    break;
+                }
+            }
+
+            let active_index = rng.gen_index(active_bays.len());
+            let bay_id = active_bays[active_index];
+            let state = &mut states[bay_id];
             state.stats.iter += 1;
             let temp = temperature.temperature(elapsed);
             let accept_threshold = state.current_score - temp * rng.nextf().ln();
@@ -339,23 +358,77 @@ impl<'a> BayAnnealing<'a> {
 
             let candidate_tardiness = bay_tardiness(self.problem, &candidate);
             let score = self.problem.weights.w1 * candidate_tardiness as f64;
-            state.accept_candidate(
+            let outcome = state.accept_candidate(
                 candidate,
                 score,
                 candidate_tardiness as f64,
                 accept_threshold,
                 neighbor_idx,
             );
+            let mut target_reached = false;
+            if outcome.new_best {
+                let best_tardiness = state.best_metric as i64;
+                let mut shared = shared[bay_id].lock().unwrap();
+                if best_tardiness < shared.tardiness {
+                    shared.tardiness = best_tardiness;
+                    shared.blocks.clone_from(&state.best);
+                    log!(
+                        self.timer,
+                        "worker {} bay {} new shared best tardiness: {} (target={})",
+                        worker_id,
+                        bay_id,
+                        best_tardiness,
+                        self.target_tardiness[bay_id]
+                    );
+                    target_reached = best_tardiness <= self.target_tardiness[bay_id];
+                    if target_reached {
+                        log!(
+                            self.timer,
+                            "bay {} target reached: tardiness={}",
+                            bay_id,
+                            best_tardiness
+                        );
+                    }
+                }
+            }
+            if target_reached {
+                active_bays.swap_remove(active_index);
+            }
             state.stats.neighbor_stats[neighbor_idx].time_sec +=
                 neighbor_start.elapsed().as_secs_f64();
         }
 
-        BayAnnealingResult {
-            bay_id,
-            blocks: state.best,
-            tardiness: state.best_metric as i64,
-            target_tardiness,
-            stats: state.stats,
+        let active_bay_count = active_bays.len();
+        let mut stats = AnnealingStats::default();
+        for state in states {
+            stats.merge(state.stats);
+        }
+        BayAnnealingWorkerResult {
+            worker_id,
+            active_bays: active_bay_count,
+            stats,
+        }
+    }
+
+    fn exchange_shared(
+        &self,
+        shared: &[Mutex<SharedBayBest>],
+        states: &mut [ScheduleAnnealingState],
+        active_bays: &mut Vec<usize>,
+    ) {
+        active_bays.clear();
+        for (bay_id, (shared, state)) in shared.iter().zip(states).enumerate() {
+            let shared = shared.lock().unwrap();
+            if shared.tardiness as f64 + 1e-9 < state.current_metric {
+                state.adopt_external(
+                    &shared.blocks,
+                    self.problem.weights.w1 * shared.tardiness as f64,
+                    shared.tardiness as f64,
+                );
+            }
+            if shared.tardiness > self.target_tardiness[bay_id] {
+                active_bays.push(bay_id);
+            }
         }
     }
 }
@@ -435,7 +508,7 @@ impl<'a> GlobalAnnealing<'a> {
             if state.stats.iter % BEST_EXCHANGE_INTERVAL == 0 {
                 let shared = shared.lock().unwrap();
                 if shared.score + self.problem.weights.w1 + 1e-9 < state.current_score {
-                    state.adopt_external(&shared);
+                    state.adopt_external(&shared.blocks, shared.score, shared.score);
                     tabu.insert_schedule(&state.current);
                 }
             }

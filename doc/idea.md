@@ -61,21 +61,17 @@ s = 抽象解（bay-id, entry-t）
     - (entry_min_t, entry_max_t) をbefores,aftersをもとに求める
   - 目標tardinessに達成したら、そのbayでの探索は行わない
   - 全てのbayで目標tardinessを達成したらPを小さくして1に戻る
-  - 残り時間が一定時間が20secを切ったら、5に行く
-  - tardinessだけを考慮すれば良いので、tardinessとして温度を0.1~0.001に設定する
+  - 残り時間が一定時間を切ったら、5に行く
+  - tardinessだけを考慮すれば良いので、スコアをtardinessとして温度を0.1~0.001に設定する
+  - 各workerは全てのbayを保持して並列で実行する
+  - 各workerはbayごとにshared bestの更新と、一定周期でbayごとのshared bestを見に行ってbestの取得を行う
+  - 各workerはbayをランダムに選び、近傍の適用をすることを1ターンとする
 5. bay間の移動も許してannealing
-
-1. preoptimize.rs` を参照解初期化・有効容量対応にする。
-2. `insert.rs` に `min_entry_time`, `max_entry_time` を追加する。
-3. `solver.rs` に `ScheduledBlock → Vec<PreoptimizedBlock>` を追加する。
-4. 同一ベイ内の順序制約 `befores/afters` を構築する。
-5. 制約付きトポロジカル順序生成とベイ別貪欲構築を追加する。
-6. ベイ別SAを実装する。
-7. `P` の外側ループを接続する。
 
 todo:
 - refactor
 - rayによる並列化
   - bay.area * block-count に比例してリソースを与える
 - preoptimizeの改善
-- swapを使う
+- bay-annealingでもswapを使う
+- Pの外側
