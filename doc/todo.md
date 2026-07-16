@@ -16,7 +16,6 @@ todo:
 - refactor
 - preoptimizeの改善
   - 再構築近傍の追加
-- build-optimize-stateにログを追加
 - ベイアニーリングの辺の数を減らす
 - bayでも途中から制約を無視する or globalでも途中まで制約を考慮する
 - 温度の調整

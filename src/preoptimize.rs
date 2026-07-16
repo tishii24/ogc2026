@@ -2,10 +2,8 @@ use crate::{
     Bay, MAX_WORKER_COUNT, Orientation, Problem,
     annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
     solver::{
-        PREOPTIMIZE_BAD_BLOCK_SAMPLE_COUNT, PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY,
-        PREOPTIMIZE_DISTANCE_WEIGHT, PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS, PREOPTIMIZE_MAX_TIME_SHIFT,
-        PREOPTIMIZE_RNG_SEED, PREOPTIMIZE_SWAP_PROBABILITY, PreoptimizeState, PreoptimizedBlock,
-        preoptimize_annealing_params,
+        PreoptimizeState, PreoptimizedBlock, preoptimize_annealing_params,
+        sort_default_reconstruct_order,
     },
     util::{
         rand::{RandPcg64Mcg, Random},
@@ -13,6 +11,17 @@ use crate::{
     },
 };
 use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
+
+const PREOPTIMIZE_RNG_SEED: u64 = 2;
+const PREOPTIMIZE_SWAP_PROBABILITY: f64 = 0.15;
+const PREOPTIMIZE_LARGE_RECONSTRUCT_PROBABILITY: f64 = 0.05;
+const PREOPTIMIZE_MIN_REMOVED_BLOCKS: usize = 7;
+const PREOPTIMIZE_MAX_REMOVED_BLOCKS: usize = 13;
+const PREOPTIMIZE_REMOVE_COUNT_SAMPLE_POWER: f64 = 2.0;
+const PREOPTIMIZE_BAD_BLOCK_SAMPLE_COUNT: usize = 8;
+const PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY: f64 = 0.75;
+const PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS: usize = 8;
+const PREOPTIMIZE_MAX_TIME_SHIFT: i64 = 10;
 
 #[derive(Clone, Copy, Debug)]
 pub struct PreoptimizeParams {
@@ -136,8 +145,8 @@ impl PreoptimizePrecompute {
 
 struct PreoptimizeContext<'a> {
     pre: &'a PreoptimizePrecompute,
-    reference: Option<&'a PreoptimizeState>,
     occupancy: Vec<Vec<Option<f64>>>,
+    block_areas: Vec<f64>,
     bay_capacities: Vec<f64>,
     max_time: i64,
 }
@@ -151,12 +160,11 @@ struct PreoptimizeAnnealingState {
     z2: f64,
     z3: f64,
     objective: f64,
-    bay_distance: usize,
 }
 
 impl AnnealingState for PreoptimizeAnnealingState {
     fn annealing_score(&self) -> f64 {
-        self.objective + PREOPTIMIZE_DISTANCE_WEIGHT * self.bay_distance as f64
+        self.objective
     }
 
     fn tabu_key(&self) -> Option<u64> {
@@ -283,67 +291,10 @@ fn build_occupancy(
     Ok(occupancy)
 }
 
-fn build_reference_state(
-    problem: &Problem,
-    context: &mut PreoptimizeContext<'_>,
-) -> Result<PreoptimizeAnnealingState, String> {
-    let reference = context.reference.unwrap();
-    let reference_max_exit = reference
-        .blocks
-        .iter()
-        .enumerate()
-        .map(|(block_id, selected)| selected.entry_time + problem.blocks[block_id].processing_time)
-        .max()
-        .unwrap_or(context.pre.min_time);
-
-    let max_due = problem
-        .blocks
-        .iter()
-        .map(|block| block.due_date)
-        .max()
-        .unwrap();
-    context.max_time = reference_max_exit.max(max_due.min(context.pre.search_horizon));
-    let time_count: usize = (context.max_time - context.pre.min_time)
-        .try_into()
-        .map_err(|_| "reference time range is too large".to_string())?;
-    let mut used_area = vec![vec![0.0; time_count]; problem.bays.len()];
-    let mut loads = vec![0.0; problem.bays.len()];
-    for (block_id, &selected) in reference.blocks.iter().enumerate() {
-        add_used_area(problem, context, &mut used_area, block_id, selected, 1.0);
-        loads[selected.bay_id] += problem.blocks[block_id].workload as f64;
-    }
-    for (bay_id, row) in used_area.iter().enumerate() {
-        let peak = row.iter().copied().fold(0.0, f64::max);
-        context.bay_capacities[bay_id] = context.bay_capacities[bay_id].max(peak);
-    }
-
-    let schedule = reference.blocks.clone();
-    let (_, z1, z2, z3) = evaluate_schedule(
-        problem,
-        &context.pre.pref_penalty,
-        &context.pre.bay_load_scale,
-        &schedule,
-    );
-    Ok(PreoptimizeAnnealingState {
-        schedule,
-        used_area,
-        loads,
-        z1,
-        z2,
-        z3,
-        objective: reference.score,
-        bay_distance: 0,
-    })
-}
-
 fn build_initial_state(
     problem: &Problem,
     context: &mut PreoptimizeContext<'_>,
 ) -> Result<PreoptimizeAnnealingState, String> {
-    if context.reference.is_some() {
-        return build_reference_state(problem, context);
-    }
-
     let time_count: usize = (context.pre.search_horizon - context.pre.min_time)
         .try_into()
         .map_err(|_| "greedy time range is too large".to_string())?;
@@ -395,15 +346,11 @@ fn build_initial_state(
             let mut next_loads = loads.clone();
             next_loads[bay_id] += block.workload as f64;
             let tardiness = (entry_time + block.processing_time - block.due_date).max(0);
-            let distance = context
-                .reference
-                .is_some_and(|reference| reference.blocks[block_id].bay_id != bay_id);
             let score = problem.weights.w1 * tardiness as f64
                 + problem.weights.w2
                     * (normalized_imbalance(&next_loads, &context.pre.bay_load_scale)
                         - current_imbalance)
-                + problem.weights.w3 * context.pre.pref_penalty[block_id][bay_id] as f64
-                + PREOPTIMIZE_DISTANCE_WEIGHT * distance as usize as f64;
+                + problem.weights.w3 * context.pre.pref_penalty[block_id][bay_id] as f64;
             let candidate = (score, entry_time, bay_id);
             if best.as_ref().is_none_or(|best| {
                 candidate
@@ -458,13 +405,6 @@ fn build_initial_state(
         &context.pre.bay_load_scale,
         &schedule,
     );
-    let bay_distance = context.reference.map_or(0, |reference| {
-        schedule
-            .iter()
-            .zip(&reference.blocks)
-            .filter(|(selected, reference)| selected.bay_id != reference.bay_id)
-            .count()
-    });
     Ok(PreoptimizeAnnealingState {
         schedule,
         used_area,
@@ -473,7 +413,6 @@ fn build_initial_state(
         z2,
         z3,
         objective,
-        bay_distance,
     })
 }
 
@@ -484,16 +423,6 @@ fn block_z1(problem: &Problem, block_id: usize, selected: PreoptimizedBlock) -> 
 
 fn block_z3(context: &PreoptimizeContext<'_>, block_id: usize, selected: PreoptimizedBlock) -> f64 {
     context.pre.pref_penalty[block_id][selected.bay_id] as f64
-}
-
-fn block_distance(
-    context: &PreoptimizeContext<'_>,
-    block_id: usize,
-    selected: PreoptimizedBlock,
-) -> usize {
-    context
-        .reference
-        .is_some_and(|reference| reference.blocks[block_id].bay_id != selected.bay_id) as usize
 }
 
 fn add_used_area(
@@ -548,8 +477,7 @@ fn select_block(
         let block_id = rng.gen_index(problem.blocks.len());
         let selected = state.schedule[block_id];
         let cost = problem.weights.w1 * block_z1(problem, block_id, selected)
-            + problem.weights.w3 * block_z3(context, block_id, selected)
-            + PREOPTIMIZE_DISTANCE_WEIGHT * block_distance(context, block_id, selected) as f64;
+            + problem.weights.w3 * block_z3(context, block_id, selected);
         if cost > best_cost {
             best = block_id;
             best_cost = cost;
@@ -609,8 +537,6 @@ fn try_relocate(
     let new_z1 = block_z1(problem, block_id, selected);
     let old_z3 = block_z3(context, block_id, old);
     let new_z3 = block_z3(context, block_id, selected);
-    let old_distance = block_distance(context, block_id, old);
-    let new_distance = block_distance(context, block_id, selected);
     let mut next_loads = state.loads.clone();
     let workload = problem.blocks[block_id].workload as f64;
     next_loads[old.bay_id] -= workload;
@@ -619,7 +545,6 @@ fn try_relocate(
     let raw_delta = problem.weights.w1 * (new_z1 - old_z1)
         + problem.weights.w2 * (new_z2 - state.z2)
         + problem.weights.w3 * (new_z3 - old_z3);
-    let distance_delta = new_distance as i64 - old_distance as i64;
 
     add_used_area(
         problem,
@@ -635,7 +560,6 @@ fn try_relocate(
     state.z2 = new_z2;
     state.z3 += new_z3 - old_z3;
     state.objective += raw_delta;
-    state.bay_distance = (state.bay_distance as i64 + distance_delta) as usize;
     true
 }
 
@@ -692,8 +616,6 @@ fn try_swap(
     let new_z1 = block_z1(problem, a, new_a) + block_z1(problem, b, new_b);
     let old_z3 = block_z3(context, a, old_a) + block_z3(context, b, old_b);
     let new_z3 = block_z3(context, a, new_a) + block_z3(context, b, new_b);
-    let old_distance = block_distance(context, a, old_a) + block_distance(context, b, old_b);
-    let new_distance = block_distance(context, a, new_a) + block_distance(context, b, new_b);
     let mut next_loads = state.loads.clone();
     next_loads[old_a.bay_id] -= problem.blocks[a].workload as f64;
     next_loads[old_b.bay_id] -= problem.blocks[b].workload as f64;
@@ -703,7 +625,6 @@ fn try_swap(
     let raw_delta = problem.weights.w1 * (new_z1 - old_z1)
         + problem.weights.w2 * (new_z2 - state.z2)
         + problem.weights.w3 * (new_z3 - old_z3);
-    let distance_delta = new_distance as i64 - old_distance as i64;
 
     state.schedule[a] = new_a;
     state.schedule[b] = new_b;
@@ -712,11 +633,108 @@ fn try_swap(
     state.z2 = new_z2;
     state.z3 += new_z3 - old_z3;
     state.objective += raw_delta;
-    state.bay_distance = (state.bay_distance as i64 + distance_delta) as usize;
     true
 }
 
-const PREOPTIMIZE_NEIGHBOR_KINDS: &[&str] = &["Relocate", "Swap"];
+fn sample_large_reconstruct_count(rng: &mut impl Random) -> usize {
+    let span = PREOPTIMIZE_MAX_REMOVED_BLOCKS - PREOPTIMIZE_MIN_REMOVED_BLOCKS + 1;
+    let u = rng.nextf().powf(PREOPTIMIZE_REMOVE_COUNT_SAMPLE_POWER);
+    PREOPTIMIZE_MIN_REMOVED_BLOCKS + ((u * span as f64) as usize).min(span - 1)
+}
+
+fn choose_large_reconstruct_blocks(
+    problem: &Problem,
+    context: &PreoptimizeContext<'_>,
+    state: &PreoptimizeAnnealingState,
+    k: usize,
+    rng: &mut impl Random,
+) -> Vec<usize> {
+    if k == 0 {
+        return Vec::new();
+    }
+    let seed = select_block(problem, context, state, rng);
+    let mut remaining: Vec<_> = (0..problem.blocks.len())
+        .filter(|&block_id| block_id != seed)
+        .collect();
+    rng.shuffle(&mut remaining);
+    let mut selected = Vec::with_capacity(k);
+    selected.push(seed);
+    selected.extend(remaining.into_iter().take(k - 1));
+    selected
+}
+
+fn try_large_reconstruct(
+    problem: &Problem,
+    context: &PreoptimizeContext<'_>,
+    state: &mut PreoptimizeAnnealingState,
+    rng: &mut impl Random,
+) -> bool {
+    let k = sample_large_reconstruct_count(rng).min(problem.blocks.len());
+    if k < 2 {
+        return false;
+    }
+    let mut removed_ids = choose_large_reconstruct_blocks(problem, context, state, k, rng);
+    for &block_id in &removed_ids {
+        let selected = state.schedule[block_id];
+        add_used_area(
+            problem,
+            context,
+            &mut state.used_area,
+            block_id,
+            selected,
+            -1.0,
+        );
+        state.loads[selected.bay_id] -= problem.blocks[block_id].workload as f64;
+    }
+
+    sort_default_reconstruct_order(problem, &context.block_areas, &mut removed_ids, rng);
+    let mut changed = false;
+    for block_id in removed_ids {
+        let old = state.schedule[block_id];
+        let mut candidate = None;
+        for _ in 0..PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS {
+            let selected = PreoptimizedBlock {
+                bay_id: rng.gen_index(problem.bays.len()),
+                entry_time: sample_entry_time(problem, context, block_id, old.entry_time, rng),
+            };
+            if can_place(problem, context, &state.used_area, block_id, selected) {
+                candidate = Some(selected);
+                break;
+            }
+        }
+        let Some(selected) = candidate else {
+            return false;
+        };
+        add_used_area(
+            problem,
+            context,
+            &mut state.used_area,
+            block_id,
+            selected,
+            1.0,
+        );
+        state.loads[selected.bay_id] += problem.blocks[block_id].workload as f64;
+        state.schedule[block_id] = selected;
+        changed |= selected != old;
+    }
+    if !changed {
+        return false;
+    }
+
+    let (objective, z1, z2, z3) = evaluate_schedule(
+        problem,
+        &context.pre.pref_penalty,
+        &context.pre.bay_load_scale,
+        &state.schedule,
+    );
+    state.objective = objective;
+    state.z1 = z1;
+    state.z2 = z2;
+    state.z3 = z3;
+    true
+}
+
+const PREOPTIMIZE_NEIGHBOR_KINDS: &[&str] = &["Relocate", "Swap", "LargeReconstruct"];
 
 struct PreoptimizeAnnealingDelegate<'a> {
     problem: &'a Problem,
@@ -752,7 +770,13 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
         rng: &mut RandPcg64Mcg,
     ) -> AnnealingAttempt<Self::State> {
         let mut candidate = current.clone();
-        let (neighbor_kind, succeeded) = if rng.nextf() < PREOPTIMIZE_SWAP_PROBABILITY {
+        let x = rng.nextf();
+        let (neighbor_kind, succeeded) = if x < PREOPTIMIZE_LARGE_RECONSTRUCT_PROBABILITY {
+            (
+                2,
+                try_large_reconstruct(self.problem, &self.context, &mut candidate, rng),
+            )
+        } else if x < PREOPTIMIZE_LARGE_RECONSTRUCT_PROBABILITY + PREOPTIMIZE_SWAP_PROBABILITY {
             (
                 1,
                 try_swap(self.problem, &self.context, &mut candidate, rng),
@@ -792,14 +816,23 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
 pub fn preoptimize(
     problem: &Problem,
     pre: &PreoptimizePrecompute,
-    reference: Option<&PreoptimizeState>,
     params: PreoptimizeParams,
 ) -> Result<PreoptimizeState, String> {
     let occupancy = build_occupancy(problem, pre, params)?;
+    let block_areas = occupancy
+        .iter()
+        .map(|areas| {
+            areas
+                .iter()
+                .flatten()
+                .copied()
+                .fold(f64::INFINITY, f64::min)
+        })
+        .collect();
     let mut context = PreoptimizeContext {
         pre,
-        reference,
         occupancy,
+        block_areas,
         bay_capacities: pre.bay_areas.clone(),
         max_time: pre.search_horizon,
     };

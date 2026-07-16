@@ -39,7 +39,7 @@ fn run() -> Result<(), String> {
         beta: args.beta,
         time_limit: args.time_limit,
     };
-    let result = preoptimize(&problem, &pre, None, params)?;
+    let result = preoptimize(&problem, &pre, params)?;
 
     eprintln!(
         "preoptimize: objective={:.3}, elapsed={:.3}s",
