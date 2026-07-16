@@ -12,12 +12,14 @@ use ogc2026::{
 const DEFAULT_TIMELIMIT_SECONDS: f64 = 60.0;
 const DEFAULT_ALPHA: f64 = 0.0;
 const DEFAULT_BETA: f64 = 0.0;
+const DEFAULT_CONGESTION_WEIGHT: f64 = 1.0;
 
 struct Args {
     input_path: String,
     time_limit: f64,
     alpha: f64,
     beta: f64,
+    congestion_weight: f64,
 }
 
 fn main() {
@@ -37,6 +39,7 @@ fn run() -> Result<(), String> {
     let params = PreoptimizeParams {
         alpha: args.alpha,
         beta: args.beta,
+        congestion_weight: args.congestion_weight,
         time_limit: args.time_limit,
     };
     let result = preoptimize(&problem, &pre, params)?;
@@ -53,8 +56,9 @@ fn run() -> Result<(), String> {
 }
 
 fn parse_args(args: Vec<String>) -> Result<Args, String> {
-    const USAGE: &str = "usage: preoptimize <input.json|-> [timelimit] [alpha] [beta]";
-    if args.is_empty() || args.len() > 4 {
+    const USAGE: &str =
+        "usage: preoptimize <input.json|-> [timelimit] [alpha] [beta] [congestion-weight]";
+    if args.is_empty() || args.len() > 5 {
         return Err(USAGE.to_string());
     }
 
@@ -71,6 +75,7 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
         time_limit: parse(1, "timelimit", DEFAULT_TIMELIMIT_SECONDS)?,
         alpha: parse(2, "alpha", DEFAULT_ALPHA)?,
         beta: parse(3, "beta", DEFAULT_BETA)?,
+        congestion_weight: parse(4, "congestion-weight", DEFAULT_CONGESTION_WEIGHT)?,
     })
 }
 

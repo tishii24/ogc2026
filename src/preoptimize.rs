@@ -27,6 +27,7 @@ const PREOPTIMIZE_MAX_TIME_SHIFT: i64 = 10;
 pub struct PreoptimizeParams {
     pub alpha: f64,
     pub beta: f64,
+    pub congestion_weight: f64,
     pub time_limit: f64,
 }
 
@@ -148,6 +149,7 @@ struct PreoptimizeContext<'a> {
     occupancy: Vec<Vec<Option<f64>>>,
     block_areas: Vec<f64>,
     bay_capacities: Vec<f64>,
+    congestion_weight: f64,
     max_time: i64,
 }
 
@@ -159,6 +161,8 @@ struct PreoptimizeAnnealingState {
     z1: f64,
     z2: f64,
     z3: f64,
+    official_objective: f64,
+    congestion: f64,
     objective: f64,
 }
 
@@ -299,6 +303,7 @@ fn build_initial_state(
         .try_into()
         .map_err(|_| "greedy time range is too large".to_string())?;
     let mut used_area = vec![vec![0.0; time_count]; problem.bays.len()];
+    let mut congestion = 0.0;
     let mut loads = vec![0.0; problem.bays.len()];
     let mut schedule = vec![None; problem.blocks.len()];
     let mut order: Vec<usize> = (0..problem.blocks.len()).collect();
@@ -346,11 +351,19 @@ fn build_initial_state(
             let mut next_loads = loads.clone();
             next_loads[bay_id] += block.workload as f64;
             let tardiness = (entry_time + block.processing_time - block.due_date).max(0);
+            let bay_area = context.pre.bay_areas[bay_id];
+            let ratio = occupied_area / bay_area;
+            let congestion_delta = (entry_time..entry_time + block.processing_time)
+                .map(|time| {
+                    ratio * used_area[bay_id][(time - context.pre.min_time) as usize] / bay_area
+                })
+                .sum::<f64>();
             let score = problem.weights.w1 * tardiness as f64
                 + problem.weights.w2
                     * (normalized_imbalance(&next_loads, &context.pre.bay_load_scale)
                         - current_imbalance)
-                + problem.weights.w3 * context.pre.pref_penalty[block_id][bay_id] as f64;
+                + problem.weights.w3 * context.pre.pref_penalty[block_id][bay_id] as f64
+                + problem.weights.w1 * context.congestion_weight * congestion_delta;
             let candidate = (score, entry_time, bay_id);
             if best.as_ref().is_none_or(|best| {
                 candidate
@@ -366,12 +379,18 @@ fn build_initial_state(
 
         let (_, entry_time, bay_id) =
             best.ok_or_else(|| format!("failed to greedily schedule block {block_id}"))?;
-        let occupied_area = context.occupancy[block_id][bay_id].unwrap();
-        for time in entry_time..entry_time + block.processing_time {
-            used_area[bay_id][(time - context.pre.min_time) as usize] += occupied_area;
-        }
+        let selected = PreoptimizedBlock { bay_id, entry_time };
+        add_used_area(
+            problem,
+            context,
+            &mut used_area,
+            &mut congestion,
+            block_id,
+            selected,
+            1.0,
+        );
         loads[bay_id] += block.workload as f64;
-        schedule[block_id] = Some(PreoptimizedBlock { bay_id, entry_time });
+        schedule[block_id] = Some(selected);
     }
 
     let schedule: Vec<_> = schedule
@@ -412,7 +431,9 @@ fn build_initial_state(
         z1,
         z2,
         z3,
-        objective,
+        official_objective: objective,
+        congestion,
+        objective: objective + problem.weights.w1 * context.congestion_weight * congestion,
     })
 }
 
@@ -429,14 +450,24 @@ fn add_used_area(
     problem: &Problem,
     context: &PreoptimizeContext<'_>,
     used_area: &mut [Vec<f64>],
+    congestion: &mut f64,
     block_id: usize,
     selected: PreoptimizedBlock,
     sign: f64,
 ) {
     let area = context.occupancy[block_id][selected.bay_id].unwrap();
+    let bay_area = context.pre.bay_areas[selected.bay_id];
+    let ratio = area / bay_area;
     let block = &problem.blocks[block_id];
     for time in selected.entry_time..selected.entry_time + block.processing_time {
-        used_area[selected.bay_id][(time - context.pre.min_time) as usize] += sign * area;
+        let used = &mut used_area[selected.bay_id][(time - context.pre.min_time) as usize];
+        let used_ratio = *used / bay_area;
+        if sign > 0.0 {
+            *congestion += ratio * used_ratio;
+        } else {
+            *congestion -= ratio * (used_ratio - ratio);
+        }
+        *used += sign * area;
     }
 }
 
@@ -516,7 +547,15 @@ fn try_relocate(
 ) -> bool {
     let block_id = select_block(problem, context, state, rng);
     let old = state.schedule[block_id];
-    add_used_area(problem, context, &mut state.used_area, block_id, old, -1.0);
+    add_used_area(
+        problem,
+        context,
+        &mut state.used_area,
+        &mut state.congestion,
+        block_id,
+        old,
+        -1.0,
+    );
 
     let mut candidate = None;
     for _ in 0..PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS {
@@ -529,7 +568,15 @@ fn try_relocate(
         }
     }
     let Some(selected) = candidate else {
-        add_used_area(problem, context, &mut state.used_area, block_id, old, 1.0);
+        add_used_area(
+            problem,
+            context,
+            &mut state.used_area,
+            &mut state.congestion,
+            block_id,
+            old,
+            1.0,
+        );
         return false;
     };
 
@@ -550,6 +597,7 @@ fn try_relocate(
         problem,
         context,
         &mut state.used_area,
+        &mut state.congestion,
         block_id,
         selected,
         1.0,
@@ -559,7 +607,9 @@ fn try_relocate(
     state.z1 += new_z1 - old_z1;
     state.z2 = new_z2;
     state.z3 += new_z3 - old_z3;
-    state.objective += raw_delta;
+    state.official_objective += raw_delta;
+    state.objective = state.official_objective
+        + problem.weights.w1 * context.congestion_weight * state.congestion;
     true
 }
 
@@ -596,21 +646,93 @@ fn try_swap(
         return false;
     }
 
-    add_used_area(problem, context, &mut state.used_area, a, old_a, -1.0);
-    add_used_area(problem, context, &mut state.used_area, b, old_b, -1.0);
+    add_used_area(
+        problem,
+        context,
+        &mut state.used_area,
+        &mut state.congestion,
+        a,
+        old_a,
+        -1.0,
+    );
+    add_used_area(
+        problem,
+        context,
+        &mut state.used_area,
+        &mut state.congestion,
+        b,
+        old_b,
+        -1.0,
+    );
     if !can_place(problem, context, &state.used_area, a, new_a) {
-        add_used_area(problem, context, &mut state.used_area, a, old_a, 1.0);
-        add_used_area(problem, context, &mut state.used_area, b, old_b, 1.0);
+        add_used_area(
+            problem,
+            context,
+            &mut state.used_area,
+            &mut state.congestion,
+            a,
+            old_a,
+            1.0,
+        );
+        add_used_area(
+            problem,
+            context,
+            &mut state.used_area,
+            &mut state.congestion,
+            b,
+            old_b,
+            1.0,
+        );
         return false;
     }
-    add_used_area(problem, context, &mut state.used_area, a, new_a, 1.0);
+    add_used_area(
+        problem,
+        context,
+        &mut state.used_area,
+        &mut state.congestion,
+        a,
+        new_a,
+        1.0,
+    );
     if !can_place(problem, context, &state.used_area, b, new_b) {
-        add_used_area(problem, context, &mut state.used_area, a, new_a, -1.0);
-        add_used_area(problem, context, &mut state.used_area, a, old_a, 1.0);
-        add_used_area(problem, context, &mut state.used_area, b, old_b, 1.0);
+        add_used_area(
+            problem,
+            context,
+            &mut state.used_area,
+            &mut state.congestion,
+            a,
+            new_a,
+            -1.0,
+        );
+        add_used_area(
+            problem,
+            context,
+            &mut state.used_area,
+            &mut state.congestion,
+            a,
+            old_a,
+            1.0,
+        );
+        add_used_area(
+            problem,
+            context,
+            &mut state.used_area,
+            &mut state.congestion,
+            b,
+            old_b,
+            1.0,
+        );
         return false;
     }
-    add_used_area(problem, context, &mut state.used_area, b, new_b, 1.0);
+    add_used_area(
+        problem,
+        context,
+        &mut state.used_area,
+        &mut state.congestion,
+        b,
+        new_b,
+        1.0,
+    );
 
     let old_z1 = block_z1(problem, a, old_a) + block_z1(problem, b, old_b);
     let new_z1 = block_z1(problem, a, new_a) + block_z1(problem, b, new_b);
@@ -632,7 +754,9 @@ fn try_swap(
     state.z1 += new_z1 - old_z1;
     state.z2 = new_z2;
     state.z3 += new_z3 - old_z3;
-    state.objective += raw_delta;
+    state.official_objective += raw_delta;
+    state.objective = state.official_objective
+        + problem.weights.w1 * context.congestion_weight * state.congestion;
     true
 }
 
@@ -680,6 +804,7 @@ fn try_large_reconstruct(
             problem,
             context,
             &mut state.used_area,
+            &mut state.congestion,
             block_id,
             selected,
             -1.0,
@@ -709,6 +834,7 @@ fn try_large_reconstruct(
             problem,
             context,
             &mut state.used_area,
+            &mut state.congestion,
             block_id,
             selected,
             1.0,
@@ -727,7 +853,8 @@ fn try_large_reconstruct(
         &context.pre.bay_load_scale,
         &state.schedule,
     );
-    state.objective = objective;
+    state.official_objective = objective;
+    state.objective = objective + problem.weights.w1 * context.congestion_weight * state.congestion;
     state.z1 = z1;
     state.z2 = z2;
     state.z3 = z3;
@@ -806,6 +933,10 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
             &state.schedule,
         )
         .0;
+        eprintln!(
+            "[preopt] objective: official={score:.3}, congestion={:.3}, search={:.3}",
+            state.congestion, state.objective,
+        );
         PreoptimizeState {
             score,
             blocks: state.schedule,
@@ -834,6 +965,7 @@ pub fn preoptimize(
         occupancy,
         block_areas,
         bay_capacities: pre.bay_areas.clone(),
+        congestion_weight: params.congestion_weight,
         max_time: pre.search_horizon,
     };
     let initial = build_initial_state(problem, &mut context)?;

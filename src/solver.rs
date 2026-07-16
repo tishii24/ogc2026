@@ -43,8 +43,9 @@ pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
 
-const INITIAL_PREOPTIMIZE_ALPHA: f64 = 1.0;
-const INITIAL_PREOPTIMIZE_BETA: f64 = 0.0;
+const INITIAL_PREOPTIMIZE_ALPHA: f64 = 0.5;
+const INITIAL_PREOPTIMIZE_BETA: f64 = 0.5;
+const INITIAL_PREOPTIMIZE_CONGESTION_WEIGHT: f64 = 1e-3;
 
 pub fn preoptimize_annealing_params(problem: &Problem, initial_score: f64) -> AnnealingParams {
     let start_temperature = (initial_score / problem.blocks.len() as f64)
@@ -246,6 +247,7 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
         PreoptimizeParams {
             alpha: INITIAL_PREOPTIMIZE_ALPHA,
             beta: INITIAL_PREOPTIMIZE_BETA,
+            congestion_weight: INITIAL_PREOPTIMIZE_CONGESTION_WEIGHT,
             time_limit: initial_time_limit,
         },
     )?;

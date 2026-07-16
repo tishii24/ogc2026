@@ -17,11 +17,8 @@ todo:
 - 推移辺を削除する
 - bayでも途中から制約を無視する or globalでも途中まで制約を考慮する
 - preoptimizeの改善
+  - 初期解
 - 温度の調整
-- Pの外側ループ
-- reconstruct-orderの改善
-  - volume
-  - limit-t
 - bay-annealingでもin-bay swapを使う
 - bay.area * block-count に比例してリソースを与える
 
@@ -76,3 +73,4 @@ pending:
   - block-id順で出す、とすれば半分くらいは考慮できる
 - 取り出す時刻を変えてABBA <->　ABABを入れ替える
   - change-entry-tの追加
+- Pの外側ループ
