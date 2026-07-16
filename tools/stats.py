@@ -368,7 +368,10 @@ def summarize(
         group["rank_score"] = rank_scores.get(key, 0)
         group["relative_score"] = relative_scores.get(key, 0.0)
 
-    return sorted(groups.values(), key=lambda g: g["version"])
+    return sorted(
+        groups.values(),
+        key=lambda group: (natural_key(group["version"]), group["timelimit"]),
+    )
 
 
 def print_rows(headers: list[str], rows: list[list[str]]) -> None:

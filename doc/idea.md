@@ -36,19 +36,13 @@ P = (alpha, beta)
 S = 状態
 s = 抽象解（bay-id, entry-t）
 1. Pを適当な値に設定して、preoptimizeを実行することで抽象解sを得る
-  - s_cur := S.to_s()
-  - s_cur を初期状態とする
-  - 評価: (E(s), D(s, s_cur))
-    - E(s) := 状態sの生スコア
-    - D(s, s_cur) := 状態s,s_curの距離
-      - bay-idが異なるblockの数
-  - s_curから離れ過ぎないように正則化をかける
-  - Sのスコアより改善しなかったらPを小さくして1に戻る
+  - 評価: 状態sの生スコア
   - TODO: 詰めやすさをタイブレークのスコアとして導入する
 2. sをもとに順序制約を計算する
   - (i,j)について、end[i]<=start[j]なら順序を固定する
   - befores[i] := iより前におく必要があるブロック
   - afters[i] := iより後におく必要があるブロック
+  - TODO: 推移辺を削除する
 3. bayごとに前から順に詰めて貪欲解を作成する
   - reconstruct-orderのように、ブロックごとの評価を試行ごとに計算する
   - orderを作成する
@@ -59,10 +53,7 @@ s = 抽象解（bay-id, entry-t）
 4. bayごとに独立にannealing
   - 順序制約を守る
     - (entry_min_t, entry_max_t) をbefores,aftersをもとに求める
-  - 目標tardinessに達成したら、そのbayでの探索は行わない
-  - 全てのbayで目標tardinessを達成したらPを小さくして1に戻る
-  - 残り時間が一定時間を切ったら、5に行く
-  - tardinessだけを考慮すれば良いので、スコアをtardinessとして温度を0.1~0.001に設定する
+  - 目標tardinessに達成した/ら、そのbayでの探索はもう行わない
   - 各workerは全てのbayを保持して並列で実行する
   - 各workerはbayごとにshared bestの更新と、一定周期でbayごとのshared bestを見に行ってbestの取得を行う
   - 各workerはbayをランダムに選び、近傍の適用をすることを1ターンとする
