@@ -167,6 +167,50 @@ pub struct NeighborStats {
     pub time_sec: f64,
 }
 
+fn format_neighbor_stats(stats: &[NeighborStats], kinds: &[&str]) -> String {
+    fn ratio(num: usize, den: usize) -> f64 {
+        if den == 0 {
+            0.0
+        } else {
+            100.0 * num as f64 / den as f64
+        }
+    }
+
+    fn avg_ms(total_sec: f64, count: usize) -> f64 {
+        if count == 0 {
+            0.0
+        } else {
+            total_sec * 1000.0 / count as f64
+        }
+    }
+
+    fn avg_sum(sum: f64, count: usize) -> f64 {
+        if count == 0 { 0.0 } else { sum / count as f64 }
+    }
+
+    debug_assert_eq!(stats.len(), kinds.len());
+    kinds
+        .iter()
+        .zip(stats)
+        .map(|(kind, stat)| {
+            format!(
+                "  {kind:<16}: selected={:7}, succeeded={:7} ({:7.3}%), improved={:7} ({:7.3}%, avg={:10.2}), accepted={:7} ({:7.3}%), time={:7.3}s, avg={:7.3}ms",
+                stat.selected,
+                stat.succeeded,
+                ratio(stat.succeeded, stat.selected),
+                stat.improved,
+                ratio(stat.improved, stat.succeeded),
+                avg_sum(stat.improved_delta_sum, stat.improved),
+                stat.accepted,
+                ratio(stat.accepted, stat.succeeded),
+                stat.time_sec,
+                avg_ms(stat.time_sec, stat.selected),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub struct WorkerSummary {
     pub worker_id: usize,
     pub iterations: usize,
@@ -186,7 +230,9 @@ pub trait AnnealingDelegate: Sync {
 
     fn initial_states(&self) -> Vec<Self::State>;
 
-    fn neighbor_kind_count(&self) -> usize;
+    fn name(&self) -> &'static str;
+
+    fn neighbor_kinds(&self) -> &'static [&'static str];
 
     fn exchange_threshold(&self, domain: usize) -> f64;
 
@@ -200,7 +246,7 @@ pub trait AnnealingDelegate: Sync {
 
     fn is_finished(&self, domain: usize, state: &Self::State) -> bool;
 
-    fn finish(&self, states: Vec<Self::State>, workers: Vec<WorkerSummary>) -> Self::Output;
+    fn finish(&self, states: Vec<Self::State>) -> Self::Output;
 }
 
 struct TabuList {
@@ -281,8 +327,35 @@ impl<D: AnnealingDelegate> Annealer<D> {
             .into_par_iter()
             .map(|worker_id| self.run_worker(&initial_states, &shared, timer, worker_id))
             .collect();
-        let states = shared.into_iter().map(SharedBest::into_inner).collect();
-        self.delegate.finish(states, worker_results)
+        let states: Vec<_> = shared.into_iter().map(SharedBest::into_inner).collect();
+        for worker in &worker_results {
+            eprintln!(
+                "[{:.4}] [{:8} worker={}] iter={:8}, accepted={:8}, improved={:8}, active_domains={:8}, current={:?}, local_best={:?}, start_temp={:.6}, end_temp={:.6}\nneighbor stats:\n{}",
+                timer.elapsed_seconds(),
+                self.delegate.name(),
+                worker.worker_id,
+                worker.iterations,
+                worker.accepted,
+                worker.improved,
+                worker.active_domains,
+                worker.current_scores,
+                worker.local_best_scores,
+                worker.start_temperature,
+                worker.end_temperature,
+                format_neighbor_stats(&worker.neighbor_stats, self.delegate.neighbor_kinds()),
+            );
+        }
+        for (domain, state) in states.iter().enumerate() {
+            eprintln!(
+                "[{:.4}] [{}] result: domain={}, best={:.3}, finished={}",
+                timer.elapsed_seconds(),
+                self.delegate.name(),
+                domain,
+                state.annealing_score(),
+                self.delegate.is_finished(domain, state),
+            );
+        }
+        self.delegate.finish(states)
     }
 
     fn run_worker(
@@ -333,7 +406,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
         let mut accepted = 0usize;
         let mut improved = 0usize;
         let mut neighbor_stats =
-            vec![NeighborStats::default(); self.delegate.neighbor_kind_count()];
+            vec![NeighborStats::default(); self.delegate.neighbor_kinds().len()];
 
         while !active_domains.is_empty() {
             let Some(temperature) = context.next(timer) else {
@@ -393,7 +466,26 @@ impl<D: AnnealingDelegate> Annealer<D> {
             if candidate_score + EPS < local.local_best_score {
                 local.local_best_score = candidate_score;
                 improved += 1;
-                shared[domain].update(&local.current);
+                eprintln!(
+                    "[{:.4}] [{}]  local best: worker={}, domain={}, iter={:8}, score={:.3}",
+                    timer.elapsed_seconds(),
+                    self.delegate.name(),
+                    worker_id,
+                    domain,
+                    context.iterations(),
+                    candidate_score,
+                );
+                if shared[domain].update(&local.current) {
+                    eprintln!(
+                        "[{:.4}] [{}] shared best: worker={}, domain={}, iter={:8}, score={:.3}",
+                        timer.elapsed_seconds(),
+                        self.delegate.name(),
+                        worker_id,
+                        domain,
+                        context.iterations(),
+                        candidate_score,
+                    );
+                }
                 if self.delegate.is_finished(domain, &local.current) {
                     active_domains.swap_remove(active_index);
                 }

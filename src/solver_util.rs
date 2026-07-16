@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    Operation, Problem, ScheduledBlock, Solution, annealing::NeighborStats, precompute::Precompute,
-    util::rand::Random,
+    Operation, Problem, ScheduledBlock, Solution, precompute::Precompute, util::rand::Random,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -15,16 +14,6 @@ pub enum NeighborKind {
 }
 
 impl NeighborKind {
-    fn name(&self) -> &'static str {
-        match self {
-            NeighborKind::LargeReconstruct => "Large",
-            NeighborKind::Shift => "Shift",
-            NeighborKind::Move => "Move",
-            NeighborKind::Rotate => "Rotate",
-            NeighborKind::Swap => "Swap",
-        }
-    }
-
     pub fn index(&self) -> usize {
         match self {
             NeighborKind::LargeReconstruct => 0,
@@ -114,50 +103,6 @@ pub fn sample_neighbor<R: Random>(rng: &mut R, probs: &[(NeighborKind, f64)]) ->
         x -= prob;
     }
     probs.iter().rev().find(|&&(_, prob)| prob > 0.0).unwrap().0
-}
-
-pub fn format_neighbor_stats(stats: &[NeighborStats], probs: &[(NeighborKind, f64)]) -> String {
-    fn ratio(num: usize, den: usize) -> f64 {
-        if den == 0 {
-            0.0
-        } else {
-            100.0 * num as f64 / den as f64
-        }
-    }
-
-    fn avg_ms(total_sec: f64, count: usize) -> f64 {
-        if count == 0 {
-            0.0
-        } else {
-            total_sec * 1000.0 / count as f64
-        }
-    }
-
-    fn avg_sum(sum: f64, count: usize) -> f64 {
-        if count == 0 { 0.0 } else { sum / count as f64 }
-    }
-
-    probs
-        .iter()
-        .map(|&(kind, _)| {
-            let stat = &stats[kind.index()];
-            format!(
-                "  {:<8}: selected={:7}, succeeded={:7} ({:7.3}%), improved={:7} ({:7.3}%, avg={:10.2}), accepted={:7} ({:7.3}%), time={:7.3}s, avg={:7.3}ms",
-                kind.name(),
-                stat.selected,
-                stat.succeeded,
-                ratio(stat.succeeded, stat.selected),
-                stat.improved,
-                ratio(stat.improved, stat.succeeded),
-                avg_sum(stat.improved_delta_sum, stat.improved),
-                stat.accepted,
-                ratio(stat.accepted, stat.succeeded),
-                stat.time_sec,
-                avg_ms(stat.time_sec, stat.selected),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 pub fn gen_rangef(rng: &mut impl Random, r: (f64, f64)) -> f64 {

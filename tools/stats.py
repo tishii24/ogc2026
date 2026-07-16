@@ -468,6 +468,17 @@ def print_score_matrix(
             + [score_cell(by_key.get((version, timelimit, case))) for case in cases]
         )
 
+    best_cells = []
+    for case in cases:
+        objectives = []
+        for version, timelimit in row_keys:
+            row = by_key.get((version, timelimit, case))
+            objective = parse_float(row.get("objective", "")) if row else None
+            if row and parse_bool(row.get("feasible", "")) and objective is not None:
+                objectives.append(objective)
+        best_cells.append(format_number(min(objectives)) if objectives else "-")
+    table_rows.append(["best", "-"] + best_cells)
+
     print_rows(headers, table_rows)
 
 

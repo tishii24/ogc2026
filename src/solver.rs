@@ -39,7 +39,7 @@ pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
 
 const INITIAL_PREOPTIMIZE_ALPHA: f64 = 1.0;
-const INITIAL_PREOPTIMIZE_BETA: f64 = 0.;
+const INITIAL_PREOPTIMIZE_BETA: f64 = 1.0;
 const INITIAL_PREOPTIMIZE_TIME_RATIO: f64 = 0.1;
 const INITIAL_PREOPTIMIZE_MAX_SECONDS: f64 = 10.0;
 pub const PREOPTIMIZE_DISTANCE_WEIGHT: f64 = 0.0;
@@ -68,7 +68,7 @@ const BAY_ANNEALING_PARAMS: AnnealingParams = AnnealingParams {
 
 const BAY_GREEDY_ORDER_TRIALS: usize = 32;
 const BAY_GREEDY_MAX_DUPLICATE_TRIALS: usize = 128;
-const NEIGHBOR_KIND_COUNT: usize = 5;
+const NEIGHBOR_KINDS: &[&str] = &["Large", "Shift", "Move", "Rotate", "Swap"];
 
 const GLOBAL_NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
     (NeighborKind::LargeReconstruct, 0.2),
@@ -139,28 +139,7 @@ const GLOBAL_NEIGHBOR_PARAMS: NeighborParams = NeighborParams {
 
 const BAY_NEIGHBOR_PARAMS: NeighborParams = NeighborParams {
     probabilities: BAY_NEIGHBOR_PROBS,
-    min_removed_blocks: 7,
-    max_removed_blocks: 13,
-    remove_pool_factor: 4,
-    remove_count_sample_power: 2.0,
-    remove_seed_per_block: 4,
-    remove_random_seed_ratio: 0.25,
-    remove_x_distance_weight_max: 3.0,
-    remove_y_distance_weight_max: 3.0,
-    reconstruct_workload_weight_range: (0.0, 1.0),
-    reconstruct_area_weight_range: (-0.2, 1.0),
-    reconstruct_pref_spread_weight_range: (0.0, 1.0),
-    reconstruct_due_urgency_weight_range: (0.0, 1.0),
-    reconstruct_slack_urgency_weight_range: (0.0, 1.0),
-    reconstruct_order_random_weight_range: (0.0, 0.5),
-    insert_y_buffer: 10,
-    shift_max_x: 5,
-    shift_max_y: 5,
-    rotate_max_shift_delta: 2,
-    swap_neighbor_top_k: 32,
-    swap_max_shift_delta: 2,
-    move_sample_blocks: 16,
-    move_small_pool_size: 8,
+    ..GLOBAL_NEIGHBOR_PARAMS
 };
 
 fn sample_reconstruct_order_weights(

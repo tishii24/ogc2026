@@ -73,9 +73,11 @@ todo:
 - preoptimizeの改善
   - 並列化
   - 再構築近傍の追加
+- 弱いケースの分析
+- bay-optimizeのスコア・温度をもとに戻す
 - build-optimize-stateの並列化
 - 温度の確認
 - shared-best.update-thresholdの導入
-- Pの外側
+- Pの外側ループ
 - bay.area * block-count に比例してリソースを与える
 - bay-annealingでもin-bay swapを使う

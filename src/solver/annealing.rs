@@ -1,10 +1,7 @@
 use super::*;
 use crate::{
-    annealing::{
-        Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingParams, AnnealingState,
-        WorkerSummary,
-    },
-    solver_util::{format_neighbor_stats, sample_neighbor},
+    annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingParams, AnnealingState},
+    solver_util::sample_neighbor,
 };
 
 #[derive(Clone)]
@@ -102,7 +99,6 @@ impl<'a> BayAnnealing<'a> {
             target_tardiness: &self.target_tardiness,
             initial_states,
             params: &BAY_NEIGHBOR_PARAMS,
-            timer: self.timer,
         };
         Annealer::new(deadline, worker_count, seed, params, delegate).run(self.timer)
     }
@@ -115,7 +111,6 @@ struct BayAnnealingDelegate<'a> {
     target_tardiness: &'a [i64],
     initial_states: Vec<BayOptimizeState>,
     params: &'static NeighborParams,
-    timer: Timer,
 }
 
 impl AnnealingDelegate for BayAnnealingDelegate<'_> {
@@ -126,8 +121,12 @@ impl AnnealingDelegate for BayAnnealingDelegate<'_> {
         self.initial_states.clone()
     }
 
-    fn neighbor_kind_count(&self) -> usize {
-        NEIGHBOR_KIND_COUNT
+    fn name(&self) -> &'static str {
+        "bay"
+    }
+
+    fn neighbor_kinds(&self) -> &'static [&'static str] {
+        NEIGHBOR_KINDS
     }
 
     fn exchange_threshold(&self, _domain: usize) -> f64 {
@@ -199,35 +198,12 @@ impl AnnealingDelegate for BayAnnealingDelegate<'_> {
         state.tardiness <= self.target_tardiness[domain]
     }
 
-    fn finish(&self, states: Vec<Self::State>, workers: Vec<WorkerSummary>) -> Self::Output {
-        for worker in workers {
-            eprintln!(
-                "[{:.4}] [bay-worker={}] iter={}, accepted={}, improved={}, active_bays={}, start_temp={:.6}, end_temp={:.6}\nneighbor stats:\n{}",
-                self.timer.elapsed_seconds(),
-                worker.worker_id,
-                worker.iterations,
-                worker.accepted,
-                worker.improved,
-                worker.active_domains,
-                worker.start_temperature,
-                worker.end_temperature,
-                format_neighbor_stats(&worker.neighbor_stats, self.params.probabilities),
-            );
-        }
-
+    fn finish(&self, states: Vec<Self::State>) -> Self::Output {
         let mut blocks = Vec::with_capacity(self.problem.blocks.len());
         for state in states {
-            eprintln!(
-                "[{:.4}] [bay={}] best_tardiness={}, target={}",
-                self.timer.elapsed_seconds(),
-                state.bay_id,
-                state.tardiness,
-                self.target_tardiness[state.bay_id],
-            );
             blocks.extend(state.blocks);
         }
         let score = score_schedule(self.problem, self.pre, &blocks);
-        log!(self.timer, "bay annealing finished: score={:.3}", score);
         OptimizeState { score, blocks }
     }
 }
@@ -260,7 +236,6 @@ impl<'a> GlobalAnnealing<'a> {
             pre: self.pre,
             initial,
             params: &GLOBAL_NEIGHBOR_PARAMS,
-            timer: self.timer,
         };
         Annealer::new(deadline, worker_count, seed, params, delegate).run(self.timer)
     }
@@ -271,7 +246,6 @@ struct GlobalAnnealingDelegate<'a> {
     pre: &'a Precompute,
     initial: OptimizeState,
     params: &'static NeighborParams,
-    timer: Timer,
 }
 
 impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
@@ -282,8 +256,12 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
         vec![self.initial.clone()]
     }
 
-    fn neighbor_kind_count(&self) -> usize {
-        NEIGHBOR_KIND_COUNT
+    fn name(&self) -> &'static str {
+        "global"
+    }
+
+    fn neighbor_kinds(&self) -> &'static [&'static str] {
+        NEIGHBOR_KINDS
     }
 
     fn exchange_threshold(&self, _domain: usize) -> f64 {
@@ -349,29 +327,8 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
         }
     }
 
-    fn finish(&self, mut states: Vec<Self::State>, workers: Vec<WorkerSummary>) -> Self::Output {
-        for worker in workers {
-            eprintln!(
-                "[{:.4}] [id={}] iter={}, best={:.3}, accepted={}, improved={}, current={:.3}, start_temp={:.6}, end_temp={:.6}\nneighbor stats:\n{}",
-                self.timer.elapsed_seconds(),
-                worker.worker_id,
-                worker.iterations,
-                worker.local_best_scores[0],
-                worker.accepted,
-                worker.improved,
-                worker.current_scores[0],
-                worker.start_temperature,
-                worker.end_temperature,
-                format_neighbor_stats(&worker.neighbor_stats, self.params.probabilities),
-            );
-        }
-        let best = states.pop().unwrap();
-        log!(
-            self.timer,
-            "global annealing finished: score={:.3}",
-            best.score
-        );
-        best
+    fn finish(&self, mut states: Vec<Self::State>) -> Self::Output {
+        states.pop().unwrap()
     }
 }
 
