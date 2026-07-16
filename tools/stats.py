@@ -33,6 +33,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         help="Only summarize rows with this timelimit.",
     )
+    parser.add_argument(
+        "-n",
+        "--last-versions",
+        type=int,
+        help="Only show the last N versions in natural sort order.",
+    )
     return parser.parse_args()
 
 
@@ -303,9 +309,12 @@ def compute_rank_scores(
 
 
 def summarize(
-    root: Path, rows: list[dict[str, str]], cases: list[str] | None = None
+    root: Path,
+    rows: list[dict[str, str]],
+    cases: list[str] | None = None,
+    best_rows: list[dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
-    best_counts = compute_best_counts(rows)
+    best_counts = compute_best_counts(best_rows if best_rows is not None else rows)
     rank_scores = compute_rank_scores(rows, cases)
     relative_scores = compute_relative_scores(rows, cases)
     groups: dict[tuple[str, float], dict[str, Any]] = {}
@@ -437,7 +446,9 @@ def score_cell(row: dict[str, str] | None) -> str:
 
 
 def print_score_matrix(
-    rows: list[dict[str, str]], cases: list[str] | None = None
+    rows: list[dict[str, str]],
+    cases: list[str] | None = None,
+    best_rows: list[dict[str, str]] | None = None,
 ) -> None:
     if cases is None:
         cases = sorted(
@@ -474,10 +485,11 @@ def print_score_matrix(
     best_cells = []
     for case in cases:
         objectives = []
-        for version, timelimit in row_keys:
-            row = by_key.get((version, timelimit, case))
-            objective = parse_float(row.get("objective", "")) if row else None
-            if row and parse_bool(row.get("feasible", "")) and objective is not None:
+        for row in (best_rows if best_rows is not None else rows):
+            if row.get("case", "") != case:
+                continue
+            objective = parse_float(row.get("objective", ""))
+            if parse_bool(row.get("feasible", "")) and objective is not None:
                 objectives.append(objective)
         best_cells.append(format_number(min(objectives)) if objectives else "-")
     table_rows.append(["best", "-"] + best_cells)
@@ -519,10 +531,22 @@ def main() -> int:
         print("error: no valid rows found", file=sys.stderr)
         return 1
 
+    best_rows = rows
+    if args.last_versions is not None:
+        if args.last_versions <= 0:
+            print("error: --last-versions must be positive", file=sys.stderr)
+            return 1
+        versions = sorted(
+            {row.get("version", "") for row in rows if row.get("version", "")},
+            key=natural_key,
+        )
+        selected_versions = set(versions[-args.last_versions :])
+        rows = [row for row in rows if row.get("version", "") in selected_versions]
+
     if args.matrix:
-        print_score_matrix(rows, suite_cases)
+        print_score_matrix(rows, suite_cases, best_rows)
     else:
-        print_table(summarize(root, rows, suite_cases))
+        print_table(summarize(root, rows, suite_cases, best_rows))
     return 0
 
 
