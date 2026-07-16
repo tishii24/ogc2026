@@ -1,22 +1,21 @@
 弱いケースの分析
 - Pの設定が良くない
 - preoptimizeが微妙そう
+- 緩和解がきつすぎて、実質リセットになっている
 
 課題
 - 余裕を持ってtardiness=0
   - bayを緩和ソルバーで求めた方が、最適解を得やすい
 - tardiness=0になるかならないか
   - bayを固定しない方がtardinessを0にできる場合がある
-  - global-searchになってから初めてtardinessを0にするため、事前にbayごとに最適化するメリットが薄い
+  - global-searchになってから初めてtardinessを0にできるため、事前にbayごとに最適化するメリットが薄い？
 - 頑張ってもtardiness>0
   - bayを固定しない方がtardinessを小さくできる場合がある
 
 todo:
 - refactor
-- 弱いケースの分析
-- 温度の確認
+- bayでも途中から制約を無視する or globalでも途中まで制約を考慮する
 - Pの外側ループ
-- shared-best.update-thresholdの導入
 - reconstruct-orderの改善
   - volume
   - limit-t

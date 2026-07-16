@@ -36,8 +36,8 @@ const INITIAL_PREOPTIMIZE_TIME_RATIO: f64 = 0.1;
 const INITIAL_PREOPTIMIZE_MAX_SECONDS: f64 = 10.0;
 const INITIAL_BUILD_OPTIMIZE_TIME_RATIO: f64 = 0.1;
 const INITIAL_BUILD_OPTIMIZE_MAX_SECONDS: f64 = 10.0;
-const BAY_OPTIMIZE_TIME_RATIO: f64 = 0.1;
-const BAY_OPTIMIZE_MAX_SECONDS: f64 = 10.0;
+const BAY_OPTIMIZE_TIME_RATIO: f64 = 0.2;
+const BAY_OPTIMIZE_MAX_SECONDS: f64 = 20.0;
 const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
 
 pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
@@ -76,7 +76,7 @@ pub fn global_annealing_params(_problem: &Problem) -> AnnealingParams {
 
 pub fn bay_annealing_params(problem: &Problem) -> AnnealingParams {
     AnnealingParams {
-        exchange_interval: 10_000,
+        exchange_interval: 2_000,
         start_temperature: (1e-2 * problem.weights.w1).max(1e-9),
         end_temperature: (1e-4 * problem.weights.w1).max(1e-9),
         worker_temperature_scale: 1.0,
