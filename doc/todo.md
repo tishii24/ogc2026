@@ -4,8 +4,8 @@
 
 todo:
 - refactor
-- 弱いケースの分析
 - build-optimize-stateの並列化
+- 弱いケースの分析
 - 温度の確認
 - Pの外側ループ
 - shared-best.update-thresholdの導入

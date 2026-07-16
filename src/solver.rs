@@ -13,9 +13,11 @@ use crate::{
     },
     *,
 };
+use rayon::prelude::*;
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashSet},
+    sync::Mutex,
 };
 
 macro_rules! log {
@@ -41,6 +43,8 @@ const INITIAL_PREOPTIMIZE_ALPHA: f64 = 1.0;
 const INITIAL_PREOPTIMIZE_BETA: f64 = 0.0;
 const INITIAL_PREOPTIMIZE_TIME_RATIO: f64 = 0.1;
 const INITIAL_PREOPTIMIZE_MAX_SECONDS: f64 = 10.0;
+const INITIAL_BUILD_OPTIMIZE_TIME_RATIO: f64 = 0.1;
+const INITIAL_BUILD_OPTIMIZE_MAX_SECONDS: f64 = 10.0;
 pub const PREOPTIMIZE_DISTANCE_WEIGHT: f64 = 0.0;
 pub const PREOPTIMIZE_RNG_SEED: u64 = 2;
 pub const PREOPTIMIZE_SWAP_PROBABILITY: f64 = 0.15;
@@ -83,9 +87,6 @@ pub fn bay_annealing_params(problem: &Problem) -> AnnealingParams {
         tabu_capacity: 4096,
     }
 }
-
-const BAY_GREEDY_ORDER_TRIALS: usize = 32;
-const BAY_GREEDY_MAX_DUPLICATE_TRIALS: usize = 128;
 
 const GLOBAL_NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
     (NeighborKind::LargeReconstruct, 0.2),
@@ -233,7 +234,7 @@ fn sample_reconstruct_order_weights(
     }
 }
 
-fn preoptimize_time_limit(timelimit: f64, ratio: f64, max_seconds: f64) -> f64 {
+fn phase_time_limit(timelimit: f64, ratio: f64, max_seconds: f64) -> f64 {
     (timelimit * ratio).min(max_seconds).max(1e-4)
 }
 
@@ -247,7 +248,7 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
     let pre = Precompute::build(problem);
     log!(timer, "precompute built");
 
-    let initial_time_limit = preoptimize_time_limit(
+    let initial_time_limit = phase_time_limit(
         timelimit,
         INITIAL_PREOPTIMIZE_TIME_RATIO,
         INITIAL_PREOPTIMIZE_MAX_SECONDS,
@@ -268,7 +269,13 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
         "initial abstract score: {:.3}",
         initial_abstract.score
     );
-    let initial = build_optimize_state(problem, &pre, &initial_abstract)
+    let build_time_limit = phase_time_limit(
+        timelimit,
+        INITIAL_BUILD_OPTIMIZE_TIME_RATIO,
+        INITIAL_BUILD_OPTIMIZE_MAX_SECONDS,
+    )
+    .min((deadline - timer.elapsed_seconds()).max(1e-4));
+    let initial = build_optimize_state(problem, &pre, &initial_abstract, build_time_limit)
         .ok_or_else(|| "failed to build initial optimize state".to_string())?;
     log!(timer, "initial optimize score: {:.3}", initial.score);
 
@@ -290,64 +297,101 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
     Ok(schedule_to_solution(&best.blocks))
 }
 
-/// TODO: rayによる並列化
 pub fn build_optimize_state(
     problem: &Problem,
     pre: &Precompute,
     state: &PreoptimizeState,
+    time_limit: f64,
 ) -> Option<OptimizeState> {
     let constraints = build_precedence_constraints(problem, state);
     let mut blocks_by_bay = vec![Vec::new(); problem.bays.len()];
     for (block_id, block) in state.blocks.iter().enumerate() {
         blocks_by_bay[block.bay_id].push(block_id);
     }
-
-    let mut blocks = Vec::with_capacity(problem.blocks.len());
-    for (bay_id, bay_block_ids) in blocks_by_bay.iter().enumerate() {
-        if bay_block_ids.is_empty() {
-            continue;
-        }
-        let mut rng = RandPcg64Mcg::new(RNG_SEED.wrapping_add(20_000).wrapping_add(bay_id as u64));
-        let mut seen_order_hashes = HashSet::new();
-        let mut duplicate_trials = 0;
-        let mut best: Option<(i64, Vec<ScheduledBlock>)> = None;
-        while seen_order_hashes.len() < BAY_GREEDY_ORDER_TRIALS
-            && duplicate_trials < BAY_GREEDY_MAX_DUPLICATE_TRIALS
-        {
-            let weights = sample_reconstruct_order_weights(&mut rng, &BAY_NEIGHBOR_PARAMS);
-            let order = build_topological_order(
-                problem,
-                pre,
-                bay_block_ids,
-                &constraints,
-                weights,
-                &mut rng,
-            );
-            if !seen_order_hashes.insert(hash_order(&order)) {
-                duplicate_trials += 1;
-                continue;
-            }
-            let Some(schedule) = build_bay_schedule(
-                problem,
-                pre,
-                bay_id,
-                &order,
-                &constraints,
-                &BAY_NEIGHBOR_PARAMS,
-            ) else {
-                continue;
-            };
-            let tardiness = bay_tardiness(problem, &schedule);
-            if best
-                .as_ref()
-                .is_none_or(|(best_tardiness, _)| tardiness < *best_tardiness)
-            {
-                best = Some((tardiness, schedule));
-            }
-        }
-        blocks.extend(best?.1);
+    let active_bays: Vec<_> = blocks_by_bay
+        .iter()
+        .enumerate()
+        .filter_map(|(bay_id, blocks)| (!blocks.is_empty()).then_some(bay_id))
+        .collect();
+    if active_bays.is_empty() {
+        return Some(OptimizeState {
+            score: 0.0,
+            blocks: Vec::new(),
+        });
     }
 
+    let timer = Timer::start(1.0);
+    let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
+    let seen_order_hashes: Vec<_> = (0..problem.bays.len())
+        .map(|_| Mutex::new(HashSet::new()))
+        .collect();
+    let worker_bests: Vec<Vec<Option<(i64, Vec<ScheduledBlock>)>>> = (0..worker_count)
+        .into_par_iter()
+        .map(|worker_id| {
+            let mut rng =
+                RandPcg64Mcg::new(RNG_SEED.wrapping_add(20_000).wrapping_add(worker_id as u64));
+            let mut bests = vec![None; problem.bays.len()];
+            let mut turn = worker_id;
+            while timer.elapsed_seconds() < time_limit {
+                let bay_id = active_bays[turn % active_bays.len()];
+                turn += 1;
+                let weights = sample_reconstruct_order_weights(&mut rng, &BAY_NEIGHBOR_PARAMS);
+                let order = build_topological_order(
+                    problem,
+                    pre,
+                    &blocks_by_bay[bay_id],
+                    &constraints,
+                    weights,
+                    &mut rng,
+                );
+                if !seen_order_hashes[bay_id]
+                    .lock()
+                    .unwrap()
+                    .insert(hash_order(&order))
+                {
+                    continue;
+                }
+                let Some(schedule) = build_bay_schedule(
+                    problem,
+                    pre,
+                    bay_id,
+                    &order,
+                    &constraints,
+                    &BAY_NEIGHBOR_PARAMS,
+                ) else {
+                    continue;
+                };
+                let tardiness = bay_tardiness(problem, &schedule);
+                if bests[bay_id]
+                    .as_ref()
+                    .is_none_or(|(best_tardiness, _)| tardiness < *best_tardiness)
+                {
+                    bests[bay_id] = Some((tardiness, schedule));
+                }
+            }
+            bests
+        })
+        .collect();
+
+    let mut bests: Vec<Option<(i64, Vec<ScheduledBlock>)>> = vec![None; problem.bays.len()];
+    for worker_best in worker_bests {
+        for (bay_id, candidate) in worker_best.into_iter().enumerate() {
+            let Some(candidate) = candidate else {
+                continue;
+            };
+            if bests[bay_id]
+                .as_ref()
+                .is_none_or(|(best_tardiness, _)| candidate.0 < *best_tardiness)
+            {
+                bests[bay_id] = Some(candidate);
+            }
+        }
+    }
+
+    let mut blocks = Vec::with_capacity(problem.blocks.len());
+    for bay_id in active_bays {
+        blocks.extend(bests[bay_id].take()?.1);
+    }
     let score = score_schedule(problem, pre, &blocks);
     Some(OptimizeState { score, blocks })
 }
