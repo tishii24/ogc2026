@@ -49,6 +49,9 @@ pub const PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY: f64 = 0.75;
 pub const PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS: usize = 8;
 pub const PREOPTIMIZE_MAX_TIME_SHIFT: i64 = 10;
 pub const PREOPTIMIZE_END_TEMPERATURE_RATIO: f64 = 1e-4;
+pub const PREOPTIMIZE_EXCHANGE_INTERVAL: usize = 2048;
+pub const PREOPTIMIZE_WORKER_TEMPERATURE_SCALE: f64 = 0.0;
+pub const PREOPTIMIZE_TABU_CAPACITY: usize = 0;
 
 const GLOBAL_ANNEALING_PARAMS: AnnealingParams = AnnealingParams {
     exchange_interval: 2048,
@@ -165,16 +168,6 @@ pub struct PreoptimizedBlock {
 pub struct PreoptimizeState {
     pub score: f64,
     pub blocks: Vec<PreoptimizedBlock>,
-}
-
-impl crate::annealing::AnnealingState for PreoptimizeState {
-    fn annealing_score(&self) -> f64 {
-        self.score
-    }
-
-    fn tabu_key(&self) -> Option<u64> {
-        None
-    }
 }
 
 #[derive(Clone, Debug)]

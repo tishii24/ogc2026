@@ -1,13 +1,18 @@
 use crate::{
-    Bay, Orientation, Problem,
-    annealing::{AnnealingWorkerContext, SharedBest, accept},
+    Bay, MAX_WORKER_COUNT, Orientation, Problem,
+    annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingParams, AnnealingState},
     solver::{
         PREOPTIMIZE_BAD_BLOCK_SAMPLE_COUNT, PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY,
         PREOPTIMIZE_DISTANCE_WEIGHT, PREOPTIMIZE_END_TEMPERATURE_RATIO,
-        PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS, PREOPTIMIZE_MAX_TIME_SHIFT, PREOPTIMIZE_RNG_SEED,
-        PREOPTIMIZE_SWAP_PROBABILITY, PreoptimizeState, PreoptimizedBlock,
+        PREOPTIMIZE_EXCHANGE_INTERVAL, PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS,
+        PREOPTIMIZE_MAX_TIME_SHIFT, PREOPTIMIZE_RNG_SEED, PREOPTIMIZE_SWAP_PROBABILITY,
+        PREOPTIMIZE_TABU_CAPACITY, PREOPTIMIZE_WORKER_TEMPERATURE_SCALE, PreoptimizeState,
+        PreoptimizedBlock,
     },
-    util::{rand::Random, time::Timer},
+    util::{
+        rand::{RandPcg64Mcg, Random},
+        time::Timer,
+    },
 };
 use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 
@@ -139,7 +144,8 @@ struct PreoptimizeContext<'a> {
     max_time: i64,
 }
 
-struct AnnealingState {
+#[derive(Clone)]
+struct PreoptimizeAnnealingState {
     schedule: Vec<PreoptimizedBlock>,
     used_area: Vec<Vec<f64>>,
     loads: Vec<f64>,
@@ -148,6 +154,16 @@ struct AnnealingState {
     z3: f64,
     objective: f64,
     bay_distance: usize,
+}
+
+impl AnnealingState for PreoptimizeAnnealingState {
+    fn annealing_score(&self) -> f64 {
+        self.objective + PREOPTIMIZE_DISTANCE_WEIGHT * self.bay_distance as f64
+    }
+
+    fn tabu_key(&self) -> Option<u64> {
+        None
+    }
 }
 
 fn normalized_imbalance(loads: &[f64], bay_load_scale: &[f64]) -> f64 {
@@ -272,7 +288,7 @@ fn build_occupancy(
 fn build_reference_state(
     problem: &Problem,
     context: &mut PreoptimizeContext<'_>,
-) -> Result<AnnealingState, String> {
+) -> Result<PreoptimizeAnnealingState, String> {
     let reference = context.reference.unwrap();
     let reference_max_exit = reference
         .blocks
@@ -310,7 +326,7 @@ fn build_reference_state(
         &context.pre.bay_load_scale,
         &schedule,
     );
-    Ok(AnnealingState {
+    Ok(PreoptimizeAnnealingState {
         schedule,
         used_area,
         loads,
@@ -325,7 +341,7 @@ fn build_reference_state(
 fn build_initial_state(
     problem: &Problem,
     context: &mut PreoptimizeContext<'_>,
-) -> Result<AnnealingState, String> {
+) -> Result<PreoptimizeAnnealingState, String> {
     if context.reference.is_some() {
         return build_reference_state(problem, context);
     }
@@ -451,7 +467,7 @@ fn build_initial_state(
             .filter(|(selected, reference)| selected.bay_id != reference.bay_id)
             .count()
     });
-    Ok(AnnealingState {
+    Ok(PreoptimizeAnnealingState {
         schedule,
         used_area,
         loads,
@@ -522,7 +538,7 @@ fn can_place(
 fn select_block(
     problem: &Problem,
     context: &PreoptimizeContext<'_>,
-    state: &AnnealingState,
+    state: &PreoptimizeAnnealingState,
     rng: &mut impl Random,
 ) -> usize {
     if rng.nextf() >= PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY {
@@ -569,8 +585,7 @@ fn sample_entry_time(
 fn try_relocate(
     problem: &Problem,
     context: &PreoptimizeContext<'_>,
-    state: &mut AnnealingState,
-    temperature: f64,
+    state: &mut PreoptimizeAnnealingState,
     rng: &mut impl Random,
 ) -> bool {
     let block_id = select_block(problem, context, state, rng);
@@ -607,36 +622,29 @@ fn try_relocate(
         + problem.weights.w2 * (new_z2 - state.z2)
         + problem.weights.w3 * (new_z3 - old_z3);
     let distance_delta = new_distance as i64 - old_distance as i64;
-    let delta = raw_delta + PREOPTIMIZE_DISTANCE_WEIGHT * distance_delta as f64;
 
-    if accept(delta, temperature, rng) {
-        add_used_area(
-            problem,
-            context,
-            &mut state.used_area,
-            block_id,
-            selected,
-            1.0,
-        );
-        state.schedule[block_id] = selected;
-        state.loads = next_loads;
-        state.z1 += new_z1 - old_z1;
-        state.z2 = new_z2;
-        state.z3 += new_z3 - old_z3;
-        state.objective += raw_delta;
-        state.bay_distance = (state.bay_distance as i64 + distance_delta) as usize;
-        true
-    } else {
-        add_used_area(problem, context, &mut state.used_area, block_id, old, 1.0);
-        false
-    }
+    add_used_area(
+        problem,
+        context,
+        &mut state.used_area,
+        block_id,
+        selected,
+        1.0,
+    );
+    state.schedule[block_id] = selected;
+    state.loads = next_loads;
+    state.z1 += new_z1 - old_z1;
+    state.z2 = new_z2;
+    state.z3 += new_z3 - old_z3;
+    state.objective += raw_delta;
+    state.bay_distance = (state.bay_distance as i64 + distance_delta) as usize;
+    true
 }
 
 fn try_swap(
     problem: &Problem,
     context: &PreoptimizeContext<'_>,
-    state: &mut AnnealingState,
-    temperature: f64,
+    state: &mut PreoptimizeAnnealingState,
     rng: &mut impl Random,
 ) -> bool {
     if problem.blocks.len() < 2 {
@@ -698,24 +706,88 @@ fn try_swap(
         + problem.weights.w2 * (new_z2 - state.z2)
         + problem.weights.w3 * (new_z3 - old_z3);
     let distance_delta = new_distance as i64 - old_distance as i64;
-    let delta = raw_delta + PREOPTIMIZE_DISTANCE_WEIGHT * distance_delta as f64;
 
-    if accept(delta, temperature, rng) {
-        state.schedule[a] = new_a;
-        state.schedule[b] = new_b;
-        state.loads = next_loads;
-        state.z1 += new_z1 - old_z1;
-        state.z2 = new_z2;
-        state.z3 += new_z3 - old_z3;
-        state.objective += raw_delta;
-        state.bay_distance = (state.bay_distance as i64 + distance_delta) as usize;
-        true
-    } else {
-        add_used_area(problem, context, &mut state.used_area, a, new_a, -1.0);
-        add_used_area(problem, context, &mut state.used_area, b, new_b, -1.0);
-        add_used_area(problem, context, &mut state.used_area, a, old_a, 1.0);
-        add_used_area(problem, context, &mut state.used_area, b, old_b, 1.0);
+    state.schedule[a] = new_a;
+    state.schedule[b] = new_b;
+    state.loads = next_loads;
+    state.z1 += new_z1 - old_z1;
+    state.z2 = new_z2;
+    state.z3 += new_z3 - old_z3;
+    state.objective += raw_delta;
+    state.bay_distance = (state.bay_distance as i64 + distance_delta) as usize;
+    true
+}
+
+const PREOPTIMIZE_NEIGHBOR_KINDS: &[&str] = &["Relocate", "Swap"];
+
+struct PreoptimizeAnnealingDelegate<'a> {
+    problem: &'a Problem,
+    context: PreoptimizeContext<'a>,
+    initial: PreoptimizeAnnealingState,
+}
+
+impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
+    type State = PreoptimizeAnnealingState;
+    type Output = PreoptimizeState;
+
+    fn initial_states(&self) -> Vec<Self::State> {
+        vec![self.initial.clone()]
+    }
+
+    fn name(&self) -> &'static str {
+        "preopt"
+    }
+
+    fn neighbor_kinds(&self) -> &'static [&'static str] {
+        PREOPTIMIZE_NEIGHBOR_KINDS
+    }
+
+    fn exchange_threshold(&self, _domain: usize) -> f64 {
+        0.0
+    }
+
+    fn propose(
+        &self,
+        _domain: usize,
+        current: &Self::State,
+        _accept_threshold: f64,
+        rng: &mut RandPcg64Mcg,
+    ) -> AnnealingAttempt<Self::State> {
+        let mut candidate = current.clone();
+        let (neighbor_kind, succeeded) = if rng.nextf() < PREOPTIMIZE_SWAP_PROBABILITY {
+            (
+                1,
+                try_swap(self.problem, &self.context, &mut candidate, rng),
+            )
+        } else {
+            (
+                0,
+                try_relocate(self.problem, &self.context, &mut candidate, rng),
+            )
+        };
+        AnnealingAttempt {
+            neighbor_kind,
+            candidate: succeeded.then_some(candidate),
+        }
+    }
+
+    fn is_finished(&self, _domain: usize, _state: &Self::State) -> bool {
         false
+    }
+
+    fn finish(&self, mut states: Vec<Self::State>) -> Self::Output {
+        let state = states.pop().unwrap();
+        let score = evaluate_schedule(
+            self.problem,
+            &self.context.pre.pref_penalty,
+            &self.context.pre.bay_load_scale,
+            &state.schedule,
+        )
+        .0;
+        PreoptimizeState {
+            score,
+            blocks: state.schedule,
+        }
     }
 }
 
@@ -733,60 +805,32 @@ pub fn preoptimize(
         bay_capacities: pre.bay_areas.clone(),
         max_time: pre.search_horizon,
     };
-    let mut state = build_initial_state(problem, &mut context)?;
-    let initial_key = state.objective + PREOPTIMIZE_DISTANCE_WEIGHT * state.bay_distance as f64;
-    let mut local_best_key = initial_key;
-    let shared = SharedBest::new(PreoptimizeState {
-        score: state.objective,
-        blocks: state.schedule.clone(),
-    });
-    let start_temperature = (initial_key / problem.blocks.len() as f64)
+    let initial = build_initial_state(problem, &mut context)?;
+    let start_temperature = (initial.annealing_score() / problem.blocks.len() as f64)
         .max(problem.weights.w1)
         .max(problem.weights.w3)
         .max(PREOPTIMIZE_DISTANCE_WEIGHT)
         .max(1.0);
     let timer = Timer::start(1.0);
-    let mut worker = AnnealingWorkerContext::new(
-        timer,
-        params.time_limit,
+    let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
+    let annealing_params = AnnealingParams {
+        exchange_interval: PREOPTIMIZE_EXCHANGE_INTERVAL,
         start_temperature,
-        start_temperature * PREOPTIMIZE_END_TEMPERATURE_RATIO,
-        PREOPTIMIZE_RNG_SEED,
-    );
-
-    while let Some(temperature) = worker.next(timer) {
-        if worker.rng.nextf() < PREOPTIMIZE_SWAP_PROBABILITY {
-            try_swap(problem, &context, &mut state, temperature, &mut worker.rng);
-        } else {
-            try_relocate(problem, &context, &mut state, temperature, &mut worker.rng);
-        }
-        let regularized = state.objective + PREOPTIMIZE_DISTANCE_WEIGHT * state.bay_distance as f64;
-        if regularized + 1e-9 < local_best_key {
-            local_best_key = regularized;
-            let candidate = PreoptimizeState {
-                score: state.objective,
-                blocks: state.schedule.clone(),
-            };
-            shared.update(&candidate);
-            eprintln!(
-                "[{:.4}] annealing new best: iter={:8}, score={:.3}, z1={:.3}, z2={:.3}, z3={:.3}",
-                timer.elapsed_seconds(),
-                worker.iterations(),
-                regularized,
-                state.z1,
-                state.z2,
-                state.z3,
-            );
-        }
-    }
-
-    let mut best = shared.into_inner();
-    best.score = evaluate_schedule(
+        end_temperature: start_temperature * PREOPTIMIZE_END_TEMPERATURE_RATIO,
+        worker_temperature_scale: PREOPTIMIZE_WORKER_TEMPERATURE_SCALE,
+        tabu_capacity: PREOPTIMIZE_TABU_CAPACITY,
+    };
+    let delegate = PreoptimizeAnnealingDelegate {
         problem,
-        &context.pre.pref_penalty,
-        &context.pre.bay_load_scale,
-        &best.blocks,
+        context,
+        initial,
+    };
+    Ok(Annealer::new(
+        params.time_limit,
+        worker_count,
+        PREOPTIMIZE_RNG_SEED,
+        annealing_params,
+        delegate,
     )
-    .0;
-    Ok(best)
+    .run(timer))
 }
