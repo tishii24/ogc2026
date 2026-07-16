@@ -1,13 +1,29 @@
+弱いケースの分析
+- Pの設定が良くない
+- preoptimizeが微妙そう
+
+todo:
+- refactor
+- 弱いケースの分析
+- build-optimize-stateの並列化
+- 温度の確認
+- Pの外側ループ
+- shared-best.update-thresholdの導入
+- reconstruct-orderの改善
+  - volume
+  - limit-t
+- bay-annealingでもin-bay swapを使う
+- preoptimizeの改善
+  - 再構築近傍の追加
+- bay.area * block-count に比例してリソースを与える
+
 todo:
 - pre.block-areaの修正
   - unionを使う
 - reconstructの改善
   - targeted-reconstruct
   - obj23を軽視する
-  - 高速化
-- 順番の改善
-  - volume
-  - limit-t
+- 高速化
 - shiftを元の位置も含める（change-entry-t）
 - 小さいケース
   - kick
@@ -32,13 +48,9 @@ precompute:
   - 凸包を作って、面積が大きくならない組み合わせを求める
 
 solver:
-- 初期解改善
-- 高速化
-  - insert-greedy
 - 評価の改善
   - 同じような時刻のブロックを近くに集めると、後のブロックを入れやすくなる
 - 調整
-  - start-temp,end-tempの推定
   - dx,dyをnon-positiveに限定する
   - パラメータ調整
 - 強い最適化

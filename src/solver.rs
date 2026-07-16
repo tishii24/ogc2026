@@ -38,7 +38,7 @@ pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
 
 const INITIAL_PREOPTIMIZE_ALPHA: f64 = 1.0;
-const INITIAL_PREOPTIMIZE_BETA: f64 = 1.0;
+const INITIAL_PREOPTIMIZE_BETA: f64 = 0.0;
 const INITIAL_PREOPTIMIZE_TIME_RATIO: f64 = 0.1;
 const INITIAL_PREOPTIMIZE_MAX_SECONDS: f64 = 10.0;
 pub const PREOPTIMIZE_DISTANCE_WEIGHT: f64 = 0.0;
@@ -48,29 +48,44 @@ pub const PREOPTIMIZE_BAD_BLOCK_SAMPLE_COUNT: usize = 8;
 pub const PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY: f64 = 0.75;
 pub const PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS: usize = 8;
 pub const PREOPTIMIZE_MAX_TIME_SHIFT: i64 = 10;
-pub const PREOPTIMIZE_END_TEMPERATURE_RATIO: f64 = 1e-4;
-pub const PREOPTIMIZE_EXCHANGE_INTERVAL: usize = 2048;
-pub const PREOPTIMIZE_WORKER_TEMPERATURE_SCALE: f64 = 0.0;
-pub const PREOPTIMIZE_TABU_CAPACITY: usize = 0;
 
-const GLOBAL_ANNEALING_PARAMS: AnnealingParams = AnnealingParams {
-    exchange_interval: 2048,
-    start_temperature: 1e1,
-    end_temperature: 1e-2,
-    worker_temperature_scale: 10.,
-    tabu_capacity: 4096,
-};
-const BAY_ANNEALING_PARAMS: AnnealingParams = AnnealingParams {
-    exchange_interval: 2048,
-    start_temperature: 1e-2,
-    end_temperature: 1e-4,
-    worker_temperature_scale: 1.,
-    tabu_capacity: 4096,
-};
+pub fn preoptimize_annealing_params(problem: &Problem, initial_score: f64) -> AnnealingParams {
+    let start_temperature = (initial_score / problem.blocks.len() as f64)
+        .max(problem.weights.w1)
+        .max(problem.weights.w3)
+        .max(PREOPTIMIZE_DISTANCE_WEIGHT)
+        .max(1.0);
+    AnnealingParams {
+        exchange_interval: 1_000_000,
+        start_temperature,
+        end_temperature: start_temperature * 1e-4,
+        worker_temperature_scale: 0.0,
+        tabu_capacity: 4096,
+    }
+}
+
+pub fn global_annealing_params(_problem: &Problem) -> AnnealingParams {
+    AnnealingParams {
+        exchange_interval: 2048,
+        start_temperature: 1e1,
+        end_temperature: 1e-2,
+        worker_temperature_scale: 10.0,
+        tabu_capacity: 4096,
+    }
+}
+
+pub fn bay_annealing_params(problem: &Problem) -> AnnealingParams {
+    AnnealingParams {
+        exchange_interval: 2048,
+        start_temperature: (1e-2 * problem.weights.w1).max(1e-9),
+        end_temperature: (1e-4 * problem.weights.w1).max(1e-9),
+        worker_temperature_scale: 1.0,
+        tabu_capacity: 4096,
+    }
+}
 
 const BAY_GREEDY_ORDER_TRIALS: usize = 32;
 const BAY_GREEDY_MAX_DUPLICATE_TRIALS: usize = 128;
-const NEIGHBOR_KINDS: &[&str] = &["Large", "Shift", "Move", "Rotate", "Swap"];
 
 const GLOBAL_NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
     (NeighborKind::LargeReconstruct, 0.2),
@@ -86,32 +101,6 @@ const BAY_NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
     (NeighborKind::Rotate, 8.0),
     (NeighborKind::Swap, 0.0),
 ];
-
-pub struct NeighborParams {
-    pub probabilities: &'static [(NeighborKind, f64)],
-    pub min_removed_blocks: usize,
-    pub max_removed_blocks: usize,
-    pub remove_pool_factor: usize,
-    pub remove_count_sample_power: f64,
-    pub remove_seed_per_block: usize,
-    pub remove_random_seed_ratio: f64,
-    pub remove_x_distance_weight_max: f64,
-    pub remove_y_distance_weight_max: f64,
-    pub reconstruct_workload_weight_range: (f64, f64),
-    pub reconstruct_area_weight_range: (f64, f64),
-    pub reconstruct_pref_spread_weight_range: (f64, f64),
-    pub reconstruct_due_urgency_weight_range: (f64, f64),
-    pub reconstruct_slack_urgency_weight_range: (f64, f64),
-    pub reconstruct_order_random_weight_range: (f64, f64),
-    pub insert_y_buffer: i64,
-    pub shift_max_x: i64,
-    pub shift_max_y: i64,
-    pub rotate_max_shift_delta: i64,
-    pub swap_neighbor_top_k: usize,
-    pub swap_max_shift_delta: i64,
-    pub move_sample_blocks: usize,
-    pub move_small_pool_size: usize,
-}
 
 const GLOBAL_NEIGHBOR_PARAMS: NeighborParams = NeighborParams {
     probabilities: GLOBAL_NEIGHBOR_PROBS,
@@ -144,19 +133,7 @@ const BAY_NEIGHBOR_PARAMS: NeighborParams = NeighborParams {
     ..GLOBAL_NEIGHBOR_PARAMS
 };
 
-fn sample_reconstruct_order_weights(
-    rng: &mut impl Random,
-    params: &NeighborParams,
-) -> BlockOrderWeights {
-    BlockOrderWeights {
-        workload: gen_rangef(rng, params.reconstruct_workload_weight_range),
-        area: gen_rangef(rng, params.reconstruct_area_weight_range),
-        pref_spread: gen_rangef(rng, params.reconstruct_pref_spread_weight_range),
-        due_urgency: gen_rangef(rng, params.reconstruct_due_urgency_weight_range),
-        slack_urgency: gen_rangef(rng, params.reconstruct_slack_urgency_weight_range),
-        random: gen_rangef(rng, params.reconstruct_order_random_weight_range),
-    }
-}
+const NEIGHBOR_KINDS: &[&str] = &["Large", "Shift", "Move", "Rotate", "Swap"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct PreoptimizedBlock {
@@ -201,6 +178,32 @@ struct PrecedenceConstraints {
     afters: Vec<Vec<usize>>,
 }
 
+pub struct NeighborParams {
+    pub probabilities: &'static [(NeighborKind, f64)],
+    pub min_removed_blocks: usize,
+    pub max_removed_blocks: usize,
+    pub remove_pool_factor: usize,
+    pub remove_count_sample_power: f64,
+    pub remove_seed_per_block: usize,
+    pub remove_random_seed_ratio: f64,
+    pub remove_x_distance_weight_max: f64,
+    pub remove_y_distance_weight_max: f64,
+    pub reconstruct_workload_weight_range: (f64, f64),
+    pub reconstruct_area_weight_range: (f64, f64),
+    pub reconstruct_pref_spread_weight_range: (f64, f64),
+    pub reconstruct_due_urgency_weight_range: (f64, f64),
+    pub reconstruct_slack_urgency_weight_range: (f64, f64),
+    pub reconstruct_order_random_weight_range: (f64, f64),
+    pub insert_y_buffer: i64,
+    pub shift_max_x: i64,
+    pub shift_max_y: i64,
+    pub rotate_max_shift_delta: i64,
+    pub swap_neighbor_top_k: usize,
+    pub swap_max_shift_delta: i64,
+    pub move_sample_blocks: usize,
+    pub move_small_pool_size: usize,
+}
+
 pub fn to_preoptimize_state(state: &OptimizeState) -> PreoptimizeState {
     let mut ordered = state.blocks.clone();
     ordered.sort_unstable_by_key(|scheduled| scheduled.block_id);
@@ -213,6 +216,20 @@ pub fn to_preoptimize_state(state: &OptimizeState) -> PreoptimizeState {
                 entry_time: scheduled.entry_time,
             })
             .collect(),
+    }
+}
+
+fn sample_reconstruct_order_weights(
+    rng: &mut impl Random,
+    params: &NeighborParams,
+) -> BlockOrderWeights {
+    BlockOrderWeights {
+        workload: gen_rangef(rng, params.reconstruct_workload_weight_range),
+        area: gen_rangef(rng, params.reconstruct_area_weight_range),
+        pref_spread: gen_rangef(rng, params.reconstruct_pref_spread_weight_range),
+        due_urgency: gen_rangef(rng, params.reconstruct_due_urgency_weight_range),
+        slack_urgency: gen_rangef(rng, params.reconstruct_slack_urgency_weight_range),
+        random: gen_rangef(rng, params.reconstruct_order_random_weight_range),
     }
 }
 
@@ -259,7 +276,7 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
     let initial = BayAnnealing::new(problem, &pre, &initial_abstract, timer).run(
         initial,
         bay_deadline,
-        BAY_ANNEALING_PARAMS,
+        bay_annealing_params(problem),
         RNG_SEED,
     );
     log!(timer, "bay annealing score: {:.3}", initial.score);
@@ -267,7 +284,7 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
     let best = GlobalAnnealing::new(problem, &pre, timer).run(
         initial,
         deadline,
-        GLOBAL_ANNEALING_PARAMS,
+        global_annealing_params(problem),
         RNG_SEED,
     );
     Ok(schedule_to_solution(&best.blocks))
@@ -460,21 +477,21 @@ fn try_bay_large_reconstruct<R: Random>(
 
     let mut cur = Vec::with_capacity(schedule.len());
     let mut loads = vec![0.0; problem.bays.len()];
-    let mut fixed_tardiness = 0.0;
+    let mut fixed_score = 0.0;
     for &scheduled in schedule {
         if removed[scheduled.block_id] {
             continue;
         }
         loads[bay_id] += problem.blocks[scheduled.block_id].workload as f64;
-        fixed_tardiness +=
-            (scheduled.exit_time - problem.blocks[scheduled.block_id].due_date).max(0) as f64;
+        fixed_score += problem.weights.w1
+            * (scheduled.exit_time - problem.blocks[scheduled.block_id].due_date).max(0) as f64;
         cur.push(scheduled);
     }
     let mut current_by_id = scheduled_by_id(problem, &cur);
     let bay_order = [bay_id];
 
     for block_id in order {
-        if fixed_tardiness > accept_threshold + 1e-9 {
+        if fixed_score > accept_threshold + 1e-9 {
             return None;
         }
         let old = original_by_id[block_id]?;
@@ -494,7 +511,8 @@ fn try_bay_large_reconstruct<R: Random>(
             &bay_order,
         )?;
         loads[bay_id] += problem.blocks[block_id].workload as f64;
-        fixed_tardiness += (scheduled.exit_time - problem.blocks[block_id].due_date).max(0) as f64;
+        fixed_score += problem.weights.w1
+            * (scheduled.exit_time - problem.blocks[block_id].due_date).max(0) as f64;
         current_by_id[block_id] = Some(scheduled);
         cur.push(scheduled);
     }

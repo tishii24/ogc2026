@@ -14,7 +14,7 @@ pub struct BayOptimizeState {
 
 impl AnnealingState for BayOptimizeState {
     fn annealing_score(&self) -> f64 {
-        self.tardiness as f64
+        self.score
     }
 
     fn tabu_key(&self) -> Option<u64> {
@@ -130,7 +130,7 @@ impl AnnealingDelegate for BayAnnealingDelegate<'_> {
     }
 
     fn exchange_threshold(&self, _domain: usize) -> f64 {
-        2.0
+        2.0 * self.problem.weights.w1
     }
 
     fn propose(

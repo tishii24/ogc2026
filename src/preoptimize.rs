@@ -1,13 +1,11 @@
 use crate::{
     Bay, MAX_WORKER_COUNT, Orientation, Problem,
-    annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingParams, AnnealingState},
+    annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
     solver::{
         PREOPTIMIZE_BAD_BLOCK_SAMPLE_COUNT, PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY,
-        PREOPTIMIZE_DISTANCE_WEIGHT, PREOPTIMIZE_END_TEMPERATURE_RATIO,
-        PREOPTIMIZE_EXCHANGE_INTERVAL, PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS,
-        PREOPTIMIZE_MAX_TIME_SHIFT, PREOPTIMIZE_RNG_SEED, PREOPTIMIZE_SWAP_PROBABILITY,
-        PREOPTIMIZE_TABU_CAPACITY, PREOPTIMIZE_WORKER_TEMPERATURE_SCALE, PreoptimizeState,
-        PreoptimizedBlock,
+        PREOPTIMIZE_DISTANCE_WEIGHT, PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS, PREOPTIMIZE_MAX_TIME_SHIFT,
+        PREOPTIMIZE_RNG_SEED, PREOPTIMIZE_SWAP_PROBABILITY, PreoptimizeState, PreoptimizedBlock,
+        preoptimize_annealing_params,
     },
     util::{
         rand::{RandPcg64Mcg, Random},
@@ -806,20 +804,9 @@ pub fn preoptimize(
         max_time: pre.search_horizon,
     };
     let initial = build_initial_state(problem, &mut context)?;
-    let start_temperature = (initial.annealing_score() / problem.blocks.len() as f64)
-        .max(problem.weights.w1)
-        .max(problem.weights.w3)
-        .max(PREOPTIMIZE_DISTANCE_WEIGHT)
-        .max(1.0);
+    let annealing_params = preoptimize_annealing_params(problem, initial.annealing_score());
     let timer = Timer::start(1.0);
     let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
-    let annealing_params = AnnealingParams {
-        exchange_interval: PREOPTIMIZE_EXCHANGE_INTERVAL,
-        start_temperature,
-        end_temperature: start_temperature * PREOPTIMIZE_END_TEMPERATURE_RATIO,
-        worker_temperature_scale: PREOPTIMIZE_WORKER_TEMPERATURE_SCALE,
-        tabu_capacity: PREOPTIMIZE_TABU_CAPACITY,
-    };
     let delegate = PreoptimizeAnnealingDelegate {
         problem,
         context,
