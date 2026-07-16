@@ -36,8 +36,7 @@ const INITIAL_PREOPTIMIZE_TIME_RATIO: f64 = 0.1;
 const INITIAL_PREOPTIMIZE_MAX_SECONDS: f64 = 10.0;
 const INITIAL_BUILD_OPTIMIZE_TIME_RATIO: f64 = 0.1;
 const INITIAL_BUILD_OPTIMIZE_MAX_SECONDS: f64 = 10.0;
-const BAY_OPTIMIZE_TIME_RATIO: f64 = 0.2;
-const BAY_OPTIMIZE_MAX_SECONDS: f64 = 20.0;
+const BAY_OPTIMIZE_TIME_RATIO: f64 = 0.3;
 const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
 
 pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
@@ -57,8 +56,8 @@ pub const PREOPTIMIZE_MAX_TIME_SHIFT: i64 = 10;
 pub fn preoptimize_annealing_params(problem: &Problem) -> AnnealingParams {
     AnnealingParams {
         exchange_interval: 1_000_000,
-        start_temperature: (1e-2 * problem.weights.w1).max(1e-9),
-        end_temperature: (1e-4 * problem.weights.w1).max(1e-9),
+        start_temperature: problem.weights.w1,
+        end_temperature: problem.weights.w1 * 1e-4,
         worker_temperature_scale: 0.0,
         tabu_capacity: 4096,
     }
@@ -77,8 +76,8 @@ pub fn global_annealing_params(_problem: &Problem) -> AnnealingParams {
 pub fn bay_annealing_params(problem: &Problem) -> AnnealingParams {
     AnnealingParams {
         exchange_interval: 2_000,
-        start_temperature: (1e-2 * problem.weights.w1).max(1e-9),
-        end_temperature: (1e-4 * problem.weights.w1).max(1e-9),
+        start_temperature: problem.weights.w1 * 1e-2,
+        end_temperature: problem.weights.w1 * 1e-4,
         worker_temperature_scale: 1.0,
         tabu_capacity: 4096,
     }
@@ -276,9 +275,7 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
     log!(timer, "initial optimize score: {:.3}", initial.score);
 
     let bay_start = timer.elapsed_seconds();
-    let bay_time_limit =
-        phase_time_limit(timelimit, BAY_OPTIMIZE_TIME_RATIO, BAY_OPTIMIZE_MAX_SECONDS)
-            .min((deadline - bay_start).max(0.0));
+    let bay_time_limit = (timelimit * BAY_OPTIMIZE_TIME_RATIO).min((deadline - bay_start).max(0.0));
     let bay_deadline = bay_start + bay_time_limit;
     let initial = BayAnnealing::new(problem, &pre, &initial_abstract, timer).run(
         initial,
