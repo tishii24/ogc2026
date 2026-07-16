@@ -211,14 +211,21 @@ impl AnnealingDelegate for BayAnnealingDelegate<'_> {
 pub struct GlobalAnnealing<'a> {
     problem: &'a Problem,
     pre: &'a Precompute,
+    constraints: PrecedenceConstraints,
     timer: Timer,
 }
 
 impl<'a> GlobalAnnealing<'a> {
-    pub fn new(problem: &'a Problem, pre: &'a Precompute, timer: Timer) -> Self {
+    pub fn new(
+        problem: &'a Problem,
+        pre: &'a Precompute,
+        abstract_state: &PreoptimizeState,
+        timer: Timer,
+    ) -> Self {
         Self {
             problem,
             pre,
+            constraints: build_precedence_constraints(problem, abstract_state),
             timer,
         }
     }
@@ -231,9 +238,14 @@ impl<'a> GlobalAnnealing<'a> {
         seed: u64,
     ) -> OptimizeState {
         let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
+        let start_time = self.timer.elapsed_seconds();
         let delegate = GlobalAnnealingDelegate {
             problem: self.problem,
             pre: self.pre,
+            constraints: &self.constraints,
+            timer: self.timer,
+            constraint_deadline: start_time
+                + (deadline - start_time).max(0.0) * GLOBAL_CONSTRAINT_TIME_RATIO,
             initial,
             params: &GLOBAL_NEIGHBOR_PARAMS,
         };
@@ -244,6 +256,9 @@ impl<'a> GlobalAnnealing<'a> {
 struct GlobalAnnealingDelegate<'a> {
     problem: &'a Problem,
     pre: &'a Precompute,
+    constraints: &'a PrecedenceConstraints,
+    timer: Timer,
+    constraint_deadline: f64,
     initial: OptimizeState,
     params: &'static NeighborParams,
 }
@@ -279,11 +294,19 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
         accept_threshold: f64,
         rng: &mut RandPcg64Mcg,
     ) -> AnnealingAttempt<Self::State> {
-        let neighbor = sample_neighbor(rng, self.params.probabilities);
+        let constraints =
+            (self.timer.elapsed_seconds() < self.constraint_deadline).then_some(self.constraints);
+        let probabilities = if constraints.is_some() {
+            BAY_NEIGHBOR_PROBS
+        } else {
+            self.params.probabilities
+        };
+        let neighbor = sample_neighbor(rng, probabilities);
         let blocks = match neighbor {
             NeighborKind::LargeReconstruct => try_large_reconstruct(
                 self.problem,
                 self.pre,
+                constraints,
                 &current.blocks,
                 rng,
                 accept_threshold,
@@ -294,7 +317,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 self.pre,
                 &current.blocks,
                 rng,
-                None,
+                constraints,
                 self.params,
             ),
             NeighborKind::Move => try_move_neighbor(
@@ -302,7 +325,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 self.pre,
                 &current.blocks,
                 rng,
-                None,
+                constraints,
                 None,
                 self.params,
             ),
@@ -311,11 +334,15 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 self.pre,
                 &current.blocks,
                 rng,
-                None,
+                constraints,
                 self.params,
             ),
             NeighborKind::Swap => {
-                try_swap_neighbor(self.problem, self.pre, &current.blocks, rng, self.params)
+                if constraints.is_some() {
+                    None
+                } else {
+                    try_swap_neighbor(self.problem, self.pre, &current.blocks, rng, self.params)
+                }
             }
         };
         AnnealingAttempt {

@@ -37,6 +37,7 @@ const INITIAL_PREOPTIMIZE_MAX_SECONDS: f64 = 10.0;
 const INITIAL_BUILD_OPTIMIZE_TIME_RATIO: f64 = 0.1;
 const INITIAL_BUILD_OPTIMIZE_MAX_SECONDS: f64 = 10.0;
 const BAY_OPTIMIZE_TIME_RATIO: f64 = 0.3;
+const GLOBAL_CONSTRAINT_TIME_RATIO: f64 = 0.5;
 const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
 
 pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
@@ -277,7 +278,7 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
     );
     log!(timer, "bay annealing score: {:.3}", initial.score);
 
-    let best = GlobalAnnealing::new(problem, &pre, timer).run(
+    let best = GlobalAnnealing::new(problem, &pre, &initial_abstract, timer).run(
         initial,
         deadline,
         global_annealing_params(problem),
@@ -427,6 +428,7 @@ fn hash_order(order: &[usize]) -> u64 {
 fn try_large_reconstruct<R: Random>(
     problem: &Problem,
     pre: &Precompute,
+    constraints: Option<&PrecedenceConstraints>,
     schedule: &[ScheduledBlock],
     rng: &mut R,
     accept_threshold: f64,
@@ -438,38 +440,53 @@ fn try_large_reconstruct<R: Random>(
     if removed_ids.is_empty() {
         return None;
     }
-    let w = sample_reconstruct_order_weights(rng, params);
-    sort_block_order(problem, &pre.block_area, &mut removed_ids, w, rng);
+    let weights = sample_reconstruct_order_weights(rng, params);
+    let order = if let Some(constraints) = constraints {
+        build_topological_order(problem, pre, &removed_ids, constraints, weights, rng)
+    } else {
+        sort_block_order(problem, &pre.block_area, &mut removed_ids, weights, rng);
+        removed_ids.clone()
+    };
 
-    let mut removed_ordered = vec![None; removed_ids.len()];
-    let mut base = Vec::with_capacity(schedule.len() - removed_ids.len());
-    for &s in schedule {
-        if let Some(pos) = removed_ids.iter().position(|&id| id == s.block_id) {
-            removed_ordered[pos] = Some(s);
-        } else {
-            base.push(s);
-        }
+    let original_by_id = scheduled_by_id(problem, schedule);
+    let mut removed = vec![false; problem.blocks.len()];
+    for &block_id in &removed_ids {
+        removed[block_id] = true;
     }
-
-    let mut cur = base;
+    let mut cur = Vec::with_capacity(schedule.len());
     let mut loads = vec![0.0; problem.bays.len()];
     let mut fixed_score13 = 0.0;
-    for &s in &cur {
-        loads[s.bay_id] += problem.blocks[s.block_id].workload as f64;
-        fixed_score13 += score13_block(problem, pre, s);
+    for &scheduled in schedule {
+        if removed[scheduled.block_id] {
+            continue;
+        }
+        loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
+        fixed_score13 += score13_block(problem, pre, scheduled);
+        cur.push(scheduled);
     }
+    let mut current_by_id = constraints.map(|_| scheduled_by_id(problem, &cur));
 
-    for old in removed_ordered {
+    for block_id in order {
         if fixed_score13 > accept_threshold + 1e-9 {
             return None;
         }
-        let old = old?;
+        let old = original_by_id[block_id]?;
+        let (min_entry_time, max_entry_time) = if let Some(constraints) = constraints {
+            precedence_entry_time_range(
+                problem,
+                constraints,
+                current_by_id.as_ref().unwrap(),
+                block_id,
+            )?
+        } else {
+            (i64::MIN, i64::MAX)
+        };
         let scheduled = insert_greedy(
             problem,
             pre,
             old,
-            i64::MIN,
-            i64::MAX,
+            min_entry_time,
+            max_entry_time,
             &cur,
             &loads,
             InsertSearchParams {
@@ -479,6 +496,9 @@ fn try_large_reconstruct<R: Random>(
         )?;
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
         fixed_score13 += score13_block(problem, pre, scheduled);
+        if let Some(current_by_id) = &mut current_by_id {
+            current_by_id[block_id] = Some(scheduled);
+        }
         cur.push(scheduled);
     }
 
