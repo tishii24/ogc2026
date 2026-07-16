@@ -117,12 +117,6 @@ pub fn block_pref_spread(problem: &Problem, block_id: usize) -> i64 {
     max_pref - min_pref
 }
 
-/// TODO: precomputeに持っていく
-pub fn block_slack(problem: &Problem, block_id: usize) -> i64 {
-    let block = &problem.blocks[block_id];
-    block.due_date - block.release_time - block.processing_time
-}
-
 pub fn bay_tardiness(problem: &Problem, schedule: &[ScheduledBlock]) -> i64 {
     schedule
         .iter()

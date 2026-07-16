@@ -14,10 +14,9 @@
 
 todo:
 - refactor
-- preoptimizeの改善
-  - 再構築近傍の追加
-- ベイアニーリングの辺の数を減らす
+- 推移辺を削除する
 - bayでも途中から制約を無視する or globalでも途中まで制約を考慮する
+- preoptimizeの改善
 - 温度の調整
 - Pの外側ループ
 - reconstruct-orderの改善

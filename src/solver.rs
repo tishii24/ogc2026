@@ -4,8 +4,8 @@ use crate::{
     precompute::Precompute,
     preoptimize::{PreoptimizeParams, PreoptimizePrecompute, preoptimize},
     solver_util::{
-        NeighborKind, bay_tardiness, block_pref_spread, block_slack, gen_rangef,
-        schedule_to_solution, score_schedule, score13_block,
+        NeighborKind, bay_tardiness, block_pref_spread, gen_rangef, schedule_to_solution,
+        score_schedule, score13_block,
     },
     util::{
         rand::{RandPcg64Mcg, Random},
@@ -106,10 +106,9 @@ const GLOBAL_NEIGHBOR_PARAMS: NeighborParams = NeighborParams {
     remove_x_distance_weight_max: 3.0,
     remove_y_distance_weight_max: 3.0,
     reconstruct_workload_weight_range: (0.0, 1.0),
-    reconstruct_area_weight_range: (-0.2, 1.0),
+    reconstruct_volume_weight_range: (-0.2, 1.0),
     reconstruct_pref_spread_weight_range: (0.0, 1.0),
-    reconstruct_due_urgency_weight_range: (0.0, 1.0),
-    reconstruct_slack_urgency_weight_range: (0.0, 1.0),
+    reconstruct_limit_time_urgency_weight_range: (0.0, 1.0),
     reconstruct_order_random_weight_range: (0.0, 0.5),
     insert_y_buffer: 10,
     shift_max_x: 5,
@@ -149,21 +148,18 @@ pub struct OptimizeState {
 #[derive(Clone, Copy)]
 struct BlockOrderWeights {
     workload: f64,
-    area: f64,
+    volume: f64,
     pref_spread: f64,
-    due_urgency: f64,
-    slack_urgency: f64,
+    limit_time_urgency: f64,
     random: f64,
 }
 
 struct BlockOrderContext {
     max_workload: f64,
-    max_area: f64,
+    max_volume: f64,
     max_pref_spread: f64,
-    max_due: i64,
-    due_span: f64,
-    max_slack: i64,
-    slack_span: f64,
+    max_limit_time: i64,
+    limit_time_span: f64,
 }
 
 struct PrecedenceConstraints {
@@ -182,10 +178,9 @@ pub struct NeighborParams {
     pub remove_x_distance_weight_max: f64,
     pub remove_y_distance_weight_max: f64,
     pub reconstruct_workload_weight_range: (f64, f64),
-    pub reconstruct_area_weight_range: (f64, f64),
+    pub reconstruct_volume_weight_range: (f64, f64),
     pub reconstruct_pref_spread_weight_range: (f64, f64),
-    pub reconstruct_due_urgency_weight_range: (f64, f64),
-    pub reconstruct_slack_urgency_weight_range: (f64, f64),
+    pub reconstruct_limit_time_urgency_weight_range: (f64, f64),
     pub reconstruct_order_random_weight_range: (f64, f64),
     pub insert_y_buffer: i64,
     pub shift_max_x: i64,
@@ -218,10 +213,9 @@ fn sample_reconstruct_order_weights(
 ) -> BlockOrderWeights {
     BlockOrderWeights {
         workload: gen_rangef(rng, params.reconstruct_workload_weight_range),
-        area: gen_rangef(rng, params.reconstruct_area_weight_range),
+        volume: gen_rangef(rng, params.reconstruct_volume_weight_range),
         pref_spread: gen_rangef(rng, params.reconstruct_pref_spread_weight_range),
-        due_urgency: gen_rangef(rng, params.reconstruct_due_urgency_weight_range),
-        slack_urgency: gen_rangef(rng, params.reconstruct_slack_urgency_weight_range),
+        limit_time_urgency: gen_rangef(rng, params.reconstruct_limit_time_urgency_weight_range),
         random: gen_rangef(rng, params.reconstruct_order_random_weight_range),
     }
 }
@@ -1100,6 +1094,15 @@ fn choose_removed_blocks<R: Random>(
     selected
 }
 
+fn block_volume(problem: &Problem, block_areas: &[f64], block_id: usize) -> f64 {
+    block_areas[block_id] * problem.blocks[block_id].processing_time as f64
+}
+
+fn block_limit_time(problem: &Problem, block_id: usize) -> i64 {
+    let block = &problem.blocks[block_id];
+    block.due_date - block.processing_time
+}
+
 fn build_block_order_context(
     problem: &Problem,
     block_areas: &[f64],
@@ -1110,9 +1113,9 @@ fn build_block_order_context(
         .map(|&block_id| problem.blocks[block_id].workload as f64)
         .fold(0.0, f64::max)
         .max(1.0);
-    let max_area = order
+    let max_volume = order
         .iter()
-        .map(|&block_id| block_areas[block_id])
+        .map(|&block_id| block_volume(problem, block_areas, block_id))
         .fold(0.0, f64::max)
         .max(1.0);
     let max_pref_spread = order
@@ -1120,35 +1123,23 @@ fn build_block_order_context(
         .map(|&block_id| block_pref_spread(problem, block_id) as f64)
         .fold(0.0, f64::max)
         .max(1.0);
-    let min_due = order
+    let min_limit_time = order
         .iter()
-        .map(|&block_id| problem.blocks[block_id].due_date)
+        .map(|&block_id| block_limit_time(problem, block_id))
         .min()
         .unwrap_or(0);
-    let max_due = order
+    let max_limit_time = order
         .iter()
-        .map(|&block_id| problem.blocks[block_id].due_date)
+        .map(|&block_id| block_limit_time(problem, block_id))
         .max()
-        .unwrap_or(min_due);
-    let min_slack = order
-        .iter()
-        .map(|&block_id| block_slack(problem, block_id))
-        .min()
-        .unwrap_or(0);
-    let max_slack = order
-        .iter()
-        .map(|&block_id| block_slack(problem, block_id))
-        .max()
-        .unwrap_or(min_slack);
+        .unwrap_or(min_limit_time);
 
     BlockOrderContext {
         max_workload,
-        max_area,
+        max_volume,
         max_pref_spread,
-        max_due,
-        due_span: (max_due - min_due).max(1) as f64,
-        max_slack,
-        slack_span: (max_slack - min_slack).max(1) as f64,
+        max_limit_time,
+        limit_time_span: (max_limit_time - min_limit_time).max(1) as f64,
     }
 }
 
@@ -1161,16 +1152,15 @@ fn block_order_score(
 ) -> f64 {
     let block = &problem.blocks[block_id];
     let workload_norm = block.workload as f64 / ctx.max_workload;
-    let area_norm = block_areas[block_id] / ctx.max_area;
+    let volume_norm = block_volume(problem, block_areas, block_id) / ctx.max_volume;
     let pref_spread_norm = block_pref_spread(problem, block_id) as f64 / ctx.max_pref_spread;
-    let due_urgency = (ctx.max_due - block.due_date) as f64 / ctx.due_span;
-    let slack_urgency = (ctx.max_slack - block_slack(problem, block_id)) as f64 / ctx.slack_span;
+    let limit_time_urgency =
+        (ctx.max_limit_time - block_limit_time(problem, block_id)) as f64 / ctx.limit_time_span;
 
     weights.workload * workload_norm
-        + weights.area * area_norm
+        + weights.volume * volume_norm
         + weights.pref_spread * pref_spread_norm
-        + weights.due_urgency * due_urgency
-        + weights.slack_urgency * slack_urgency
+        + weights.limit_time_urgency * limit_time_urgency
 }
 
 fn sort_block_order<R: Random>(
@@ -1190,9 +1180,14 @@ fn sort_block_order<R: Random>(
         let score_b = block_order_score(problem, block_areas, &ctx, weights, b) + random_scores[b];
         score_b
             .total_cmp(&score_a)
-            .then(block_slack(problem, a).cmp(&block_slack(problem, b)))
-            .then(problem.blocks[a].due_date.cmp(&problem.blocks[b].due_date))
-            .then(block_areas[b].total_cmp(&block_areas[a]))
+            .then(block_limit_time(problem, a).cmp(&block_limit_time(problem, b)))
+            .then(
+                block_volume(problem, block_areas, b).total_cmp(&block_volume(
+                    problem,
+                    block_areas,
+                    a,
+                )),
+            )
             .then(problem.blocks[b].workload.cmp(&problem.blocks[a].workload))
             .then(block_pref_spread(problem, b).cmp(&block_pref_spread(problem, a)))
             .then(a.cmp(&b))
