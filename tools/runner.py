@@ -17,9 +17,11 @@ import sys
 import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from threading import Thread
+from typing import Any, Iterator
 
 VERSION_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 CSV_COLUMNS = [
@@ -191,21 +193,60 @@ def write_json(path: Path, data: Any) -> None:
     )
 
 
-def save_run_artifacts(
-    root: Path,
-    version: str,
-    timelimit: float,
-    testcase: str,
-    meta: dict[str, Any],
-    solution: Any | None,
-    result: dict[str, Any] | None,
-    error: str,
+def prepare_run_artifact_dir(
+    root: Path, version: str, timelimit: float, testcase: str
 ) -> Path:
     output_dir = root / "log" / version / timelimit_dir_name(timelimit) / testcase
     if output_dir.exists():
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True)
+    return output_dir
 
+
+@contextmanager
+def tee_stderr(path: Path) -> Iterator[None]:
+    saved_stderr_fd = os.dup(2)
+    read_fd, write_fd = os.pipe()
+    log_file = path.open("wb", buffering=0)
+    pump_error: list[BaseException] = []
+
+    def pump() -> None:
+        try:
+            while chunk := os.read(read_fd, 65536):
+                remaining = memoryview(chunk)
+                while remaining:
+                    remaining = remaining[os.write(saved_stderr_fd, remaining) :]
+                log_file.write(chunk)
+        except BaseException as exc:
+            pump_error.append(exc)
+        finally:
+            os.close(read_fd)
+            log_file.close()
+
+    thread = Thread(target=pump, daemon=True)
+    thread.start()
+    try:
+        sys.stderr.flush()
+        os.dup2(write_fd, 2)
+        os.close(write_fd)
+        yield
+    finally:
+        sys.stderr.flush()
+        os.dup2(saved_stderr_fd, 2)
+        thread.join()
+        os.close(saved_stderr_fd)
+        if pump_error:
+            print(f"warning: failed to tee stderr: {pump_error[0]}", file=sys.stderr)
+
+
+def save_run_artifacts(
+    output_dir: Path,
+    meta: dict[str, Any],
+    solution: Any | None,
+    result: dict[str, Any] | None,
+    error: str,
+) -> None:
+    (output_dir / "stderr.log").touch(exist_ok=True)
     write_json(output_dir / "meta.json", meta)
     if solution is not None:
         write_json(output_dir / "solution.json", solution)
@@ -213,7 +254,6 @@ def save_run_artifacts(
         write_json(output_dir / "result.json", result)
     if error:
         (output_dir / "error.txt").write_text(error + "\n", encoding="utf-8")
-    return output_dir
 
 
 def run_case(
@@ -252,6 +292,7 @@ def run_case(
     solution: Any | None = None
     result: dict[str, Any] | None = None
     testcase = testcase_name(None, case_path)
+    output_dir: Path | None = None
 
     started = time.perf_counter()
     try:
@@ -259,10 +300,12 @@ def run_case(
             prob_info = json.load(f)
         testcase = testcase_name(prob_info, case_path)
         row["n_blocks"] = len(prob_info.get("blocks", []))
+        output_dir = prepare_run_artifact_dir(root, version, timelimit, testcase)
 
-        module = load_myalgorithm(myalgorithm_path)
-        solution = module.algorithm(prob_info, timelimit)
-        result = check_feasibility(prob_info, solution)
+        with tee_stderr(output_dir / "stderr.log"):
+            module = load_myalgorithm(myalgorithm_path)
+            solution = module.algorithm(prob_info, timelimit)
+            result = check_feasibility(prob_info, solution)
         elapsed = time.perf_counter() - started
 
         row.update(
@@ -297,11 +340,10 @@ def run_case(
         "objective": row["objective"] if row["objective"] != "" else None,
         "error": row["error"],
     }
+    if output_dir is None:
+        output_dir = prepare_run_artifact_dir(root, version, timelimit, testcase)
     save_run_artifacts(
-        root=root,
-        version=version,
-        timelimit=timelimit,
-        testcase=testcase,
+        output_dir=output_dir,
         meta=meta,
         solution=solution,
         result=result,

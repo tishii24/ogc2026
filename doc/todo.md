@@ -2,9 +2,17 @@
 - Pの設定が良くない
 - preoptimizeが微妙そう
 
+課題
+- 余裕を持ってtardiness=0
+  - bayを緩和ソルバーで求めた方が、最適解を得やすい
+- tardiness=0になるかならないか
+  - bayを固定しない方がtardinessを0にできる場合がある
+  - global-searchになってから初めてtardinessを0にするため、事前にbayごとに最適化するメリットが薄い
+- 頑張ってもtardiness>0
+  - bayを固定しない方がtardinessを小さくできる場合がある
+
 todo:
 - refactor
-- build-optimize-stateの並列化
 - 弱いケースの分析
 - 温度の確認
 - Pの外側ループ

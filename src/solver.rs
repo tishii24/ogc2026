@@ -32,8 +32,13 @@ pub use optimize::{BayAnnealing, BayOptimizeState, GlobalAnnealing};
 
 const RNG_SEED: u64 = 1;
 
+const INITIAL_PREOPTIMIZE_TIME_RATIO: f64 = 0.1;
+const INITIAL_PREOPTIMIZE_MAX_SECONDS: f64 = 10.0;
+const INITIAL_BUILD_OPTIMIZE_TIME_RATIO: f64 = 0.1;
+const INITIAL_BUILD_OPTIMIZE_MAX_SECONDS: f64 = 10.0;
+const BAY_OPTIMIZE_TIME_RATIO: f64 = 0.1;
+const BAY_OPTIMIZE_MAX_SECONDS: f64 = 10.0;
 const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
-const GLOBAL_ANNEALING_REMAINING_SECONDS: f64 = 20.;
 
 pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
 pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
@@ -41,10 +46,6 @@ pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
 
 const INITIAL_PREOPTIMIZE_ALPHA: f64 = 1.0;
 const INITIAL_PREOPTIMIZE_BETA: f64 = 0.0;
-const INITIAL_PREOPTIMIZE_TIME_RATIO: f64 = 0.1;
-const INITIAL_PREOPTIMIZE_MAX_SECONDS: f64 = 10.0;
-const INITIAL_BUILD_OPTIMIZE_TIME_RATIO: f64 = 0.1;
-const INITIAL_BUILD_OPTIMIZE_MAX_SECONDS: f64 = 10.0;
 pub const PREOPTIMIZE_DISTANCE_WEIGHT: f64 = 0.0;
 pub const PREOPTIMIZE_RNG_SEED: u64 = 2;
 pub const PREOPTIMIZE_SWAP_PROBABILITY: f64 = 0.15;
@@ -53,16 +54,11 @@ pub const PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY: f64 = 0.75;
 pub const PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS: usize = 8;
 pub const PREOPTIMIZE_MAX_TIME_SHIFT: i64 = 10;
 
-pub fn preoptimize_annealing_params(problem: &Problem, initial_score: f64) -> AnnealingParams {
-    let start_temperature = (initial_score / problem.blocks.len() as f64)
-        .max(problem.weights.w1)
-        .max(problem.weights.w3)
-        .max(PREOPTIMIZE_DISTANCE_WEIGHT)
-        .max(1.0);
+pub fn preoptimize_annealing_params(problem: &Problem) -> AnnealingParams {
     AnnealingParams {
         exchange_interval: 1_000_000,
-        start_temperature,
-        end_temperature: start_temperature * 1e-4,
+        start_temperature: (1e-2 * problem.weights.w1).max(1e-9),
+        end_temperature: (1e-4 * problem.weights.w1).max(1e-9),
         worker_temperature_scale: 0.0,
         tabu_capacity: 4096,
     }
@@ -70,7 +66,7 @@ pub fn preoptimize_annealing_params(problem: &Problem, initial_score: f64) -> An
 
 pub fn global_annealing_params(_problem: &Problem) -> AnnealingParams {
     AnnealingParams {
-        exchange_interval: 2048,
+        exchange_interval: 2_000,
         start_temperature: 1e1,
         end_temperature: 1e-2,
         worker_temperature_scale: 10.0,
@@ -80,7 +76,7 @@ pub fn global_annealing_params(_problem: &Problem) -> AnnealingParams {
 
 pub fn bay_annealing_params(problem: &Problem) -> AnnealingParams {
     AnnealingParams {
-        exchange_interval: 2048,
+        exchange_interval: 10_000,
         start_temperature: (1e-2 * problem.weights.w1).max(1e-9),
         end_temperature: (1e-4 * problem.weights.w1).max(1e-9),
         worker_temperature_scale: 1.0,
@@ -279,7 +275,11 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
         .ok_or_else(|| "failed to build initial optimize state".to_string())?;
     log!(timer, "initial optimize score: {:.3}", initial.score);
 
-    let bay_deadline = deadline - GLOBAL_ANNEALING_REMAINING_SECONDS;
+    let bay_start = timer.elapsed_seconds();
+    let bay_time_limit =
+        phase_time_limit(timelimit, BAY_OPTIMIZE_TIME_RATIO, BAY_OPTIMIZE_MAX_SECONDS)
+            .min((deadline - bay_start).max(0.0));
+    let bay_deadline = bay_start + bay_time_limit;
     let initial = BayAnnealing::new(problem, &pre, &initial_abstract, timer).run(
         initial,
         bay_deadline,
