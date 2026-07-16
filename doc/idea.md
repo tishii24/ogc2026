@@ -67,3 +67,7 @@ s = 抽象解（bay-id, entry-t）
   - 各workerはbayごとにshared bestの更新と、一定周期でbayごとのshared bestを見に行ってbestの取得を行う
   - 各workerはbayをランダムに選び、近傍の適用をすることを1ターンとする
 5. bay間の移動も許してannealing
+
+外側のPループはstateを引き継ぐのが大変そうなのでやらない
+代わりに、preoptimizeの近傍を追加・評価を正確にして、ちょっときつめのPを（なんとか）推定して使うようにする
+これによって、小さいケースでは厳密な解が得られ、大きいケースではtardinessを最小化する解が得られているはずである

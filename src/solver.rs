@@ -53,11 +53,16 @@ pub const PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY: f64 = 0.75;
 pub const PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS: usize = 8;
 pub const PREOPTIMIZE_MAX_TIME_SHIFT: i64 = 10;
 
-pub fn preoptimize_annealing_params(problem: &Problem) -> AnnealingParams {
+pub fn preoptimize_annealing_params(problem: &Problem, initial_score: f64) -> AnnealingParams {
+    let start_temperature = (initial_score / problem.blocks.len() as f64)
+        .max(problem.weights.w1)
+        .max(problem.weights.w3)
+        .max(PREOPTIMIZE_DISTANCE_WEIGHT)
+        .max(1.0);
     AnnealingParams {
         exchange_interval: 1_000_000,
-        start_temperature: problem.weights.w1,
-        end_temperature: problem.weights.w1 * 1e-4,
+        start_temperature,
+        end_temperature: start_temperature * 1e-4,
         worker_temperature_scale: 0.0,
         tabu_capacity: 4096,
     }
@@ -65,7 +70,7 @@ pub fn preoptimize_annealing_params(problem: &Problem) -> AnnealingParams {
 
 pub fn global_annealing_params(_problem: &Problem) -> AnnealingParams {
     AnnealingParams {
-        exchange_interval: 2_000,
+        exchange_interval: 2048,
         start_temperature: 1e1,
         end_temperature: 1e-2,
         worker_temperature_scale: 10.0,
@@ -75,9 +80,9 @@ pub fn global_annealing_params(_problem: &Problem) -> AnnealingParams {
 
 pub fn bay_annealing_params(problem: &Problem) -> AnnealingParams {
     AnnealingParams {
-        exchange_interval: 2_000,
-        start_temperature: problem.weights.w1 * 1e-2,
-        end_temperature: problem.weights.w1 * 1e-4,
+        exchange_interval: 2048,
+        start_temperature: (1e-2 * problem.weights.w1).max(1e-9),
+        end_temperature: (1e-4 * problem.weights.w1).max(1e-9),
         worker_temperature_scale: 1.0,
         tabu_capacity: 4096,
     }
