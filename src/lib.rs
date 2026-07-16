@@ -12,6 +12,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+pub const MAX_WORKER_COUNT: usize = 4;
+
 #[derive(Debug, Deserialize)]
 pub struct Problem {
     pub bays: Vec<Bay>,

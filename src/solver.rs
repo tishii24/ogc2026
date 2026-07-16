@@ -24,12 +24,11 @@ macro_rules! log {
     };
 }
 
-pub mod annealing;
+pub mod optimize;
 
-pub use annealing::{BayAnnealing, BayOptimizeState, GlobalAnnealing};
+pub use optimize::{BayAnnealing, BayOptimizeState, GlobalAnnealing};
 
 const RNG_SEED: u64 = 1;
-const MAX_WORKER_COUNT: usize = 4;
 
 const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
 const GLOBAL_ANNEALING_REMAINING_SECONDS: f64 = 20.;
