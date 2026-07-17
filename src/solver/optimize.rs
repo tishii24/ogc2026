@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
-    annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingParams, AnnealingState},
+    annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
+    params::{BayOptimizeParams, GlobalOptimizeParams},
     solver_util::sample_neighbor,
 };
 
@@ -67,8 +68,10 @@ impl<'a> BayAnnealing<'a> {
         &self,
         initial: OptimizeState,
         deadline: f64,
-        params: AnnealingParams,
+        params: &BayOptimizeParams,
+        neighbor_params: &NeighborParams,
         seed: u64,
+        max_worker_count: usize,
     ) -> OptimizeState {
         if self.timer.elapsed_seconds() >= deadline {
             return initial;
@@ -91,16 +94,24 @@ impl<'a> BayAnnealing<'a> {
                 }
             })
             .collect();
-        let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
+        let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
         let delegate = BayAnnealingDelegate {
             problem: self.problem,
             pre: self.pre,
             constraints: &self.constraints,
             target_tardiness: &self.target_tardiness,
             initial_states,
-            params: &BAY_NEIGHBOR_PARAMS,
+            exchange_threshold_w1_scale: params.exchange_threshold_w1_scale,
+            params: neighbor_params,
         };
-        Annealer::new(deadline, worker_count, seed, params, delegate).run(self.timer)
+        Annealer::new(
+            deadline,
+            worker_count,
+            seed,
+            params.annealing.make(self.problem),
+            delegate,
+        )
+        .run(self.timer)
     }
 }
 
@@ -110,7 +121,8 @@ struct BayAnnealingDelegate<'a> {
     constraints: &'a PrecedenceConstraints,
     target_tardiness: &'a [i64],
     initial_states: Vec<BayOptimizeState>,
-    params: &'static NeighborParams,
+    exchange_threshold_w1_scale: f64,
+    params: &'a NeighborParams,
 }
 
 impl AnnealingDelegate for BayAnnealingDelegate<'_> {
@@ -130,7 +142,7 @@ impl AnnealingDelegate for BayAnnealingDelegate<'_> {
     }
 
     fn exchange_threshold(&self, _domain: usize) -> f64 {
-        2.0 * self.problem.weights.w1
+        self.exchange_threshold_w1_scale * self.problem.weights.w1
     }
 
     fn propose(
@@ -141,7 +153,8 @@ impl AnnealingDelegate for BayAnnealingDelegate<'_> {
         rng: &mut RandPcg64Mcg,
     ) -> AnnealingAttempt<Self::State> {
         debug_assert_eq!(domain, current.bay_id);
-        let neighbor = sample_neighbor(rng, self.params.probabilities);
+        let probabilities = self.params.probabilities();
+        let neighbor = sample_neighbor(rng, &probabilities);
         let blocks = match neighbor {
             NeighborKind::LargeReconstruct => try_bay_large_reconstruct(
                 self.problem,
@@ -234,10 +247,13 @@ impl<'a> GlobalAnnealing<'a> {
         &self,
         initial: OptimizeState,
         deadline: f64,
-        params: AnnealingParams,
+        params: &GlobalOptimizeParams,
+        neighbor_params: &NeighborParams,
+        constrained_neighbor_params: &NeighborParams,
         seed: u64,
+        max_worker_count: usize,
     ) -> OptimizeState {
-        let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
+        let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
         let start_time = self.timer.elapsed_seconds();
         let delegate = GlobalAnnealingDelegate {
             problem: self.problem,
@@ -245,11 +261,20 @@ impl<'a> GlobalAnnealing<'a> {
             constraints: &self.constraints,
             timer: self.timer,
             constraint_deadline: start_time
-                + (deadline - start_time).max(0.0) * GLOBAL_CONSTRAINT_TIME_RATIO,
+                + (deadline - start_time).max(0.0) * params.constraint_time_ratio,
             initial,
-            params: &GLOBAL_NEIGHBOR_PARAMS,
+            exchange_threshold_w1_scale: params.exchange_threshold_w1_scale,
+            constrained_neighbor_params,
+            params: neighbor_params,
         };
-        Annealer::new(deadline, worker_count, seed, params, delegate).run(self.timer)
+        Annealer::new(
+            deadline,
+            worker_count,
+            seed,
+            params.annealing.make(),
+            delegate,
+        )
+        .run(self.timer)
     }
 }
 
@@ -260,7 +285,9 @@ struct GlobalAnnealingDelegate<'a> {
     timer: Timer,
     constraint_deadline: f64,
     initial: OptimizeState,
-    params: &'static NeighborParams,
+    exchange_threshold_w1_scale: f64,
+    constrained_neighbor_params: &'a NeighborParams,
+    params: &'a NeighborParams,
 }
 
 impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
@@ -280,7 +307,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
     }
 
     fn exchange_threshold(&self, _domain: usize) -> f64 {
-        self.problem.weights.w1
+        self.exchange_threshold_w1_scale * self.problem.weights.w1
     }
 
     fn is_finished(&self, _domain: usize, _state: &Self::State) -> bool {
@@ -297,11 +324,11 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
         let constraints =
             (self.timer.elapsed_seconds() < self.constraint_deadline).then_some(self.constraints);
         let probabilities = if constraints.is_some() {
-            BAY_NEIGHBOR_PROBS
+            self.constrained_neighbor_params.probabilities()
         } else {
-            self.params.probabilities
+            self.params.probabilities()
         };
-        let neighbor = sample_neighbor(rng, probabilities);
+        let neighbor = sample_neighbor(rng, &probabilities);
         let blocks = match neighbor {
             NeighborKind::LargeReconstruct => try_large_reconstruct(
                 self.problem,

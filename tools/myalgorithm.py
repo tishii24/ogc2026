@@ -48,6 +48,13 @@ def load_check_feasibility():
     return check_feasibility
 
 
+def locate_params() -> pathlib.Path:
+    env_path = os.environ.get("OGC_PARAMS_PATH")
+    if env_path:
+        return pathlib.Path(env_path).resolve()
+    return pathlib.Path(__file__).resolve().parent / "params.yaml"
+
+
 def locate_solver() -> pathlib.Path:
     env_path = os.environ.get("OGC_SOLVER_PATH")
     if env_path:
@@ -112,6 +119,7 @@ class SolverSupervisor:
 
     async def run(self) -> dict[str, Any]:
         solver = locate_solver()
+        params = locate_params()
         try:
             solver.chmod(solver.stat().st_mode | 0o755)
         except OSError:
@@ -123,6 +131,8 @@ class SolverSupervisor:
             "--interactive",
             "--timelimit",
             str(solver_timelimit),
+            "--params",
+            str(params),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

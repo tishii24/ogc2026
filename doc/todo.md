@@ -15,12 +15,14 @@
 todo:
 - refactor
 - 推移辺を削除する
-- bayでも途中から制約を無視する or globalでも途中まで制約を考慮する
+- bay.area * block-count に比例してリソースを与える
+- 温度の調整
 - preoptimizeの改善
   - 初期解
-- 温度の調整
+  - alpha,betaの値によって大きくスコアが変わる
+  -　alpha,beta以外の指標が欲しい
+- bayでも途中から制約を無視する or globalでも途中まで制約を考慮する
 - bay-annealingでもin-bay swapを使う
-- bay.area * block-count に比例してリソースを与える
 
 todo:
 - pre.block-areaの修正

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
+import hashlib
 import importlib.util
 import json
 import os
@@ -58,6 +59,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("version", help="Version directory under solutions/")
     parser.add_argument("--case", help="Problem JSON path for a single case.")
+    parser.add_argument(
+        "--params",
+        help="YAML parameter file. default: solutions/{version}/params.yaml",
+    )
     parser.add_argument(
         "--suite",
         help='Suite JSON path. Format: {"cases": ["train/prob_1.json", ...]}. default: train/*.json',
@@ -241,12 +246,14 @@ def tee_stderr(path: Path) -> Iterator[None]:
 
 def save_run_artifacts(
     output_dir: Path,
+    params_path: Path,
     meta: dict[str, Any],
     solution: Any | None,
     result: dict[str, Any] | None,
     error: str,
 ) -> None:
     (output_dir / "stderr.log").touch(exist_ok=True)
+    shutil.copy2(params_path, output_dir / "params.yaml")
     write_json(output_dir / "meta.json", meta)
     if solution is not None:
         write_json(output_dir / "solution.json", solution)
@@ -263,8 +270,12 @@ def run_case(
     check_feasibility,
     case_path: Path,
     timelimit: float,
+    params_path: Path,
 ) -> dict[str, Any]:
     apply_thread_limit()
+    params_path = params_path.resolve()
+    os.environ["OGC_PARAMS_PATH"] = str(params_path)
+    params_sha256 = hashlib.sha256(params_path.read_bytes()).hexdigest()
     timestamp = datetime.now().isoformat(timespec="seconds")
     rel_case = (
         str(case_path.relative_to(root))
@@ -334,6 +345,8 @@ def run_case(
         "case": rel_case,
         "testcase": testcase,
         "timelimit": timelimit,
+        "params_path": str(params_path),
+        "params_sha256": params_sha256,
         "elapsed": float(row["elapsed"]) if row["elapsed"] else None,
         "feasible": bool(row["feasible"]),
         "stage": row["stage"],
@@ -344,6 +357,7 @@ def run_case(
         output_dir = prepare_run_artifact_dir(root, version, timelimit, testcase)
     save_run_artifacts(
         output_dir=output_dir,
+        params_path=params_path,
         meta=meta,
         solution=solution,
         result=result,
@@ -366,8 +380,8 @@ def append_score(root: Path, row: dict[str, Any]) -> None:
         writer.writerow(row)
 
 
-def run_case_worker(args: tuple[str, str, str, str, float]) -> dict[str, Any]:
-    root_s, version, myalgorithm_path_s, case_path_s, timelimit = args
+def run_case_worker(args: tuple[str, str, str, str, float, str]) -> dict[str, Any]:
+    root_s, version, myalgorithm_path_s, case_path_s, timelimit, params_path_s = args
     root = Path(root_s)
     check_feasibility = load_checker(root)
     return run_case(
@@ -377,6 +391,7 @@ def run_case_worker(args: tuple[str, str, str, str, float]) -> dict[str, Any]:
         check_feasibility=check_feasibility,
         case_path=Path(case_path_s),
         timelimit=timelimit,
+        params_path=Path(params_path_s),
     )
 
 
@@ -402,12 +417,21 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    myalgorithm_path = root / "solutions" / args.version / "myalgorithm.py"
+    solution_dir = root / "solutions" / args.version
+    myalgorithm_path = solution_dir / "myalgorithm.py"
     if not myalgorithm_path.is_file():
         print(
             f"error: {myalgorithm_path} not found. Run tools/composer.py first.",
             file=sys.stderr,
         )
+        return 1
+
+    params_path = Path(args.params) if args.params else solution_dir / "params.yaml"
+    if not params_path.is_absolute():
+        params_path = root / params_path
+    params_path = params_path.resolve()
+    if not params_path.is_file():
+        print(f"error: params file not found: {params_path}", file=sys.stderr)
         return 1
 
     try:
@@ -434,6 +458,7 @@ def main() -> int:
                 check_feasibility,
                 case_path,
                 args.timelimit,
+                params_path,
             )
             append_score(root, row)
             if row["feasible"]:
@@ -447,6 +472,7 @@ def main() -> int:
                 str(myalgorithm_path),
                 str(case_path),
                 args.timelimit,
+                str(params_path),
             )
             for case_path in cases
         ]

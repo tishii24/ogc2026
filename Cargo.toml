@@ -8,4 +8,5 @@ geo = "0.30"
 rayon = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 rand_pcg = "=0.9.0"

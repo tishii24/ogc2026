@@ -1,8 +1,8 @@
 use crate::{
-    annealing::AnnealingParams,
     insert::{InsertSearchParams, insert_greedy, try_place_block},
+    params::{NeighborParams, SolverParams},
     precompute::Precompute,
-    preoptimize::{PreoptimizeParams, PreoptimizePrecompute, preoptimize},
+    preoptimize::{PreoptimizePrecompute, preoptimize},
     solver_util::{
         NeighborKind, bay_tardiness, block_pref_spread, gen_rangef, schedule_to_solution,
         score_schedule, score13_block,
@@ -29,103 +29,6 @@ macro_rules! log {
 pub mod optimize;
 
 pub use optimize::{BayAnnealing, BayOptimizeState, GlobalAnnealing};
-
-const RNG_SEED: u64 = 1;
-
-const INITIAL_PREOPTIMIZE_TIME_RATIO: f64 = 0.1;
-const INITIAL_PREOPTIMIZE_MAX_SECONDS: f64 = 10.0;
-const INITIAL_BUILD_OPTIMIZE_TIME_RATIO: f64 = 0.1;
-const INITIAL_BUILD_OPTIMIZE_MAX_SECONDS: f64 = 10.0;
-const BAY_OPTIMIZE_TIME_RATIO: f64 = 0.3;
-const GLOBAL_CONSTRAINT_TIME_RATIO: f64 = 0.5;
-const LOCAL_SEARCH_TIME_BUFFER_SECONDS: f64 = 3.;
-
-pub const PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT: usize = 100;
-pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K: usize = 16;
-pub const PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA: i64 = 3;
-
-const INITIAL_PREOPTIMIZE_ALPHA: f64 = 0.5;
-const INITIAL_PREOPTIMIZE_BETA: f64 = 0.5;
-const INITIAL_PREOPTIMIZE_CONGESTION_WEIGHT: f64 = 1e-3;
-
-pub fn preoptimize_annealing_params(problem: &Problem, initial_score: f64) -> AnnealingParams {
-    let start_temperature = (initial_score / problem.blocks.len() as f64)
-        .max(problem.weights.w1)
-        .max(problem.weights.w3)
-        .max(1.0);
-    AnnealingParams {
-        exchange_interval: 1_000_000,
-        start_temperature,
-        end_temperature: start_temperature * 1e-4,
-        worker_temperature_scale: 0.0,
-        tabu_capacity: 4096,
-    }
-}
-
-pub fn global_annealing_params(_problem: &Problem) -> AnnealingParams {
-    AnnealingParams {
-        exchange_interval: 2048,
-        start_temperature: 1e1,
-        end_temperature: 1e-2,
-        worker_temperature_scale: 10.0,
-        tabu_capacity: 4096,
-    }
-}
-
-pub fn bay_annealing_params(problem: &Problem) -> AnnealingParams {
-    AnnealingParams {
-        exchange_interval: 2048,
-        start_temperature: (1e-2 * problem.weights.w1).max(1e-9),
-        end_temperature: (1e-4 * problem.weights.w1).max(1e-9),
-        worker_temperature_scale: 1.0,
-        tabu_capacity: 4096,
-    }
-}
-
-const GLOBAL_NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
-    (NeighborKind::LargeReconstruct, 0.2),
-    (NeighborKind::Shift, 8.0),
-    (NeighborKind::Move, 0.1),
-    (NeighborKind::Rotate, 8.0),
-    (NeighborKind::Swap, 3.0),
-];
-const BAY_NEIGHBOR_PROBS: &[(NeighborKind, f64)] = &[
-    (NeighborKind::LargeReconstruct, 0.2),
-    (NeighborKind::Shift, 8.0),
-    (NeighborKind::Move, 0.1),
-    (NeighborKind::Rotate, 8.0),
-    (NeighborKind::Swap, 0.0),
-];
-
-const GLOBAL_NEIGHBOR_PARAMS: NeighborParams = NeighborParams {
-    probabilities: GLOBAL_NEIGHBOR_PROBS,
-    min_removed_blocks: 7,
-    max_removed_blocks: 13,
-    remove_pool_factor: 4,
-    remove_count_sample_power: 2.0,
-    remove_seed_per_block: 4,
-    remove_random_seed_ratio: 0.25,
-    remove_x_distance_weight_max: 3.0,
-    remove_y_distance_weight_max: 3.0,
-    reconstruct_workload_weight_range: (0.0, 1.0),
-    reconstruct_volume_weight_range: (-0.2, 1.0),
-    reconstruct_pref_spread_weight_range: (0.0, 1.0),
-    reconstruct_limit_time_urgency_weight_range: (0.0, 1.0),
-    reconstruct_order_random_weight_range: (0.0, 0.5),
-    insert_y_buffer: 10,
-    shift_max_x: 5,
-    shift_max_y: 5,
-    rotate_max_shift_delta: 2,
-    swap_neighbor_top_k: 32,
-    swap_max_shift_delta: 2,
-    move_sample_blocks: 16,
-    move_small_pool_size: 8,
-};
-
-const BAY_NEIGHBOR_PARAMS: NeighborParams = NeighborParams {
-    probabilities: BAY_NEIGHBOR_PROBS,
-    ..GLOBAL_NEIGHBOR_PARAMS
-};
 
 const NEIGHBOR_KINDS: &[&str] = &["Large", "Shift", "Move", "Rotate", "Swap"];
 
@@ -169,31 +72,6 @@ struct PrecedenceConstraints {
     afters: Vec<Vec<usize>>,
 }
 
-pub struct NeighborParams {
-    pub probabilities: &'static [(NeighborKind, f64)],
-    pub min_removed_blocks: usize,
-    pub max_removed_blocks: usize,
-    pub remove_pool_factor: usize,
-    pub remove_count_sample_power: f64,
-    pub remove_seed_per_block: usize,
-    pub remove_random_seed_ratio: f64,
-    pub remove_x_distance_weight_max: f64,
-    pub remove_y_distance_weight_max: f64,
-    pub reconstruct_workload_weight_range: (f64, f64),
-    pub reconstruct_volume_weight_range: (f64, f64),
-    pub reconstruct_pref_spread_weight_range: (f64, f64),
-    pub reconstruct_limit_time_urgency_weight_range: (f64, f64),
-    pub reconstruct_order_random_weight_range: (f64, f64),
-    pub insert_y_buffer: i64,
-    pub shift_max_x: i64,
-    pub shift_max_y: i64,
-    pub rotate_max_shift_delta: i64,
-    pub swap_neighbor_top_k: usize,
-    pub swap_max_shift_delta: i64,
-    pub move_sample_blocks: usize,
-    pub move_small_pool_size: usize,
-}
-
 pub fn to_preoptimize_state(state: &OptimizeState) -> PreoptimizeState {
     let mut ordered = state.blocks.clone();
     ordered.sort_unstable_by_key(|scheduled| scheduled.block_id);
@@ -226,31 +104,35 @@ fn phase_time_limit(timelimit: f64, ratio: f64, max_seconds: f64) -> f64 {
     (timelimit * ratio).min(max_seconds).max(1e-4)
 }
 
-pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution, String> {
-    let deadline = timelimit - LOCAL_SEARCH_TIME_BUFFER_SECONDS;
+pub fn solve(
+    problem: &Problem,
+    timelimit: f64,
+    timer: Timer,
+    params: &SolverParams,
+) -> Result<Solution, String> {
+    let deadline = timelimit - params.runtime.local_search_time_buffer_seconds;
 
     log!(timer, "building preoptimize precompute...");
     let preoptimize_pre = PreoptimizePrecompute::build(problem)?;
     log!(timer, "preoptimize precompute built");
     log!(timer, "building precompute...");
-    let pre = Precompute::build(problem);
+    let pre = Precompute::build(problem, &params.precompute);
     log!(timer, "precompute built");
 
     let initial_time_limit = phase_time_limit(
         timelimit,
-        INITIAL_PREOPTIMIZE_TIME_RATIO,
-        INITIAL_PREOPTIMIZE_MAX_SECONDS,
+        params.phases.initial_preoptimize.time_ratio,
+        params.phases.initial_preoptimize.max_seconds,
     )
     .min((deadline - timer.elapsed_seconds()).max(1e-4));
     let initial_abstract = preoptimize(
         problem,
         &preoptimize_pre,
-        PreoptimizeParams {
-            alpha: INITIAL_PREOPTIMIZE_ALPHA,
-            beta: INITIAL_PREOPTIMIZE_BETA,
-            congestion_weight: INITIAL_PREOPTIMIZE_CONGESTION_WEIGHT,
-            time_limit: initial_time_limit,
-        },
+        &params.preoptimize,
+        &params.global_neighbor,
+        initial_time_limit,
+        params.runtime.worker_count,
+        params.runtime.preoptimize_seed,
     )?;
     log!(
         timer,
@@ -259,30 +141,46 @@ pub fn solve(problem: &Problem, timelimit: f64, timer: Timer) -> Result<Solution
     );
     let build_time_limit = phase_time_limit(
         timelimit,
-        INITIAL_BUILD_OPTIMIZE_TIME_RATIO,
-        INITIAL_BUILD_OPTIMIZE_MAX_SECONDS,
+        params.phases.initial_build.time_ratio,
+        params.phases.initial_build.max_seconds,
     )
     .min((deadline - timer.elapsed_seconds()).max(1e-4));
-    let initial = build_optimize_state(problem, &pre, &initial_abstract, build_time_limit, timer)
-        .ok_or_else(|| "failed to build initial optimize state".to_string())?;
+    let initial = build_optimize_state(
+        problem,
+        &pre,
+        &initial_abstract,
+        build_time_limit,
+        timer,
+        params.runtime.worker_count,
+        params.runtime.solver_seed,
+        params.runtime.build_seed_offset,
+        &params.bay_neighbor,
+    )
+    .ok_or_else(|| "failed to build initial optimize state".to_string())?;
     log!(timer, "initial optimize score: {:.3}", initial.score);
 
     let bay_start = timer.elapsed_seconds();
-    let bay_time_limit = (timelimit * BAY_OPTIMIZE_TIME_RATIO).min((deadline - bay_start).max(0.0));
+    let bay_time_limit =
+        (timelimit * params.phases.bay_optimize_time_ratio).min((deadline - bay_start).max(0.0));
     let bay_deadline = bay_start + bay_time_limit;
     let initial = BayAnnealing::new(problem, &pre, &initial_abstract, timer).run(
         initial,
         bay_deadline,
-        bay_annealing_params(problem),
-        RNG_SEED,
+        &params.bay_optimize,
+        &params.bay_neighbor,
+        params.runtime.solver_seed,
+        params.runtime.worker_count,
     );
     log!(timer, "bay annealing score: {:.3}", initial.score);
 
     let best = GlobalAnnealing::new(problem, &pre, &initial_abstract, timer).run(
         initial,
         deadline,
-        global_annealing_params(problem),
-        RNG_SEED,
+        &params.global_optimize,
+        &params.global_neighbor,
+        &params.bay_neighbor,
+        params.runtime.solver_seed,
+        params.runtime.worker_count,
     );
     Ok(schedule_to_solution(&best.blocks))
 }
@@ -293,6 +191,10 @@ pub fn build_optimize_state(
     state: &PreoptimizeState,
     time_limit: f64,
     timer: Timer,
+    max_worker_count: usize,
+    seed: u64,
+    seed_offset: u64,
+    neighbor_params: &NeighborParams,
 ) -> Option<OptimizeState> {
     let constraints = build_precedence_constraints(problem, state);
 
@@ -308,7 +210,7 @@ pub fn build_optimize_state(
         .collect();
 
     let build_deadline = timer.elapsed_seconds() + time_limit;
-    let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
+    let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
 
     let seen_order_hashes: Vec<_> = (0..problem.bays.len())
         .map(|_| Mutex::new(HashSet::new()))
@@ -320,8 +222,10 @@ pub fn build_optimize_state(
     let worker_trials: Vec<_> = (0..worker_count)
         .into_par_iter()
         .map(|worker_id| {
-            let mut rng =
-                RandPcg64Mcg::new(RNG_SEED.wrapping_add(20_000).wrapping_add(worker_id as u64));
+            let mut rng = RandPcg64Mcg::new(
+                seed.wrapping_add(seed_offset)
+                    .wrapping_add(worker_id as u64),
+            );
             let mut turn = worker_id;
             let mut trials = 0usize;
 
@@ -329,7 +233,7 @@ pub fn build_optimize_state(
                 let bay_id = active_bays[turn % active_bays.len()];
                 turn += 1;
 
-                let weights = sample_reconstruct_order_weights(&mut rng, &BAY_NEIGHBOR_PARAMS);
+                let weights = sample_reconstruct_order_weights(&mut rng, neighbor_params);
                 let order = build_topological_order(
                     problem,
                     pre,
@@ -344,14 +248,9 @@ pub fn build_optimize_state(
                     continue;
                 }
 
-                let Some(schedule) = build_bay_schedule(
-                    problem,
-                    pre,
-                    bay_id,
-                    &order,
-                    &constraints,
-                    &BAY_NEIGHBOR_PARAMS,
-                ) else {
+                let Some(schedule) =
+                    build_bay_schedule(problem, pre, bay_id, &order, &constraints, neighbor_params)
+                else {
                     continue;
                 };
                 trials += 1;
@@ -1221,8 +1120,9 @@ pub fn sort_default_reconstruct_order<R: Random>(
     block_areas: &[f64],
     order: &mut [usize],
     rng: &mut R,
+    params: &NeighborParams,
 ) {
-    let weights = sample_reconstruct_order_weights(rng, &GLOBAL_NEIGHBOR_PARAMS);
+    let weights = sample_reconstruct_order_weights(rng, params);
     sort_block_order(problem, block_areas, order, weights, rng);
 }
 

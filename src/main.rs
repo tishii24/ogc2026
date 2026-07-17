@@ -1,13 +1,15 @@
 use std::env;
 use std::fs;
 use std::io::{self, Read};
+use std::path::Path;
 use std::process;
 
-use ogc2026::{Problem, solver, util::time::Timer};
+use ogc2026::{Problem, params::SolverParams, solver, util::time::Timer};
 
 #[derive(Debug)]
 struct Args {
     input_path: String,
+    params_path: String,
     timelimit: f64,
 }
 
@@ -22,6 +24,12 @@ fn main() {
 
 fn run(timer: Timer) -> Result<(), String> {
     let args = parse_args(env::args().skip(1).collect())?;
+    let params = SolverParams::load(Path::new(&args.params_path))?;
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(params.runtime.worker_count)
+        .build_global()
+        .map_err(|err| format!("failed to initialize rayon thread pool: {err}"))?;
+
     let input = if args.input_path == "-" {
         let mut input = String::new();
         io::stdin()
@@ -35,7 +43,7 @@ fn run(timer: Timer) -> Result<(), String> {
     let problem: Problem = serde_json::from_str(&input)
         .map_err(|err| format!("failed to parse problem json: {err}"))?;
 
-    let solution = solver::solve(&problem, args.timelimit, timer)?;
+    let solution = solver::solve(&problem, args.timelimit, timer, &params)?;
     let output = serde_json::to_string(&solution)
         .map_err(|err| format!("failed to serialize solution json: {err}"))?;
     println!("{output}");
@@ -43,12 +51,13 @@ fn run(timer: Timer) -> Result<(), String> {
 }
 
 fn parse_args(args: Vec<String>) -> Result<Args, String> {
-    const USAGE: &str = "usage: ogc2026 <input.json> [timelimit] or ogc2026 --input <input.json> [--timelimit <sec>] [--visualize <dir>]";
+    const USAGE: &str = "usage: ogc2026 <input.json> [timelimit] --params <params.yaml> or ogc2026 --input <input.json> --params <params.yaml> [--timelimit <sec>] [--visualize <dir>]";
     if args.is_empty() {
         return Err(USAGE.to_string());
     }
 
     let mut input_path: Option<String> = None;
+    let mut params_path: Option<String> = None;
     let mut timelimit = 60.0;
     let mut positional = Vec::new();
     let mut i = 0;
@@ -60,6 +69,13 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
                     return Err("--input requires a path".to_string());
                 }
                 input_path = Some(args[i].clone());
+            }
+            "--params" | "-p" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--params requires a path".to_string());
+                }
+                params_path = Some(args[i].clone());
             }
             "--timelimit" | "-t" => {
                 i += 1;
@@ -104,8 +120,10 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
     }
 
     let input_path = input_path.ok_or_else(|| "missing input path".to_string())?;
+    let params_path = params_path.ok_or_else(|| "missing --params".to_string())?;
     Ok(Args {
         input_path,
+        params_path,
         timelimit,
     })
 }

@@ -1,6 +1,7 @@
 pub mod annealing;
 pub mod collision;
 pub mod insert;
+pub mod params;
 pub mod precompute;
 pub mod preoptimize;
 pub mod solver;
@@ -11,8 +12,6 @@ pub mod vis;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize};
-
-pub const MAX_WORKER_COUNT: usize = 4;
 
 #[derive(Debug, Deserialize)]
 pub struct Problem {

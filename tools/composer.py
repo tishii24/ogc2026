@@ -31,6 +31,8 @@ def algorithm(prob_info, timelimit=60):
 
     root = pathlib.Path(__file__).resolve().parent
     solver = root / "solver"
+    params_env = os.environ.get("OGC_PARAMS_PATH")
+    params = pathlib.Path(params_env).resolve() if params_env else root / "params.yaml"
 
     try:
         solver.chmod(solver.stat().st_mode | 0o755)
@@ -38,7 +40,15 @@ def algorithm(prob_info, timelimit=60):
         pass
 
     completed = subprocess.run(
-        [str(solver), "-", str(timelimit)],
+        [
+            str(solver),
+            "--input",
+            "-",
+            "--timelimit",
+            str(timelimit),
+            "--params",
+            str(params),
+        ],
         input=json.dumps(prob_info),
         stdout=subprocess.PIPE,
         text=True,
@@ -65,6 +75,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "version",
         help="Version name used as the output directory: solutions/{version}",
+    )
+    parser.add_argument(
+        "--params",
+        required=True,
+        help="YAML parameter file to bundle as params.yaml",
     )
     parser.add_argument(
         "--platform",
@@ -114,8 +129,11 @@ def binary_name() -> str:
     return "ogc2026"
 
 
-def compose(root: Path, version: str, platform: str) -> Path:
+def compose(root: Path, version: str, platform: str, params_path: Path) -> Path:
     validate_version(version)
+    params_path = params_path.resolve()
+    if not params_path.is_file():
+        raise FileNotFoundError(f"params file not found: {params_path}")
 
     source_binary = build_solver(root, platform)
     output_dir = root / "solutions" / version
@@ -130,6 +148,7 @@ def compose(root: Path, version: str, platform: str) -> Path:
 
     myalgorithm_path = output_dir / "myalgorithm.py"
     myalgorithm_path.write_text(MYALGORITHM_PY, encoding="utf-8")
+    shutil.copy2(params_path, output_dir / "params.yaml")
 
     return output_dir
 
@@ -139,7 +158,7 @@ def main() -> int:
     root = repo_root()
 
     try:
-        output_dir = compose(root, args.version, args.platform)
+        output_dir = compose(root, args.version, args.platform, Path(args.params))
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

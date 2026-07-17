@@ -1,11 +1,4 @@
-use crate::{
-    collision::CollisionPrecompute,
-    solver::{
-        PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT, PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA,
-        PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K,
-    },
-    *,
-};
+use crate::{collision::CollisionPrecompute, params::PrecomputeParams, *};
 use std::cmp::Reverse;
 
 #[derive(Clone, Copy, Debug)]
@@ -106,7 +99,10 @@ fn bbox_iou(from: Boundsf, to: Boundsf, dx: i64, dy: i64) -> f64 {
     }
 }
 
-fn orientation_neighbors_for_block(bboxes: &[Boundsf]) -> Vec<Vec<(usize, i64, i64)>> {
+fn orientation_neighbors_for_block(
+    bboxes: &[Boundsf],
+    limit: usize,
+) -> Vec<Vec<(usize, i64, i64)>> {
     let mut result = vec![Vec::new(); bboxes.len()];
     for from_orient in 0..bboxes.len() {
         let from = bboxes[from_orient];
@@ -137,7 +133,7 @@ fn orientation_neighbors_for_block(bboxes: &[Boundsf]) -> Vec<Vec<(usize, i64, i
                 .then(a.3.cmp(&b.3))
         });
         candidates.dedup_by_key(|(to_orient, _, _, _)| *to_orient);
-        candidates.truncate(PRECOMPUTE_ORIENTATION_NEIGHBOR_LIMIT);
+        candidates.truncate(limit);
         result[from_orient] = candidates
             .into_iter()
             .map(|(to_orient, _, dx, dy)| (to_orient, dx, dy))
@@ -148,14 +144,15 @@ fn orientation_neighbors_for_block(bboxes: &[Boundsf]) -> Vec<Vec<(usize, i64, i
 
 fn build_orientation_neighbors(
     orientation_bbox_bounds: &[Vec<Boundsf>],
+    limit: usize,
 ) -> Vec<Vec<Vec<(usize, i64, i64)>>> {
     orientation_bbox_bounds
         .iter()
-        .map(|bboxes| orientation_neighbors_for_block(bboxes))
+        .map(|bboxes| orientation_neighbors_for_block(bboxes, limit))
         .collect()
 }
 
-fn area_neighbor_blocks(block_area: &[f64], from_block: usize) -> Vec<usize> {
+fn area_neighbor_blocks(block_area: &[f64], from_block: usize, top_k: usize) -> Vec<usize> {
     let from_area = block_area[from_block];
     let mut order: Vec<usize> = (0..block_area.len())
         .filter(|&block_id| block_id != from_block)
@@ -166,11 +163,15 @@ fn area_neighbor_blocks(block_area: &[f64], from_block: usize) -> Vec<usize> {
             .total_cmp(&(from_area - block_area[b]).abs())
             .then(a.cmp(&b))
     });
-    order.truncate(PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_AREA_TOP_K.min(order.len()));
+    order.truncate(top_k.min(order.len()));
     order
 }
 
-fn best_bbox_neighbor_offset(from: Boundsf, to: Boundsf) -> Option<(f64, i64, i64)> {
+fn best_bbox_neighbor_offset(
+    from: Boundsf,
+    to: Boundsf,
+    align_delta: i64,
+) -> Option<(f64, i64, i64)> {
     let from_cx = (from.min_x + from.max_x) * 0.5;
     let from_cy = (from.min_y + from.max_y) * 0.5;
     let to_cx = (to.min_x + to.max_x) * 0.5;
@@ -179,12 +180,8 @@ fn best_bbox_neighbor_offset(from: Boundsf, to: Boundsf) -> Option<(f64, i64, i6
     let base_dy = (from_cy - to_cy).round() as i64;
 
     let mut best: Option<(f64, i64, i64)> = None;
-    for dx in base_dx - PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA
-        ..=base_dx + PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA
-    {
-        for dy in base_dy - PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA
-            ..=base_dy + PRECOMPUTE_OTHER_BLOCK_NEIGHBOR_ALIGN_DELTA
-        {
+    for dx in base_dx - align_delta..=base_dx + align_delta {
+        for dy in base_dy - align_delta..=base_dy + align_delta {
             let iou = bbox_iou(from, to, dx, dy);
             if iou <= 0.0 {
                 continue;
@@ -205,10 +202,12 @@ fn best_bbox_neighbor_offset(from: Boundsf, to: Boundsf) -> Option<(f64, i64, i6
 fn build_other_block_neighbors(
     orientation_bbox_bounds: &[Vec<Boundsf>],
     block_area: &[f64],
+    top_k: usize,
+    align_delta: i64,
 ) -> Vec<Vec<Vec<OtherBlockNeighbor>>> {
     (0..orientation_bbox_bounds.len())
         .map(|from_block| {
-            let to_blocks = area_neighbor_blocks(block_area, from_block);
+            let to_blocks = area_neighbor_blocks(block_area, from_block, top_k);
             orientation_bbox_bounds[from_block]
                 .iter()
                 .map(|&from_bbox| {
@@ -218,7 +217,7 @@ fn build_other_block_neighbors(
                             orientation_bbox_bounds[to_block].iter().enumerate()
                         {
                             if let Some((iou, dx, dy)) =
-                                best_bbox_neighbor_offset(from_bbox, to_bbox)
+                                best_bbox_neighbor_offset(from_bbox, to_bbox, align_delta)
                             {
                                 candidates.push((
                                     OtherBlockNeighbor {
@@ -250,7 +249,7 @@ fn build_other_block_neighbors(
 }
 
 impl Precompute {
-    pub fn build(problem: &Problem) -> Self {
+    pub fn build(problem: &Problem, params: &PrecomputeParams) -> Self {
         let collision = CollisionPrecompute::build(problem);
 
         let bay_area: Vec<f64> = problem
@@ -329,10 +328,17 @@ impl Precompute {
             .map(|block| block.shape.iter().map(orientation_bbox_bounds).collect())
             .collect();
 
-        let orientation_neighbors = build_orientation_neighbors(&orientation_bbox_bounds);
+        let orientation_neighbors = build_orientation_neighbors(
+            &orientation_bbox_bounds,
+            params.orientation_neighbor_limit,
+        );
         let block_area: Vec<f64> = problem.blocks.iter().map(block_area).collect();
-        let other_block_neighbors =
-            build_other_block_neighbors(&orientation_bbox_bounds, &block_area);
+        let other_block_neighbors = build_other_block_neighbors(
+            &orientation_bbox_bounds,
+            &block_area,
+            params.other_block_neighbor_area_top_k,
+            params.other_block_neighbor_align_delta,
+        );
 
         Self {
             collision,

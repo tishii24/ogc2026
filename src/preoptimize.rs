@@ -1,35 +1,14 @@
 use crate::{
-    Bay, MAX_WORKER_COUNT, Orientation, Problem,
+    Bay, Orientation, Problem,
     annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
-    solver::{
-        PreoptimizeState, PreoptimizedBlock, preoptimize_annealing_params,
-        sort_default_reconstruct_order,
-    },
+    params::{NeighborParams, PreoptimizeSolverParams},
+    solver::{PreoptimizeState, PreoptimizedBlock, sort_default_reconstruct_order},
     util::{
         rand::{RandPcg64Mcg, Random},
         time::Timer,
     },
 };
 use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
-
-const PREOPTIMIZE_RNG_SEED: u64 = 2;
-const PREOPTIMIZE_SWAP_PROBABILITY: f64 = 0.15;
-const PREOPTIMIZE_LARGE_RECONSTRUCT_PROBABILITY: f64 = 0.05;
-const PREOPTIMIZE_MIN_REMOVED_BLOCKS: usize = 7;
-const PREOPTIMIZE_MAX_REMOVED_BLOCKS: usize = 13;
-const PREOPTIMIZE_REMOVE_COUNT_SAMPLE_POWER: f64 = 2.0;
-const PREOPTIMIZE_BAD_BLOCK_SAMPLE_COUNT: usize = 8;
-const PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY: f64 = 0.75;
-const PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS: usize = 8;
-const PREOPTIMIZE_MAX_TIME_SHIFT: i64 = 10;
-
-#[derive(Clone, Copy, Debug)]
-pub struct PreoptimizeParams {
-    pub alpha: f64,
-    pub beta: f64,
-    pub congestion_weight: f64,
-    pub time_limit: f64,
-}
 
 #[derive(Clone, Copy, Debug)]
 struct OrientationArea {
@@ -146,10 +125,11 @@ impl PreoptimizePrecompute {
 
 struct PreoptimizeContext<'a> {
     pre: &'a PreoptimizePrecompute,
+    params: &'a PreoptimizeSolverParams,
+    reconstruct_order_params: &'a NeighborParams,
     occupancy: Vec<Vec<Option<f64>>>,
     block_areas: Vec<f64>,
     bay_capacities: Vec<f64>,
-    congestion_weight: f64,
     max_time: i64,
 }
 
@@ -262,7 +242,7 @@ fn fits_bay(area: OrientationArea, bay: &Bay) -> bool {
 fn build_occupancy(
     problem: &Problem,
     pre: &PreoptimizePrecompute,
-    params: PreoptimizeParams,
+    params: &PreoptimizeSolverParams,
 ) -> Result<Vec<Vec<Option<f64>>>, String> {
     let occupancy: Vec<Vec<Option<f64>>> = pre
         .orientation_areas
@@ -363,7 +343,7 @@ fn build_initial_state(
                     * (normalized_imbalance(&next_loads, &context.pre.bay_load_scale)
                         - current_imbalance)
                 + problem.weights.w3 * context.pre.pref_penalty[block_id][bay_id] as f64
-                + problem.weights.w1 * context.congestion_weight * congestion_delta;
+                + problem.weights.w1 * context.params.congestion_weight * congestion_delta;
             let candidate = (score, entry_time, bay_id);
             if best.as_ref().is_none_or(|best| {
                 candidate
@@ -433,7 +413,7 @@ fn build_initial_state(
         z3,
         official_objective: objective,
         congestion,
-        objective: objective + problem.weights.w1 * context.congestion_weight * congestion,
+        objective: objective + problem.weights.w1 * context.params.congestion_weight * congestion,
     })
 }
 
@@ -499,12 +479,12 @@ fn select_block(
     state: &PreoptimizeAnnealingState,
     rng: &mut impl Random,
 ) -> usize {
-    if rng.nextf() >= PREOPTIMIZE_BAD_BLOCK_SELECT_PROBABILITY {
+    if rng.nextf() >= context.params.neighbor.bad_block_select_probability {
         return rng.gen_index(problem.blocks.len());
     }
     let mut best = rng.gen_index(problem.blocks.len());
     let mut best_cost = f64::NEG_INFINITY;
-    for _ in 0..PREOPTIMIZE_BAD_BLOCK_SAMPLE_COUNT {
+    for _ in 0..context.params.neighbor.bad_block_sample_count {
         let block_id = rng.gen_index(problem.blocks.len());
         let selected = state.schedule[block_id];
         let cost = problem.weights.w1 * block_z1(problem, block_id, selected)
@@ -531,8 +511,8 @@ fn sample_entry_time(
         0 => min_time,
         1 => (block.due_date - block.processing_time).clamp(min_time, max_time),
         2 => {
-            let delta = rng.gen_range(0, (2 * PREOPTIMIZE_MAX_TIME_SHIFT + 1) as usize) as i64
-                - PREOPTIMIZE_MAX_TIME_SHIFT;
+            let max_shift = context.params.neighbor.max_time_shift;
+            let delta = rng.gen_range(0, (2 * max_shift + 1) as usize) as i64 - max_shift;
             current.saturating_add(delta).clamp(min_time, max_time)
         }
         _ => min_time + rng.gen_range(0, (max_time - min_time + 1) as usize) as i64,
@@ -558,7 +538,7 @@ fn try_relocate(
     );
 
     let mut candidate = None;
-    for _ in 0..PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS {
+    for _ in 0..context.params.neighbor.max_relocate_attempts {
         let bay_id = rng.gen_index(problem.bays.len());
         let entry_time = sample_entry_time(problem, context, block_id, old.entry_time, rng);
         let selected = PreoptimizedBlock { bay_id, entry_time };
@@ -609,7 +589,7 @@ fn try_relocate(
     state.z3 += new_z3 - old_z3;
     state.official_objective += raw_delta;
     state.objective = state.official_objective
-        + problem.weights.w1 * context.congestion_weight * state.congestion;
+        + problem.weights.w1 * context.params.congestion_weight * state.congestion;
     true
 }
 
@@ -756,14 +736,18 @@ fn try_swap(
     state.z3 += new_z3 - old_z3;
     state.official_objective += raw_delta;
     state.objective = state.official_objective
-        + problem.weights.w1 * context.congestion_weight * state.congestion;
+        + problem.weights.w1 * context.params.congestion_weight * state.congestion;
     true
 }
 
-fn sample_large_reconstruct_count(rng: &mut impl Random) -> usize {
-    let span = PREOPTIMIZE_MAX_REMOVED_BLOCKS - PREOPTIMIZE_MIN_REMOVED_BLOCKS + 1;
-    let u = rng.nextf().powf(PREOPTIMIZE_REMOVE_COUNT_SAMPLE_POWER);
-    PREOPTIMIZE_MIN_REMOVED_BLOCKS + ((u * span as f64) as usize).min(span - 1)
+fn sample_large_reconstruct_count(
+    context: &PreoptimizeContext<'_>,
+    rng: &mut impl Random,
+) -> usize {
+    let params = &context.params.neighbor;
+    let span = params.max_removed_blocks - params.min_removed_blocks + 1;
+    let u = rng.nextf().powf(params.remove_count_sample_power);
+    params.min_removed_blocks + ((u * span as f64) as usize).min(span - 1)
 }
 
 fn choose_large_reconstruct_blocks(
@@ -793,7 +777,7 @@ fn try_large_reconstruct(
     state: &mut PreoptimizeAnnealingState,
     rng: &mut impl Random,
 ) -> bool {
-    let k = sample_large_reconstruct_count(rng).min(problem.blocks.len());
+    let k = sample_large_reconstruct_count(context, rng).min(problem.blocks.len());
     if k < 2 {
         return false;
     }
@@ -812,12 +796,18 @@ fn try_large_reconstruct(
         state.loads[selected.bay_id] -= problem.blocks[block_id].workload as f64;
     }
 
-    sort_default_reconstruct_order(problem, &context.block_areas, &mut removed_ids, rng);
+    sort_default_reconstruct_order(
+        problem,
+        &context.block_areas,
+        &mut removed_ids,
+        rng,
+        context.reconstruct_order_params,
+    );
     let mut changed = false;
     for block_id in removed_ids {
         let old = state.schedule[block_id];
         let mut candidate = None;
-        for _ in 0..PREOPTIMIZE_MAX_RELOCATE_ATTEMPTS {
+        for _ in 0..context.params.neighbor.max_relocate_attempts {
             let selected = PreoptimizedBlock {
                 bay_id: rng.gen_index(problem.bays.len()),
                 entry_time: sample_entry_time(problem, context, block_id, old.entry_time, rng),
@@ -854,7 +844,8 @@ fn try_large_reconstruct(
         &state.schedule,
     );
     state.official_objective = objective;
-    state.objective = objective + problem.weights.w1 * context.congestion_weight * state.congestion;
+    state.objective =
+        objective + problem.weights.w1 * context.params.congestion_weight * state.congestion;
     state.z1 = z1;
     state.z2 = z2;
     state.z3 = z3;
@@ -886,7 +877,7 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
     }
 
     fn exchange_threshold(&self, _domain: usize) -> f64 {
-        0.0
+        self.context.params.annealing.exchange_threshold
     }
 
     fn propose(
@@ -897,13 +888,15 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
         rng: &mut RandPcg64Mcg,
     ) -> AnnealingAttempt<Self::State> {
         let mut candidate = current.clone();
-        let x = rng.nextf();
-        let (neighbor_kind, succeeded) = if x < PREOPTIMIZE_LARGE_RECONSTRUCT_PROBABILITY {
+        let probabilities = &self.context.params.neighbor_probabilities;
+        let total = probabilities.relocate + probabilities.swap + probabilities.large_reconstruct;
+        let x = rng.nextf() * total;
+        let (neighbor_kind, succeeded) = if x < probabilities.large_reconstruct {
             (
                 2,
                 try_large_reconstruct(self.problem, &self.context, &mut candidate, rng),
             )
-        } else if x < PREOPTIMIZE_LARGE_RECONSTRUCT_PROBABILITY + PREOPTIMIZE_SWAP_PROBABILITY {
+        } else if x < probabilities.large_reconstruct + probabilities.swap {
             (
                 1,
                 try_swap(self.problem, &self.context, &mut candidate, rng),
@@ -947,7 +940,11 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
 pub fn preoptimize(
     problem: &Problem,
     pre: &PreoptimizePrecompute,
-    params: PreoptimizeParams,
+    params: &PreoptimizeSolverParams,
+    reconstruct_order_params: &NeighborParams,
+    time_limit: f64,
+    max_worker_count: usize,
+    seed: u64,
 ) -> Result<PreoptimizeState, String> {
     let occupancy = build_occupancy(problem, pre, params)?;
     let block_areas = occupancy
@@ -962,27 +959,21 @@ pub fn preoptimize(
         .collect();
     let mut context = PreoptimizeContext {
         pre,
+        params,
+        reconstruct_order_params,
         occupancy,
         block_areas,
         bay_capacities: pre.bay_areas.clone(),
-        congestion_weight: params.congestion_weight,
         max_time: pre.search_horizon,
     };
     let initial = build_initial_state(problem, &mut context)?;
-    let annealing_params = preoptimize_annealing_params(problem, initial.annealing_score());
+    let annealing_params = params.annealing.make(problem, initial.annealing_score());
     let timer = Timer::start(1.0);
-    let worker_count = rayon::current_num_threads().clamp(1, MAX_WORKER_COUNT);
+    let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
     let delegate = PreoptimizeAnnealingDelegate {
         problem,
         context,
         initial,
     };
-    Ok(Annealer::new(
-        params.time_limit,
-        worker_count,
-        PREOPTIMIZE_RNG_SEED,
-        annealing_params,
-        delegate,
-    )
-    .run(timer))
+    Ok(Annealer::new(time_limit, worker_count, seed, annealing_params, delegate).run(timer))
 }
