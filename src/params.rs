@@ -132,9 +132,6 @@ pub struct PreoptimizeAnnealingParams {
     pub exchange_interval: usize,
     pub exchange_threshold: f64,
     pub initial_score_per_block_scale: f64,
-    pub w1_floor_scale: f64,
-    pub w3_floor_scale: f64,
-    pub minimum_start_temperature: f64,
     pub end_temperature_ratio: f64,
     pub worker_temperature_scale: f64,
     pub tabu_capacity: usize,
@@ -169,7 +166,6 @@ pub struct BayAnnealingParams {
     pub exchange_interval: usize,
     pub start_temperature_w1_scale: f64,
     pub end_temperature_w1_scale: f64,
-    pub minimum_temperature: f64,
     pub worker_temperature_scale: f64,
     pub tabu_capacity: usize,
 }

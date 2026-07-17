@@ -552,7 +552,7 @@ fn try_shift_neighbor<R: Random>(
         .fit_range(old.bay_id, old.block_id, old.orient_idx)?;
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
 
-    for dist in (1..=params.shift_max_x + params.shift_max_y).rev() {
+    for dist in (0..=params.shift_max_x + params.shift_max_y).rev() {
         let min_abs_dx = (dist - params.shift_max_y).max(0);
         let max_abs_dx = dist.min(params.shift_max_x);
 

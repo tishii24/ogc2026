@@ -466,15 +466,15 @@ impl<D: AnnealingDelegate> Annealer<D> {
             if candidate_score + EPS < local.local_best_score {
                 local.local_best_score = candidate_score;
                 improved += 1;
-                // eprintln!(
-                //     "[{:.4}] [{}]  local best: worker={}, domain={}, iter={:8}, score={:.3}",
-                //     timer.elapsed_seconds(),
-                //     self.delegate.name(),
-                //     worker_id,
-                //     domain,
-                //     context.iterations(),
-                //     candidate_score,
-                // );
+                eprintln!(
+                    "[{:.4}] [{}]  local best: worker={}, domain={}, iter={:8}, score={:.3}",
+                    timer.elapsed_seconds(),
+                    self.delegate.name(),
+                    worker_id,
+                    domain,
+                    context.iterations(),
+                    candidate_score,
+                );
                 if shared[domain].update(&local.current) {
                     eprintln!(
                         "[{:.4}] [{}] shared best: worker={}, domain={}, iter={:8}, score={:.3}",
