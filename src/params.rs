@@ -37,24 +37,6 @@ impl SolverParams {
             .map_err(|err| format!("failed to parse params {}: {err}", path.display()))?;
         file.resolve()
     }
-
-    pub fn validate(&self) -> Result<(), String> {
-        if self.runtime.worker_count == 0 {
-            return Err("runtime.worker_count must be positive".to_string());
-        }
-        validate_non_negative(
-            "runtime.local_search_time_buffer_seconds",
-            self.runtime.local_search_time_buffer_seconds,
-        )?;
-        self.phases.validate()?;
-        self.precompute.validate()?;
-        self.preoptimize.validate()?;
-        self.bay_optimize.validate()?;
-        self.global_optimize.validate()?;
-        self.bay_neighbor.validate("optimize_neighbor.bay")?;
-        self.global_neighbor.validate("optimize_neighbor.global")?;
-        Ok(())
-    }
 }
 
 impl SolverParamsFile {
@@ -83,7 +65,6 @@ impl SolverParamsFile {
             bay_neighbor,
             global_neighbor,
         };
-        params.validate()?;
         Ok(params)
     }
 }
@@ -106,30 +87,11 @@ pub struct PhaseParams {
     pub bay_optimize_time_ratio: f64,
 }
 
-impl PhaseParams {
-    fn validate(&self) -> Result<(), String> {
-        self.initial_preoptimize
-            .validate("phases.initial_preoptimize")?;
-        self.initial_build.validate("phases.initial_build")?;
-        validate_ratio(
-            "phases.bay_optimize_time_ratio",
-            self.bay_optimize_time_ratio,
-        )
-    }
-}
-
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LimitedPhaseParams {
     pub time_ratio: f64,
     pub max_seconds: f64,
-}
-
-impl LimitedPhaseParams {
-    fn validate(&self, name: &str) -> Result<(), String> {
-        validate_ratio(&format!("{name}.time_ratio"), self.time_ratio)?;
-        validate_non_negative(&format!("{name}.max_seconds"), self.max_seconds)
-    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -138,17 +100,6 @@ pub struct PrecomputeParams {
     pub orientation_neighbor_limit: usize,
     pub other_block_neighbor_area_top_k: usize,
     pub other_block_neighbor_align_delta: i64,
-}
-
-impl PrecomputeParams {
-    fn validate(&self) -> Result<(), String> {
-        if self.other_block_neighbor_align_delta < 0 {
-            return Err(
-                "precompute.other_block_neighbor_align_delta must be non-negative".to_string(),
-            );
-        }
-        Ok(())
-    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -162,41 +113,12 @@ pub struct PreoptimizeSolverParams {
     pub annealing: PreoptimizeAnnealingParams,
 }
 
-impl PreoptimizeSolverParams {
-    fn validate(&self) -> Result<(), String> {
-        validate_non_negative("preoptimize.alpha", self.alpha)?;
-        validate_non_negative("preoptimize.beta", self.beta)?;
-        validate_non_negative("preoptimize.congestion_weight", self.congestion_weight)?;
-        self.neighbor_probabilities.validate()?;
-        self.neighbor.validate()?;
-        self.annealing.validate()
-    }
-}
-
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PreoptimizeNeighborProbabilities {
     pub relocate: f64,
     pub swap: f64,
     pub large_reconstruct: f64,
-}
-
-impl PreoptimizeNeighborProbabilities {
-    fn validate(&self) -> Result<(), String> {
-        let values = [self.relocate, self.swap, self.large_reconstruct];
-        if values
-            .iter()
-            .any(|value| !value.is_finite() || *value < 0.0)
-        {
-            return Err(
-                "preoptimize neighbor probabilities must be finite and non-negative".into(),
-            );
-        }
-        if values.iter().sum::<f64>() <= 0.0 {
-            return Err("preoptimize neighbor probabilities must have a positive sum".into());
-        }
-        Ok(())
-    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -209,29 +131,6 @@ pub struct PreoptimizeNeighborParams {
     pub bad_block_select_probability: f64,
     pub max_relocate_attempts: usize,
     pub max_time_shift: i64,
-}
-
-impl PreoptimizeNeighborParams {
-    fn validate(&self) -> Result<(), String> {
-        if self.min_removed_blocks == 0 || self.min_removed_blocks > self.max_removed_blocks {
-            return Err("invalid preoptimize removed block range".into());
-        }
-        validate_positive(
-            "preoptimize.neighbor.remove_count_sample_power",
-            self.remove_count_sample_power,
-        )?;
-        validate_ratio(
-            "preoptimize.neighbor.bad_block_select_probability",
-            self.bad_block_select_probability,
-        )?;
-        if self.bad_block_sample_count == 0 || self.max_relocate_attempts == 0 {
-            return Err("preoptimize neighbor attempt counts must be positive".into());
-        }
-        if self.max_time_shift < 0 {
-            return Err("preoptimize.neighbor.max_time_shift must be non-negative".into());
-        }
-        Ok(())
-    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -263,34 +162,6 @@ impl PreoptimizeAnnealingParams {
             tabu_capacity: self.tabu_capacity,
         }
     }
-
-    fn validate(&self) -> Result<(), String> {
-        if self.exchange_interval == 0 {
-            return Err("preoptimize.annealing.exchange_interval must be positive".into());
-        }
-        validate_non_negative(
-            "preoptimize.annealing.exchange_threshold",
-            self.exchange_threshold,
-        )?;
-        validate_non_negative(
-            "preoptimize.annealing.initial_score_per_block_scale",
-            self.initial_score_per_block_scale,
-        )?;
-        validate_non_negative("preoptimize.annealing.w1_floor_scale", self.w1_floor_scale)?;
-        validate_non_negative("preoptimize.annealing.w3_floor_scale", self.w3_floor_scale)?;
-        validate_positive(
-            "preoptimize.annealing.minimum_start_temperature",
-            self.minimum_start_temperature,
-        )?;
-        validate_positive(
-            "preoptimize.annealing.end_temperature_ratio",
-            self.end_temperature_ratio,
-        )?;
-        validate_non_negative(
-            "preoptimize.annealing.worker_temperature_scale",
-            self.worker_temperature_scale,
-        )
-    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -298,16 +169,6 @@ impl PreoptimizeAnnealingParams {
 pub struct BayOptimizeParams {
     pub exchange_threshold_w1_scale: f64,
     pub annealing: BayAnnealingParams,
-}
-
-impl BayOptimizeParams {
-    fn validate(&self) -> Result<(), String> {
-        validate_non_negative(
-            "bay_optimize.exchange_threshold_w1_scale",
-            self.exchange_threshold_w1_scale,
-        )?;
-        self.annealing.validate()
-    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -333,31 +194,6 @@ impl BayAnnealingParams {
             tabu_capacity: self.tabu_capacity,
         }
     }
-
-    fn validate(&self) -> Result<(), String> {
-        if self.exchange_interval == 0 {
-            return Err("bay_optimize.annealing.exchange_interval must be positive".into());
-        }
-        validate_positive(
-            "bay_optimize.annealing.start_temperature_w1_scale",
-            self.start_temperature_w1_scale,
-        )?;
-        validate_positive(
-            "bay_optimize.annealing.end_temperature_w1_scale",
-            self.end_temperature_w1_scale,
-        )?;
-        if self.start_temperature_w1_scale < self.end_temperature_w1_scale {
-            return Err("bay annealing start temperature scale must be >= end scale".into());
-        }
-        validate_positive(
-            "bay_optimize.annealing.minimum_temperature",
-            self.minimum_temperature,
-        )?;
-        validate_non_negative(
-            "bay_optimize.annealing.worker_temperature_scale",
-            self.worker_temperature_scale,
-        )
-    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -366,20 +202,6 @@ pub struct GlobalOptimizeParams {
     pub constraint_time_ratio: f64,
     pub exchange_threshold_w1_scale: f64,
     pub annealing: AnnealingParamsConfig,
-}
-
-impl GlobalOptimizeParams {
-    fn validate(&self) -> Result<(), String> {
-        validate_ratio(
-            "global_optimize.constraint_time_ratio",
-            self.constraint_time_ratio,
-        )?;
-        validate_non_negative(
-            "global_optimize.exchange_threshold_w1_scale",
-            self.exchange_threshold_w1_scale,
-        )?;
-        self.annealing.validate("global_optimize.annealing")
-    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -401,23 +223,6 @@ impl AnnealingParamsConfig {
             worker_temperature_scale: self.worker_temperature_scale,
             tabu_capacity: self.tabu_capacity,
         }
-    }
-
-    fn validate(&self, name: &str) -> Result<(), String> {
-        if self.exchange_interval == 0 {
-            return Err(format!("{name}.exchange_interval must be positive"));
-        }
-        validate_positive(&format!("{name}.start_temperature"), self.start_temperature)?;
-        validate_positive(&format!("{name}.end_temperature"), self.end_temperature)?;
-        if self.start_temperature < self.end_temperature {
-            return Err(format!(
-                "{name}.start_temperature must be >= end_temperature"
-            ));
-        }
-        validate_non_negative(
-            &format!("{name}.worker_temperature_scale"),
-            self.worker_temperature_scale,
-        )
     }
 }
 
@@ -517,66 +322,6 @@ impl NeighborParams {
                 .unwrap_or(self.move_small_pool_size),
         }
     }
-
-    fn validate(&self, name: &str) -> Result<(), String> {
-        self.probabilities.validate(name)?;
-        if self.min_removed_blocks == 0 || self.min_removed_blocks > self.max_removed_blocks {
-            return Err(format!("{name}: invalid removed block range"));
-        }
-        if self.remove_pool_factor == 0
-            || self.remove_seed_per_block == 0
-            || self.swap_neighbor_top_k == 0
-            || self.move_sample_blocks == 0
-            || self.move_small_pool_size == 0
-        {
-            return Err(format!("{name}: count parameters must be positive"));
-        }
-        validate_positive(
-            &format!("{name}.remove_count_sample_power"),
-            self.remove_count_sample_power,
-        )?;
-        validate_ratio(
-            &format!("{name}.remove_random_seed_ratio"),
-            self.remove_random_seed_ratio,
-        )?;
-        validate_non_negative(
-            &format!("{name}.remove_x_distance_weight_max"),
-            self.remove_x_distance_weight_max,
-        )?;
-        validate_non_negative(
-            &format!("{name}.remove_y_distance_weight_max"),
-            self.remove_y_distance_weight_max,
-        )?;
-        validate_range(
-            &format!("{name}.reconstruct_workload_weight_range"),
-            self.reconstruct_workload_weight_range,
-        )?;
-        validate_range(
-            &format!("{name}.reconstruct_volume_weight_range"),
-            self.reconstruct_volume_weight_range,
-        )?;
-        validate_range(
-            &format!("{name}.reconstruct_pref_spread_weight_range"),
-            self.reconstruct_pref_spread_weight_range,
-        )?;
-        validate_range(
-            &format!("{name}.reconstruct_limit_time_urgency_weight_range"),
-            self.reconstruct_limit_time_urgency_weight_range,
-        )?;
-        validate_range(
-            &format!("{name}.reconstruct_order_random_weight_range"),
-            self.reconstruct_order_random_weight_range,
-        )?;
-        if self.insert_y_buffer < 0
-            || self.shift_max_x < 0
-            || self.shift_max_y < 0
-            || self.rotate_max_shift_delta < 0
-            || self.swap_max_shift_delta < 0
-        {
-            return Err(format!("{name}: spatial deltas must be non-negative"));
-        }
-        Ok(())
-    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -609,28 +354,6 @@ impl NeighborProbabilities {
             rotate: value.rotate.unwrap_or(self.rotate),
             swap: value.swap.unwrap_or(self.swap),
         }
-    }
-
-    fn validate(&self, name: &str) -> Result<(), String> {
-        let values = [
-            self.large_reconstruct,
-            self.shift,
-            self.move_block,
-            self.rotate,
-            self.swap,
-        ];
-        if values
-            .iter()
-            .any(|value| !value.is_finite() || *value < 0.0)
-        {
-            return Err(format!(
-                "{name}.probabilities must be finite and non-negative"
-            ));
-        }
-        if values.iter().sum::<f64>() <= 0.0 {
-            return Err(format!("{name}.probabilities must have a positive sum"));
-        }
-        Ok(())
     }
 }
 
@@ -670,36 +393,4 @@ pub struct NeighborProbabilitiesOverride {
     pub move_block: Option<f64>,
     pub rotate: Option<f64>,
     pub swap: Option<f64>,
-}
-
-fn validate_ratio(name: &str, value: f64) -> Result<(), String> {
-    if value.is_finite() && (0.0..=1.0).contains(&value) {
-        Ok(())
-    } else {
-        Err(format!("{name} must be between 0 and 1"))
-    }
-}
-
-fn validate_positive(name: &str, value: f64) -> Result<(), String> {
-    if value.is_finite() && value > 0.0 {
-        Ok(())
-    } else {
-        Err(format!("{name} must be positive"))
-    }
-}
-
-fn validate_non_negative(name: &str, value: f64) -> Result<(), String> {
-    if value.is_finite() && value >= 0.0 {
-        Ok(())
-    } else {
-        Err(format!("{name} must be non-negative"))
-    }
-}
-
-fn validate_range(name: &str, value: (f64, f64)) -> Result<(), String> {
-    if value.0.is_finite() && value.1.is_finite() && value.0 <= value.1 {
-        Ok(())
-    } else {
-        Err(format!("{name} must be a finite ordered pair"))
-    }
 }
