@@ -7,7 +7,6 @@ use crate::{Problem, annealing::AnnealingParams, solver_util::NeighborKind};
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SolverParamsFile {
-    pub schema_version: u32,
     pub runtime: RuntimeParams,
     pub phases: PhaseParams,
     pub precompute: PrecomputeParams,
@@ -41,12 +40,6 @@ impl SolverParams {
 
 impl SolverParamsFile {
     fn resolve(self) -> Result<SolverParams, String> {
-        if self.schema_version != 1 {
-            return Err(format!(
-                "unsupported params schema_version: {}",
-                self.schema_version
-            ));
-        }
         let bay_neighbor = self
             .optimize_neighbor
             .default
@@ -151,9 +144,8 @@ impl PreoptimizeAnnealingParams {
     pub fn make(&self, problem: &Problem, initial_score: f64) -> AnnealingParams {
         let start_temperature = (initial_score / problem.blocks.len() as f64
             * self.initial_score_per_block_scale)
-            .max(problem.weights.w1 * self.w1_floor_scale)
-            .max(problem.weights.w3 * self.w3_floor_scale)
-            .max(self.minimum_start_temperature);
+            .max(problem.weights.w1)
+            .max(problem.weights.w3);
         AnnealingParams {
             exchange_interval: self.exchange_interval,
             start_temperature,
@@ -186,10 +178,8 @@ impl BayAnnealingParams {
     pub fn make(&self, problem: &Problem) -> AnnealingParams {
         AnnealingParams {
             exchange_interval: self.exchange_interval,
-            start_temperature: (self.start_temperature_w1_scale * problem.weights.w1)
-                .max(self.minimum_temperature),
-            end_temperature: (self.end_temperature_w1_scale * problem.weights.w1)
-                .max(self.minimum_temperature),
+            start_temperature: (self.start_temperature_w1_scale * problem.weights.w1),
+            end_temperature: (self.end_temperature_w1_scale * problem.weights.w1),
             worker_temperature_scale: self.worker_temperature_scale,
             tabu_capacity: self.tabu_capacity,
         }
