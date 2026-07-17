@@ -128,7 +128,7 @@ fn orientation_neighbors_for_block(
 
         candidates.sort_by(|a, b| {
             b.0.cmp(&a.0)
-                .then(a.1.total_cmp(&b.1))
+                .then(b.1.total_cmp(&a.1))
                 .then(a.2.cmp(&b.2))
                 .then(a.3.cmp(&b.3))
         });

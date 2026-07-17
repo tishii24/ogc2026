@@ -14,6 +14,7 @@ use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 struct OrientationArea {
     union_area: f64,
     bbox_area: f64,
+    perimeter: f64,
     min_x: f64,
     min_y: f64,
     max_x: f64,
@@ -221,9 +222,22 @@ fn orientation_area(orientation: &Orientation) -> Result<OrientationArea, String
         }
     }
 
+    let perimeter = union
+        .0
+        .iter()
+        .flat_map(|polygon| std::iter::once(polygon.exterior()).chain(polygon.interiors().iter()))
+        .flat_map(|ring| ring.0.windows(2))
+        .map(|edge| {
+            let dx = edge[1].x - edge[0].x;
+            let dy = edge[1].y - edge[0].y;
+            dx.hypot(dy)
+        })
+        .sum();
+
     Ok(OrientationArea {
         union_area: union.unsigned_area(),
         bbox_area: (max_x - min_x) * (max_y - min_y),
+        perimeter,
         min_x,
         min_y,
         max_x,
@@ -252,7 +266,6 @@ fn build_occupancy(
                 .bays
                 .iter()
                 .map(|bay| {
-                    let extra = params.beta * bay.width.min(bay.height) as f64;
                     areas
                         .iter()
                         .copied()
@@ -260,7 +273,7 @@ fn build_occupancy(
                         .map(|area| {
                             area.union_area
                                 + params.alpha * (area.bbox_area - area.union_area)
-                                + extra
+                                + params.beta * area.perimeter
                         })
                         .min_by(f64::total_cmp)
                 })
@@ -877,7 +890,7 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
     }
 
     fn exchange_threshold(&self, _domain: usize) -> f64 {
-        self.context.params.annealing.exchange_threshold
+        self.context.params.exchange_threshold_w1_scale * self.problem.weights.w1
     }
 
     fn propose(
@@ -967,7 +980,7 @@ pub fn preoptimize(
         max_time: pre.search_horizon,
     };
     let initial = build_initial_state(problem, &mut context)?;
-    let annealing_params = params.annealing.make(problem, initial.annealing_score());
+    let annealing_params = params.annealing.make(problem);
     let timer = Timer::start(1.0);
     let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
     let delegate = PreoptimizeAnnealingDelegate {

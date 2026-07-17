@@ -676,6 +676,8 @@ fn try_swap_place(
     orient_idx: usize,
     base_x: i64,
     base_y: i64,
+    min_entry_time: i64,
+    max_entry_time: i64,
     params: &NeighborParams,
 ) -> Option<ScheduledBlock> {
     let range = pre.collision.fit_range(bay_id, old.block_id, orient_idx)?;
@@ -698,8 +700,8 @@ fn try_swap_place(
                 orient_idx,
                 x,
                 y,
-                i64::MIN,
-                i64::MAX,
+                min_entry_time,
+                max_entry_time,
             ) else {
                 continue;
             };
@@ -715,6 +717,8 @@ fn try_swap_neighbor<R: Random>(
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     rng: &mut R,
+    constraints: Option<&PrecedenceConstraints>,
+    same_bay_only: bool,
     params: &NeighborParams,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.len() < 2 {
@@ -723,18 +727,20 @@ fn try_swap_neighbor<R: Random>(
 
     let a_idx = rng.gen_index(schedule.len());
     let a_old = schedule[a_idx];
-    let candidates = &pre.other_block_neighbors[a_old.block_id][a_old.orient_idx];
+    let candidates: Vec<_> = pre.other_block_neighbors[a_old.block_id][a_old.orient_idx]
+        .iter()
+        .filter_map(|&candidate| {
+            let b_idx = schedule
+                .iter()
+                .position(|s| s.block_id == candidate.block_id)?;
+            (!same_bay_only || schedule[b_idx].bay_id == a_old.bay_id).then_some((candidate, b_idx))
+        })
+        .take(params.swap_neighbor_top_k)
+        .collect();
     if candidates.is_empty() {
         return None;
     }
-    let candidate_count = params.swap_neighbor_top_k.min(candidates.len());
-    let candidate = candidates[rng.gen_index(candidate_count)];
-    let b_idx = schedule
-        .iter()
-        .position(|s| s.block_id == candidate.block_id)?;
-    if a_idx == b_idx {
-        return None;
-    }
+    let (candidate, b_idx) = candidates[rng.gen_index(candidates.len())];
     let b_old = schedule[b_idx];
 
     let mut cur = Vec::with_capacity(schedule.len());
@@ -744,35 +750,50 @@ fn try_swap_neighbor<R: Random>(
         }
     }
 
-    let a_base_x = b_old.x - candidate.dx;
-    let a_base_y = b_old.y - candidate.dy;
-    let a_new = try_swap_place(
-        problem,
-        pre,
-        a_old,
-        &cur,
-        b_old.bay_id,
-        a_old.orient_idx,
-        a_base_x,
-        a_base_y,
-        params,
-    )?;
-    cur.push(a_new);
+    let mut targets = [
+        (
+            a_old,
+            b_old.bay_id,
+            a_old.orient_idx,
+            b_old.x - candidate.dx,
+            b_old.y - candidate.dy,
+        ),
+        (
+            b_old,
+            a_old.bay_id,
+            candidate.orient_idx,
+            a_old.x + candidate.dx,
+            a_old.y + candidate.dy,
+        ),
+    ];
+    if constraints
+        .is_some_and(|constraints| constraints.befores[a_old.block_id].contains(&b_old.block_id))
+    {
+        targets.swap(0, 1);
+    }
 
-    let b_base_x = a_old.x + candidate.dx;
-    let b_base_y = a_old.y + candidate.dy;
-    let b_new = try_swap_place(
-        problem,
-        pre,
-        b_old,
-        &cur,
-        a_old.bay_id,
-        candidate.orient_idx,
-        b_base_x,
-        b_base_y,
-        params,
-    )?;
-    cur.push(b_new);
+    for (old, bay_id, orient_idx, base_x, base_y) in targets {
+        let (min_entry_time, max_entry_time) = if let Some(constraints) = constraints {
+            let by_id = scheduled_by_id(problem, &cur);
+            precedence_entry_time_range(problem, constraints, &by_id, old.block_id)?
+        } else {
+            (i64::MIN, i64::MAX)
+        };
+        let new = try_swap_place(
+            problem,
+            pre,
+            old,
+            &cur,
+            bay_id,
+            orient_idx,
+            base_x,
+            base_y,
+            min_entry_time,
+            max_entry_time,
+            params,
+        )?;
+        cur.push(new);
+    }
 
     Some(cur)
 }
@@ -1130,30 +1151,42 @@ fn build_precedence_constraints(
     problem: &Problem,
     state: &PreoptimizeState,
 ) -> PrecedenceConstraints {
-    let mut befores = vec![Vec::new(); problem.blocks.len()];
-    let mut afters = vec![Vec::new(); problem.blocks.len()];
-    for i in 0..problem.blocks.len() {
-        for j in i + 1..problem.blocks.len() {
-            let si = state.blocks[i];
-            let sj = state.blocks[j];
-            if si.bay_id != sj.bay_id {
+    let block_count = problem.blocks.len();
+    let start_times: Vec<_> = state.blocks.iter().map(|block| block.entry_time).collect();
+    let end_times: Vec<_> = state
+        .blocks
+        .iter()
+        .enumerate()
+        .map(|(block_id, block)| block.entry_time + problem.blocks[block_id].processing_time)
+        .collect();
+    let mut befores = vec![Vec::new(); block_count];
+    let mut afters = vec![Vec::new(); block_count];
+
+    for after in 0..block_count {
+        let latest_start = (0..block_count)
+            .filter(|&block_id| {
+                block_id != after
+                    && state.blocks[block_id].bay_id == state.blocks[after].bay_id
+                    && end_times[block_id] <= start_times[after]
+            })
+            .map(|block_id| start_times[block_id])
+            .max();
+
+        for before in 0..block_count {
+            if before == after
+                || state.blocks[before].bay_id != state.blocks[after].bay_id
+                || end_times[before] > start_times[after]
+            {
                 continue;
             }
-            let end_i = si.entry_time + problem.blocks[i].processing_time;
-            let end_j = sj.entry_time + problem.blocks[j].processing_time;
-            let edge = if end_i <= sj.entry_time {
-                Some((i, j))
-            } else if end_j <= si.entry_time {
-                Some((j, i))
-            } else {
-                None
-            };
-            if let Some((before, after)) = edge {
-                afters[before].push(after);
-                befores[after].push(before);
+            if latest_start.is_some_and(|start_time| end_times[before] <= start_time) {
+                continue;
             }
+            afters[before].push(after);
+            befores[after].push(before);
         }
     }
+
     PrecedenceConstraints { befores, afters }
 }
 

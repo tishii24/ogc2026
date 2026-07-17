@@ -101,9 +101,10 @@ pub struct PreoptimizeSolverParams {
     pub alpha: f64,
     pub beta: f64,
     pub congestion_weight: f64,
+    pub exchange_threshold_w1_scale: f64,
     pub neighbor_probabilities: PreoptimizeNeighborProbabilities,
     pub neighbor: PreoptimizeNeighborParams,
-    pub annealing: PreoptimizeAnnealingParams,
+    pub annealing: AnnealingParamsConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -128,58 +129,9 @@ pub struct PreoptimizeNeighborParams {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PreoptimizeAnnealingParams {
-    pub exchange_interval: usize,
-    pub exchange_threshold: f64,
-    pub initial_score_per_block_scale: f64,
-    pub end_temperature_ratio: f64,
-    pub worker_temperature_scale: f64,
-    pub tabu_capacity: usize,
-}
-
-impl PreoptimizeAnnealingParams {
-    pub fn make(&self, problem: &Problem, initial_score: f64) -> AnnealingParams {
-        let start_temperature = (initial_score / problem.blocks.len() as f64
-            * self.initial_score_per_block_scale)
-            .max(problem.weights.w1)
-            .max(problem.weights.w3);
-        AnnealingParams {
-            exchange_interval: self.exchange_interval,
-            start_temperature,
-            end_temperature: start_temperature * self.end_temperature_ratio,
-            worker_temperature_scale: self.worker_temperature_scale,
-            tabu_capacity: self.tabu_capacity,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct BayOptimizeParams {
     pub exchange_threshold_w1_scale: f64,
-    pub annealing: BayAnnealingParams,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BayAnnealingParams {
-    pub exchange_interval: usize,
-    pub start_temperature_w1_scale: f64,
-    pub end_temperature_w1_scale: f64,
-    pub worker_temperature_scale: f64,
-    pub tabu_capacity: usize,
-}
-
-impl BayAnnealingParams {
-    pub fn make(&self, problem: &Problem) -> AnnealingParams {
-        AnnealingParams {
-            exchange_interval: self.exchange_interval,
-            start_temperature: (self.start_temperature_w1_scale * problem.weights.w1),
-            end_temperature: (self.end_temperature_w1_scale * problem.weights.w1),
-            worker_temperature_scale: self.worker_temperature_scale,
-            tabu_capacity: self.tabu_capacity,
-        }
-    }
+    pub annealing: AnnealingParamsConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -194,18 +146,18 @@ pub struct GlobalOptimizeParams {
 #[serde(deny_unknown_fields)]
 pub struct AnnealingParamsConfig {
     pub exchange_interval: usize,
-    pub start_temperature: f64,
-    pub end_temperature: f64,
+    pub start_temperature_w1_scale: f64,
+    pub end_temperature_w3_scale: f64,
     pub worker_temperature_scale: f64,
     pub tabu_capacity: usize,
 }
 
 impl AnnealingParamsConfig {
-    pub fn make(&self) -> AnnealingParams {
+    pub fn make(&self, problem: &Problem) -> AnnealingParams {
         AnnealingParams {
             exchange_interval: self.exchange_interval,
-            start_temperature: self.start_temperature,
-            end_temperature: self.end_temperature,
+            start_temperature: self.start_temperature_w1_scale * problem.weights.w1,
+            end_temperature: self.end_temperature_w3_scale * problem.weights.w3,
             worker_temperature_scale: self.worker_temperature_scale,
             tabu_capacity: self.tabu_capacity,
         }

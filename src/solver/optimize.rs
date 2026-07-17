@@ -191,7 +191,15 @@ impl AnnealingDelegate for BayAnnealingDelegate<'_> {
                 Some(self.constraints),
                 self.params,
             ),
-            NeighborKind::Swap => None,
+            NeighborKind::Swap => try_swap_neighbor(
+                self.problem,
+                self.pre,
+                &current.blocks,
+                rng,
+                Some(self.constraints),
+                true,
+                self.params,
+            ),
         };
         AnnealingAttempt {
             neighbor_kind: neighbor.index(),
@@ -271,7 +279,7 @@ impl<'a> GlobalAnnealing<'a> {
             deadline,
             worker_count,
             seed,
-            params.annealing.make(),
+            params.annealing.make(self.problem),
             delegate,
         )
         .run(self.timer)
@@ -323,11 +331,12 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
     ) -> AnnealingAttempt<Self::State> {
         let constraints =
             (self.timer.elapsed_seconds() < self.constraint_deadline).then_some(self.constraints);
-        let probabilities = if constraints.is_some() {
-            self.constrained_neighbor_params.probabilities()
+        let params = if constraints.is_some() {
+            self.constrained_neighbor_params
         } else {
-            self.params.probabilities()
+            self.params
         };
+        let probabilities = params.probabilities();
         let neighbor = sample_neighbor(rng, &probabilities);
         let blocks = match neighbor {
             NeighborKind::LargeReconstruct => try_large_reconstruct(
@@ -337,7 +346,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 &current.blocks,
                 rng,
                 accept_threshold,
-                self.params,
+                params,
             ),
             NeighborKind::Shift => try_shift_neighbor(
                 self.problem,
@@ -345,7 +354,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 &current.blocks,
                 rng,
                 constraints,
-                self.params,
+                params,
             ),
             NeighborKind::Move => try_move_neighbor(
                 self.problem,
@@ -354,7 +363,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 rng,
                 constraints,
                 None,
-                self.params,
+                params,
             ),
             NeighborKind::Rotate => try_rotate_neighbor(
                 self.problem,
@@ -362,15 +371,17 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 &current.blocks,
                 rng,
                 constraints,
-                self.params,
+                params,
             ),
-            NeighborKind::Swap => {
-                if constraints.is_some() {
-                    None
-                } else {
-                    try_swap_neighbor(self.problem, self.pre, &current.blocks, rng, self.params)
-                }
-            }
+            NeighborKind::Swap => try_swap_neighbor(
+                self.problem,
+                self.pre,
+                &current.blocks,
+                rng,
+                constraints,
+                constraints.is_some(),
+                params,
+            ),
         };
         AnnealingAttempt {
             neighbor_kind: neighbor.index(),
