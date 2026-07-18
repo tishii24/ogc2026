@@ -68,7 +68,6 @@ pub struct RuntimeParams {
     pub worker_count: usize,
     pub solver_seed: u64,
     pub preoptimize_seed: u64,
-    pub build_seed_offset: u64,
     pub local_search_time_buffer_seconds: f64,
 }
 

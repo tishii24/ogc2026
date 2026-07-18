@@ -26,7 +26,6 @@ pub mod optimize;
 pub use optimize::{BayAnnealing, BayOptimizeState, GlobalAnnealing};
 
 const NEIGHBOR_KINDS: &[&str] = &["Large", "Shift", "Move", "Rotate", "Swap"];
-const GLOBAL_UNCONSTRAINED_SEED_OFFSET: u64 = 1 << 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct PreoptimizedBlock {
@@ -153,7 +152,6 @@ pub fn solve(
         timer,
         params.runtime.worker_count,
         params.runtime.solver_seed,
-        params.runtime.build_seed_offset,
         &params.bay_neighbor,
         params.preoptimize.precedence_margin,
     )
@@ -195,10 +193,7 @@ pub fn solve(
         &params.global_optimize,
         &params.global_neighbor,
         false,
-        params
-            .runtime
-            .solver_seed
-            .wrapping_add(GLOBAL_UNCONSTRAINED_SEED_OFFSET),
+        params.runtime.solver_seed.wrapping_add(1 << 32),
         params.runtime.worker_count,
     );
     Ok(schedule_to_solution(&best.blocks))
@@ -212,7 +207,6 @@ pub fn build_optimize_state(
     timer: Timer,
     max_worker_count: usize,
     seed: u64,
-    seed_offset: u64,
     neighbor_params: &NeighborParams,
     precedence_margin: i64,
 ) -> Option<OptimizeState> {
@@ -233,10 +227,8 @@ pub fn build_optimize_state(
     let worker_trials: Vec<_> = (0..worker_count)
         .into_par_iter()
         .map(|worker_id| {
-            let mut rng = RandPcg64Mcg::new(
-                seed.wrapping_add(seed_offset)
-                    .wrapping_add(worker_id as u64),
-            );
+            let mut rng =
+                RandPcg64Mcg::new(seed.wrapping_add(1 << 16).wrapping_add(worker_id as u64));
             let mut trials = 0usize;
 
             while timer.elapsed_seconds() < build_deadline {

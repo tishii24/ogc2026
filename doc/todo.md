@@ -2,12 +2,12 @@ todo:
 - refactor
 - 温度の調整
 - 順序制約のwindow幅を大きくして制限を緩くする
-- bay.area * block-count に比例してリソースを与える
 - pre.block-areaの修正
   - unionを使う
 - reconstructの改善
   - targeted-reconstruct
-  - obj23を軽視する
+  - obj2を軽視する
+- preoptimizeの改善
 - 高速化
 - kick
 - safety

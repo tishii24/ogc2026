@@ -2,7 +2,6 @@ runtime:
   worker_count: 4
   solver_seed: 1
   preoptimize_seed: 2
-  build_seed_offset: 20000
   local_search_time_buffer_seconds: 3.0
 
 phases:
@@ -23,8 +22,8 @@ precompute:
 preoptimize:
   alpha: 0.8
   beta: 0.1
-  bay_padding: 0.0
-  precedence_margin: 1
+  bay_padding: 2.0
+  precedence_margin: 5
   congestion_weight: 0.001
   exchange_threshold_w1_scale: 1.0
   neighbor_probabilities:
@@ -93,11 +92,5 @@ optimize_neighbor:
     swap_max_shift_delta: 2
     move_sample_blocks: 16
     move_small_pool_size: 8
-  bay:
-    probabilities:
-      large_reconstruct: 0.2
-      shift: 3.0
-      move: 0.1
-      rotate: 0.5
-      swap: 3.0
+  bay: {}
   global: {}
