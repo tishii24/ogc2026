@@ -1,7 +1,10 @@
 todo:
 - refactor
+- target-bay
+- 良い解ではブロック同士が重なっているか確認する
+- precompute-pair-wise
 - 温度の調整
-- 順序制約のwindow幅を大きくして制限を緩くする
+- preoptimizeを途中で打ち切る
 - pre.block-areaの修正
   - unionを使う
 - reconstructの改善

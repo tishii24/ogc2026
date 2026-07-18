@@ -5,8 +5,8 @@ use crate::{
     precompute::Precompute,
     preoptimize::{PreoptimizePrecompute, preoptimize},
     solver_util::{
-        NeighborKind, block_pref_spread, gen_rangef, schedule_to_solution, score_schedule,
-        score13_block,
+        NeighborKind, block_pref_spread, gen_rangef, schedule_tardiness, schedule_to_solution,
+        score_schedule, score13_block,
     },
     util::{
         rand::{RandPcg64Mcg, Random},
@@ -105,62 +105,93 @@ pub fn solve(
 ) -> Result<Solution, String> {
     let deadline = timelimit - params.runtime.local_search_time_buffer_seconds;
 
-    log!(
-        "[{:.4}] building preoptimize precompute...",
-        timer.elapsed_seconds()
-    );
-    let preoptimize_pre = PreoptimizePrecompute::build(problem)?;
-    log!(
-        "[{:.4}] preoptimize precompute built",
-        timer.elapsed_seconds()
-    );
     log!("[{:.4}] building precompute...", timer.elapsed_seconds());
     let pre = Precompute::build(problem, &params.precompute);
     log!("[{:.4}] precompute built", timer.elapsed_seconds());
 
-    let initial_time_limit = phase_time_limit(
+    let greedy_time_limit = phase_time_limit(
         timelimit,
-        params.phases.initial_preoptimize.time_ratio,
-        params.phases.initial_preoptimize.max_seconds,
+        params.phases.initial_greedy.time_ratio,
+        params.phases.initial_greedy.max_seconds,
     )
     .min((deadline - timer.elapsed_seconds()).max(1e-4));
-    let initial_abstract = preoptimize(
-        problem,
-        &preoptimize_pre,
-        &params.preoptimize,
-        &params.global_neighbor,
-        initial_time_limit,
-        params.runtime.worker_count,
-        params.runtime.preoptimize_seed,
-    )?;
-    log!(
-        "[{:.4}] initial abstract score: {:.3}",
-        timer.elapsed_seconds(),
-        initial_abstract.score
-    );
-    let build_time_limit = phase_time_limit(
-        timelimit,
-        params.phases.initial_build.time_ratio,
-        params.phases.initial_build.max_seconds,
-    )
-    .min((deadline - timer.elapsed_seconds()).max(1e-4));
-    let initial = build_optimize_state(
+    let greedy = build_initial_optimize_state(
         problem,
         &pre,
-        &initial_abstract,
-        build_time_limit,
+        greedy_time_limit,
         timer,
         params.runtime.worker_count,
         params.runtime.solver_seed,
         &params.global_neighbor,
-        params.preoptimize.precedence_margin,
     )
-    .ok_or_else(|| "failed to build initial optimize state".to_string())?;
+    .ok_or_else(|| "failed to build greedy optimize state".to_string())?;
+    let greedy_tardiness = schedule_tardiness(problem, &greedy.blocks);
     log!(
-        "[{:.4}] initial optimize score: {:.3}",
+        "[{:.4}] initial greedy score: {:.3}, tardiness={}",
         timer.elapsed_seconds(),
-        initial.score
+        greedy.score,
+        greedy_tardiness,
     );
+
+    let (initial, initial_abstract, constrained) = if greedy_tardiness == 0 {
+        log!("[{:.4}] preoptimize skipped", timer.elapsed_seconds(),);
+        let initial_abstract = to_preoptimize_state(&greedy);
+        (greedy, initial_abstract, false)
+    } else {
+        log!(
+            "[{:.4}] building preoptimize precompute...",
+            timer.elapsed_seconds()
+        );
+        let preoptimize_pre = PreoptimizePrecompute::build(problem)?;
+        log!(
+            "[{:.4}] preoptimize precompute built",
+            timer.elapsed_seconds()
+        );
+        let preoptimize_time_limit = phase_time_limit(
+            timelimit,
+            params.phases.initial_preoptimize.time_ratio,
+            params.phases.initial_preoptimize.max_seconds,
+        )
+        .min((deadline - timer.elapsed_seconds()).max(1e-4));
+        let initial_abstract = preoptimize(
+            problem,
+            &preoptimize_pre,
+            &params.preoptimize,
+            &params.global_neighbor,
+            preoptimize_time_limit,
+            params.runtime.worker_count,
+            params.runtime.preoptimize_seed,
+        )?;
+        log!(
+            "[{:.4}] initial abstract score: {:.3}",
+            timer.elapsed_seconds(),
+            initial_abstract.score
+        );
+        let build_time_limit = phase_time_limit(
+            timelimit,
+            params.phases.initial_build.time_ratio,
+            params.phases.initial_build.max_seconds,
+        )
+        .min((deadline - timer.elapsed_seconds()).max(1e-4));
+        let initial = build_optimize_state(
+            problem,
+            &pre,
+            &initial_abstract,
+            build_time_limit,
+            timer,
+            params.runtime.worker_count,
+            params.runtime.solver_seed,
+            &params.global_neighbor,
+            params.preoptimize.precedence_margin,
+        )
+        .ok_or_else(|| "failed to build initial optimize state".to_string())?;
+        log!(
+            "[{:.4}] initial optimize score: {:.3}",
+            timer.elapsed_seconds(),
+            initial.score
+        );
+        (initial, initial_abstract, true)
+    };
 
     let global = GlobalAnnealing::new(
         problem,
@@ -169,23 +200,28 @@ pub fn solve(
         params.preoptimize.precedence_margin,
         timer,
     );
-    let global_start = timer.elapsed_seconds();
-    let constrained_deadline = global_start
-        + (deadline - global_start).max(0.0) * params.phases.global_constrained_time_ratio;
-    let initial = global.run(
-        initial,
-        constrained_deadline,
-        &params.global_optimize,
-        &params.global_neighbor,
-        true,
-        params.runtime.solver_seed,
-        params.runtime.worker_count,
-    );
-    log!(
-        "[{:.4}] constrained global annealing score: {:.3}",
-        timer.elapsed_seconds(),
-        initial.score
-    );
+    let initial = if constrained {
+        let global_start = timer.elapsed_seconds();
+        let constrained_deadline = global_start
+            + (deadline - global_start).max(0.0) * params.phases.global_constrained_time_ratio;
+        let initial = global.run(
+            initial,
+            constrained_deadline,
+            &params.global_optimize,
+            &params.global_neighbor,
+            true,
+            params.runtime.solver_seed,
+            params.runtime.worker_count,
+        );
+        log!(
+            "[{:.4}] constrained global annealing score: {:.3}",
+            timer.elapsed_seconds(),
+            initial.score
+        );
+        initial
+    } else {
+        initial
+    };
 
     let best = global.run(
         initial,
@@ -197,6 +233,32 @@ pub fn solve(
         params.runtime.worker_count,
     );
     Ok(schedule_to_solution(&best.blocks))
+}
+
+pub fn build_initial_optimize_state(
+    problem: &Problem,
+    pre: &Precompute,
+    time_limit: f64,
+    timer: Timer,
+    max_worker_count: usize,
+    seed: u64,
+    neighbor_params: &NeighborParams,
+) -> Option<OptimizeState> {
+    let block_count = problem.blocks.len();
+    let constraints = PrecedenceConstraints {
+        befores: vec![Vec::new(); block_count],
+        afters: vec![Vec::new(); block_count],
+    };
+    build_optimize_state_with_constraints(
+        problem,
+        pre,
+        &constraints,
+        time_limit,
+        timer,
+        max_worker_count,
+        seed,
+        neighbor_params,
+    )
 }
 
 pub fn build_optimize_state(
@@ -211,6 +273,28 @@ pub fn build_optimize_state(
     precedence_margin: i64,
 ) -> Option<OptimizeState> {
     let constraints = build_precedence_constraints(problem, state, precedence_margin);
+    build_optimize_state_with_constraints(
+        problem,
+        pre,
+        &constraints,
+        time_limit,
+        timer,
+        max_worker_count,
+        seed,
+        neighbor_params,
+    )
+}
+
+fn build_optimize_state_with_constraints(
+    problem: &Problem,
+    pre: &Precompute,
+    constraints: &PrecedenceConstraints,
+    time_limit: f64,
+    timer: Timer,
+    max_worker_count: usize,
+    seed: u64,
+    neighbor_params: &NeighborParams,
+) -> Option<OptimizeState> {
     let block_ids: Vec<_> = (0..problem.blocks.len()).collect();
     if block_ids.is_empty() {
         return Some(OptimizeState {
@@ -237,7 +321,7 @@ pub fn build_optimize_state(
                     problem,
                     pre,
                     &block_ids,
-                    &constraints,
+                    constraints,
                     weights,
                     &mut rng,
                 );
@@ -247,7 +331,7 @@ pub fn build_optimize_state(
                 }
 
                 let Some(blocks) =
-                    build_schedule(problem, pre, &order, &constraints, neighbor_params)
+                    build_schedule(problem, pre, &order, constraints, neighbor_params)
                 else {
                     continue;
                 };

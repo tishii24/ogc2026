@@ -6,24 +6,26 @@ targeted-reconstruct:
 - 削除されたブロックの再挿入を、reconstructと同様に順番を決めてから、insert-greedyで行う
 
 解法:
-P = (alpha, beta)
 S = 状態
-s = 抽象解（entry-t）
-1. Pを適当な値に設定して、preoptimizeを実行することで抽象解sを得る
-  - 各時刻で「ベイごとの面積の総和」を「その時刻に存在するブロックの占有面積の総和」が超えないようにする
-  - ブロックをどのbayに置くかは区別しない
-  - ベイごとの面積は固定paddingを持たせて計算する
-    - ベイごとの面積の総和 = \sum_bay (bay.width-padding) * (bay.height-padding)
-  - tardiness=0が達成できたら、min(cur-t+buffer-t,deadline)に終了する
-  - 評価: 状態sのtardiness + 余裕
-2. sをもとに順序制約を計算する
-  - (i,j)について、end[i]+D<=start[j]なら順序を固定する
-  - befores[i] := iより前におく必要があるブロック/
-  - afters[i] := iより後におく必要があるブロック
-  - D := 余裕を持たせるパラメータ
-3. 前から順に詰めて貪欲解を作成する
-  - 一度tardiness=0が達成できれば、順序制約を使用しない
-4. annealing
+
+1. 貪欲解を作成して、preoptimizeを実行するか決める
+  - 一定時間を使用する
+  - tardiness=0の解ができれば、preoptimizeを実行せずに、annealingの初期解として使用する
+2. preoptimizeを実行する場合
+  1. preoptimizeを実行することで抽象解s(entry-t)を得る
+    - 各時刻で「ベイごとの面積の総和」を「その時刻に存在するブロックの占有面積の総和」が超えないようにする
+    - ブロックをどのbayに置くかは区別しない
+    - ベイごとの面積は固定paddingを持たせて計算する
+      - ベイごとの面積の総和 = \sum_bay (bay.width-padding) * (bay.height-padding)
+    - tardiness=0が達成できたら、min(cur-t+buffer-t,deadline)に終了する
+    - 評価: 状態sのtardiness + 余裕
+  2. sをもとに順序制約を計算する
+    - (i,j)について、end[i]+D<=start[j]なら順序を固定する
+    - befores[i] := iより前におく必要があるブロック
+    - afters[i] := iより後におく必要があるブロック
+    - D := 余裕を持たせるパラメータ
+  3. 順序制約を守りながら貪欲解を作成する
+3. annealing
   - tardiness=0の場合
     - TODO: 以下を定期的に繰り返す
       - k個を取り出して、obj2,obj3の最小化をするbay-idの組合せtarget-bayを求める

@@ -5,12 +5,15 @@ runtime:
   local_search_time_buffer_seconds: 3.0
 
 phases:
+  initial_greedy:
+    time_ratio: 0.1
+    max_seconds: 20.0
   initial_preoptimize:
     time_ratio: 0.1
     max_seconds: 20.0
   initial_build:
-    time_ratio: 0.1
-    max_seconds: 20.0
+    time_ratio: 0.05
+    max_seconds: 10.0
   global_constrained_time_ratio: 0.25
 
 precompute:
@@ -22,7 +25,7 @@ preoptimize:
   alpha: 0.8
   beta: 0.1
   bay_padding: 2.0
-  precedence_margin: 5
+  precedence_margin: 2
   congestion_weight: 0.001
   exchange_threshold_w1_scale: 1.0
   neighbor_probabilities:
@@ -44,14 +47,12 @@ preoptimize:
     worker_temperature_scale: 0.0
     tabu_capacity: 4096
 
-
-
 global_optimize:
   exchange_threshold_w1_scale: 1.0
   annealing:
     exchange_interval: 2048
-    start_temperature: 10.0
-    end_temperature: 0.01
+    start_temperature: 1000.0
+    end_temperature: 1.0
     worker_temperature_scale: 10.0
     tabu_capacity: 4096
 
