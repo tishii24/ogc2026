@@ -1,5 +1,6 @@
 use crate::{
     insert::{InsertSearchParams, insert_greedy, try_place_block},
+    log,
     params::{NeighborParams, SolverParams},
     precompute::Precompute,
     preoptimize::{PreoptimizePrecompute, preoptimize},
@@ -19,12 +20,6 @@ use std::{
     collections::{BinaryHeap, HashSet},
     sync::Mutex,
 };
-
-macro_rules! log {
-    ($timer:expr, $($arg:tt)*) => {
-        eprintln!("[{:.4}] {}", $timer.elapsed_seconds(), format_args!($($arg)*))
-    };
-}
 
 pub mod optimize;
 
@@ -113,12 +108,18 @@ pub fn solve(
 ) -> Result<Solution, String> {
     let deadline = timelimit - params.runtime.local_search_time_buffer_seconds;
 
-    log!(timer, "building preoptimize precompute...");
+    log!(
+        "[{:.4}] building preoptimize precompute...",
+        timer.elapsed_seconds()
+    );
     let preoptimize_pre = PreoptimizePrecompute::build(problem)?;
-    log!(timer, "preoptimize precompute built");
-    log!(timer, "building precompute...");
+    log!(
+        "[{:.4}] preoptimize precompute built",
+        timer.elapsed_seconds()
+    );
+    log!("[{:.4}] building precompute...", timer.elapsed_seconds());
     let pre = Precompute::build(problem, &params.precompute);
-    log!(timer, "precompute built");
+    log!("[{:.4}] precompute built", timer.elapsed_seconds());
 
     let initial_time_limit = phase_time_limit(
         timelimit,
@@ -136,8 +137,8 @@ pub fn solve(
         params.runtime.preoptimize_seed,
     )?;
     log!(
-        timer,
-        "initial abstract score: {:.3}",
+        "[{:.4}] initial abstract score: {:.3}",
+        timer.elapsed_seconds(),
         initial_abstract.score
     );
     let build_time_limit = phase_time_limit(
@@ -158,7 +159,11 @@ pub fn solve(
         &params.bay_neighbor,
     )
     .ok_or_else(|| "failed to build initial optimize state".to_string())?;
-    log!(timer, "initial optimize score: {:.3}", initial.score);
+    log!(
+        "[{:.4}] initial optimize score: {:.3}",
+        timer.elapsed_seconds(),
+        initial.score
+    );
 
     let bay_start = timer.elapsed_seconds();
     let bay_time_limit =
@@ -172,7 +177,11 @@ pub fn solve(
         params.runtime.solver_seed,
         params.runtime.worker_count,
     );
-    log!(timer, "bay annealing score: {:.3}", initial.score);
+    log!(
+        "[{:.4}] bay annealing score: {:.3}",
+        timer.elapsed_seconds(),
+        initial.score
+    );
 
     let global = GlobalAnnealing::new(problem, &pre, &initial_abstract, timer);
     let global_start = timer.elapsed_seconds();
@@ -188,8 +197,8 @@ pub fn solve(
         params.runtime.worker_count,
     );
     log!(
-        timer,
-        "constrained global annealing score: {:.3}",
+        "[{:.4}] constrained global annealing score: {:.3}",
+        timer.elapsed_seconds(),
         initial.score
     );
 
@@ -287,7 +296,7 @@ pub fn build_optimize_state(
                 {
                     *best = Some((tardiness, schedule));
 
-                    eprintln!(
+                    log!(
                         "[{:.4}] [build] best: worker={}, bay={}, tardiness={}",
                         timer.elapsed_seconds(),
                         worker_id,
@@ -301,7 +310,7 @@ pub fn build_optimize_state(
         .collect();
 
     for (worker_id, trials) in worker_trials.into_iter().enumerate() {
-        eprintln!(
+        log!(
             "[{:.4}] [build worker={}] trials={}",
             timer.elapsed_seconds(),
             worker_id,
@@ -318,7 +327,7 @@ pub fn build_optimize_state(
     for bay_id in active_bays {
         let (tardiness, schedule) = bests[bay_id].take()?;
 
-        eprintln!(
+        log!(
             "[{:.4}] [build] result: bay={}, tardiness={}",
             timer.elapsed_seconds(),
             bay_id,
@@ -329,7 +338,7 @@ pub fn build_optimize_state(
     }
 
     let score = score_schedule(problem, pre, &blocks);
-    eprintln!(
+    log!(
         "[{:.4}] [build] finished: score={:.3}",
         timer.elapsed_seconds(),
         score,

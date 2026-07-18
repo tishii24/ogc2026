@@ -142,17 +142,20 @@ def latest_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     return [item[2] for item in latest.values()]
 
 
-def compute_best_counts(rows: list[dict[str, str]]) -> dict[tuple[str, float], int]:
-    by_case: dict[tuple[float, str], list[dict[str, str]]] = defaultdict(list)
+def compute_best_counts(
+    rows: list[dict[str, str]], cases: list[str]
+) -> dict[tuple[str, float], int]:
+    target_cases = set(cases)
+    by_case: dict[str, list[dict[str, str]]] = defaultdict(list)
     for row in rows:
         timelimit = parse_float(row.get("timelimit", ""))
         case = row.get("case", "")
-        if timelimit is None or not case:
+        if timelimit is None or case not in target_cases:
             continue
-        by_case[(timelimit, case)].append(row)
+        by_case[case].append(row)
 
     best_counts: dict[tuple[str, float], int] = defaultdict(int)
-    for (timelimit, _case), case_rows in by_case.items():
+    for case_rows in by_case.values():
         feasible_rows = [
             row
             for row in case_rows
@@ -171,8 +174,9 @@ def compute_best_counts(rows: list[dict[str, str]]) -> dict[tuple[str, float], i
         for row in feasible_rows:
             objective = parse_float(row.get("objective", ""))
             if objective is not None and objective == best_objective:
-                version = row.get("version", "")
-                best_counts[(version, timelimit)] += 1
+                key = row_key(row)
+                if key is not None:
+                    best_counts[key] += 1
 
     return best_counts
 
@@ -201,7 +205,9 @@ def load_case_weights(root: Path, case: str) -> tuple[float, float, float]:
 
 
 def compute_relative_scores(
-    rows: list[dict[str, str]], cases: list[str] | None = None
+    rows: list[dict[str, str]],
+    cases: list[str] | None = None,
+    best_rows: list[dict[str, str]] | None = None,
 ) -> dict[tuple[str, float], float]:
     row_keys = sorted(
         {key for row in rows if (key := row_key(row)) is not None},
@@ -221,29 +227,22 @@ def compute_relative_scores(
         if (key := row_key(row)) is not None and row.get("case", "")
     }
 
-    timelimits = sorted({key[1] for key in row_keys})
-    best_by_case: dict[tuple[float, str], float] = {}
-    for timelimit in timelimits:
-        for case in cases:
-            objectives = []
-            for version, tl in row_keys:
-                if tl != timelimit:
-                    continue
-                row = by_key.get((version, tl, case))
-                objective = parse_float(row.get("objective", "")) if row else None
-                if (
-                    row
-                    and parse_bool(row.get("feasible", ""))
-                    and objective is not None
-                ):
-                    objectives.append(objective)
-            if objectives:
-                best_by_case[(timelimit, case)] = min(objectives)
+    best_by_case: dict[str, float] = {}
+    for case in cases:
+        objectives = []
+        for row in (best_rows if best_rows is not None else rows):
+            if row.get("case", "") != case:
+                continue
+            objective = parse_float(row.get("objective", ""))
+            if parse_bool(row.get("feasible", "")) and objective is not None:
+                objectives.append(objective)
+        if objectives:
+            best_by_case[case] = min(objectives)
 
     relative_scores = {key: 0.0 for key in row_keys}
     for version, timelimit in row_keys:
         for case in cases:
-            best = best_by_case.get((timelimit, case))
+            best = best_by_case.get(case)
             if best is None:
                 continue
             row = by_key.get((version, timelimit, case))
@@ -252,9 +251,12 @@ def compute_relative_scores(
                 row
                 and parse_bool(row.get("feasible", ""))
                 and objective is not None
-                and objective > 0
+                and objective >= 0
             ):
-                relative_scores[(version, timelimit)] += best / objective
+                if objective == 0:
+                    relative_scores[(version, timelimit)] += float(best == 0)
+                else:
+                    relative_scores[(version, timelimit)] += best / objective
 
     return relative_scores
 
@@ -314,9 +316,15 @@ def summarize(
     cases: list[str] | None = None,
     best_rows: list[dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
-    best_counts = compute_best_counts(best_rows if best_rows is not None else rows)
+    score_cases = cases or sorted(
+        {row.get("case", "") for row in rows if row.get("case", "")},
+        key=lambda case: natural_key(case_label(case)),
+    )
+    best_counts = compute_best_counts(
+        best_rows if best_rows is not None else rows, score_cases
+    )
     rank_scores = compute_rank_scores(rows, cases)
-    relative_scores = compute_relative_scores(rows, cases)
+    relative_scores = compute_relative_scores(rows, cases, best_rows)
     groups: dict[tuple[str, float], dict[str, Any]] = {}
     weights_by_case: dict[str, tuple[float, float, float]] = {}
 
@@ -517,6 +525,7 @@ def main() -> int:
         rows = list(csv.DictReader(f))
 
     rows = latest_rows(rows)
+    best_rows = rows
     if args.tl is not None:
         rows = [
             row
@@ -531,7 +540,6 @@ def main() -> int:
         print("error: no valid rows found", file=sys.stderr)
         return 1
 
-    best_rows = rows
     if args.last_versions is not None:
         if args.last_versions <= 0:
             print("error: --last-versions must be positive", file=sys.stderr)

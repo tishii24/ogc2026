@@ -6,7 +6,7 @@ use std::process;
 use std::time::Instant;
 
 use ogc2026::{
-    Problem,
+    Problem, log,
     params::SolverParams,
     preoptimize::{PreoptimizePrecompute, preoptimize},
 };
@@ -48,7 +48,7 @@ fn run() -> Result<(), String> {
         params.runtime.preoptimize_seed,
     )?;
 
-    eprintln!(
+    log!(
         "preoptimize: objective={:.3}, elapsed={:.3}s",
         result.score,
         start.elapsed().as_secs_f64()

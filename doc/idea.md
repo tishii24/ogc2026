@@ -1,6 +1,3 @@
-- LPで下界を求めて、その割り当てに近くなるように評価項を入れる
-- LPで一部のbay-id割り当てだけ最適化
-
 targeted-reconstruct:
 - tardinessが大きいブロックを一つ選ぶ
 - ブロックのentry-t=release-tに固定して、最も影響が少ない箇所への挿入を試す
@@ -8,65 +5,33 @@ targeted-reconstruct:
 - 干渉するブロックを全て削除する
 - 削除されたブロックの再挿入を、reconstructと同様に順番を決めてから、insert-greedyで行う
 
-preoptimize: MILPソルバーによって近似問題の解を求める
-- (bay-id, entry-t)だけを変数とする
-  - exit-tはentry-t + process-tとして良い
-- 元の問題のスコアを最小化する
-- ブロックの位置（x,y）は決めない
-- 代わりに、各時刻tにおいて、各bayに存在するブロックの占有面積の総和がbayの面積を超えないことを制約とする
-- ブロックiをbay jに配置した時の占有面積s_{i,j}は以下で定義する
-  - s_{i,j} := a_i + \alpha * (b_i - a_i) + c_j
-    - a_i := ブロックiの各layerのunionを取った図形の面積
-    - b_i := ブロックiの各layerのunionを取った図形のbboxの面積
-    - c_j := bay jに一つ配置することで増える占有面積（多いブロックほど配置しづらくなることを表す）
-      - c_j := \beta * min(bay.width, bay.height)
-- 占有面積のパラメータとして、Pがある
-- MILPソルバーによって、Pの元での(bay-id, entry-t)が得られる
-- note: \alpha = \beta = 0 とすると、充填率100%となり、厳密な下界が得られるはず？
-
-課題:
-- Pの設定
-  - 無駄な誘導解Sに向かう時間を無くしたい
-  - 実行不可能な(alpha,beta)に向かう時間も避けたい
-- いつ制約を無くすべきか
-- どのように誘導解に向かうか
-
 解法:
 P = (alpha, beta)
 S = 状態
 s = 抽象解（bay-id, entry-t）
 1. Pを適当な値に設定して、preoptimizeを実行することで抽象解sを得る
-  - 評価: 状態sの生スコア
-  - TODO: 詰めやすさをタイブレークのスコアとして導入する
+  - 各時刻でベイごとの面積の総和を占有面積が超えないようにする
+  - ベイごとの面積は固定paddingを持たせて計算する
+  - 評価: 状態sの生スコア + 余裕
 2. sをもとに順序制約を計算する
-  - (i,j)について、end[i]<=start[j]なら順序を固定する
-  - befores[i] := iより前におく必要があるブロック
+  - (i,j)について、end[i]+D<=start[j]なら順序を固定する
+  - befores[i] := iより前におく必要があるブロック/
   - afters[i] := iより後におく必要があるブロック
-  - TODO: 推移辺を削除する
-3. bayごとに前から順に詰めて貪欲解を作成する
-  - reconstruct-orderのように、ブロックごとの評価を試行ごとに計算する
-  - orderを作成する
-    - aftersを使ってトポロジカル順で取り出す
-    - binaryheapに入れて、先頭を取り出すことを繰り返す
-  - orderはhashで重複除去をする
-  - bayごとに独立にbestを作成する
-4. bayごとに独立にannealing
-  - 順序制約を守る
-    - (entry_min_t, entry_max_t) をbefores,aftersをもとに求める
-  - 目標tardinessに達成した/ら、そのbayでの探索はもう行わない
-  - 各workerは全てのbayを保持して並列で実行する
-  - 各workerはbayごとにshared bestの更新と、一定周期でbayごとのshared bestを見に行ってbestの取得を行う
-  - 各workerはbayをランダムに選び、近傍の適用をすることを1ターンとする
-5. bay間の移動も許してannealing
+  - D := 余裕を持たせるパラメータ
+3. 前から順に詰めて貪欲解を作成する
+4. annealing
+  - 途中まで順序制約を持たせて探索する
+  - tardiness=0の場合
+    - TODO: 以下を定期的に繰り返す
+      - k個を取り出して、obj2,obj3の最小化をするbay-idの組合せtarget-bayを求める
+      - k個の取り出し方はいくつか試して、現在の状態からの差分とスコアの改善幅のバランスで良いものを選ぶ
+      - target-bayを固定して、挿入先をそれに固定してしばらく探索する
+  - tardiness>0の場合
+    - global-annealing
 
-外側のPループはstateを引き継ぐのが大変そうなのでやらない
-代わりに、preoptimizeの近傍を追加・評価を正確にして、ちょっときつめのPを（なんとか）推定して使うようにする
-これによって、小さいケースでは厳密な解が得られ、大きいケースではtardinessを最小化する解が得られているはずである
-
-- 余裕を持ってtardiness=0
+- tardiness=0
   - bayを緩和ソルバーで求めた方が、最適解を得やすい
-- tardiness=0になるかならないか
-  - bayを固定しない方がtardinessを0にできる場合がある
-  - global-searchになってから初めてtardinessを0にできるため、事前にbayごとに最適化するメリットが薄い？
-- 頑張ってもtardiness>0
-  - bayを固定しない方がtardinessを小さくできる場合がある
+  - が、なるかならないかと一緒に対応したい
+- tardiness=0になるかならないか・頑張ってもtardiness>0
+  - bayを固定しない方がtardinessを小さくできる・0にできる場合がある
+  - global-searchになってから初めてtardinessを0にできるため、事前にbayごとに最適化するメリットが薄そう

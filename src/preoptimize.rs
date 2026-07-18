@@ -1,6 +1,7 @@
 use crate::{
     Bay, Orientation, Problem,
     annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
+    log,
     params::{NeighborParams, PreoptimizeSolverParams},
     solver::{PreoptimizeState, PreoptimizedBlock, sort_default_reconstruct_order},
     util::{
@@ -939,9 +940,10 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
             &state.schedule,
         )
         .0;
-        eprintln!(
+        log!(
             "[preopt] objective: official={score:.3}, congestion={:.3}, search={:.3}",
-            state.congestion, state.objective,
+            state.congestion,
+            state.objective,
         );
         PreoptimizeState {
             score,

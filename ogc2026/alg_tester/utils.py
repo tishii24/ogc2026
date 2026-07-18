@@ -1,3 +1,4 @@
+# type: ignore
 """
 utils.py -- Bay/Block geometry and feasibility checking utilities
 
@@ -150,10 +151,10 @@ def _anchor_layers(layers: list) -> list:
     """
     all_verts = [v for line in layers for v in line]
     if not all_verts:
-        return [list(l) for l in layers]
+        return [list(line) for line in layers]
     min_x = min(v[0] for v in all_verts)
     min_y = min(v[1] for v in all_verts)
-    return [[[x - min_x, y - min_y] for x, y in l] for l in layers]
+    return [[[x - min_x, y - min_y] for x, y in line] for line in layers]
 
 
 def _translate_verts(verts: list, dx: float, dy: float) -> list:
@@ -308,8 +309,8 @@ class Block:
         if layers:
             ref_x, ref_y = layers[0][0] if layers[0] else (0.0, 0.0)
             object.__setattr__(self, '_layers_cache',
-                               [_translate_verts(l, self.x - ref_x, self.y - ref_y)
-                                for l in layers])
+                               [_translate_verts(line, self.x - ref_x, self.y - ref_y)
+                                for line in layers])
         else:
             object.__setattr__(self, '_layers_cache', [])
 
@@ -536,7 +537,7 @@ def check_collisions(bay: Bay, blocks: list[Block],
                         block_a=ba,
                         block_b=bb,
                         layer_index=k,
-                        intersection=inter,
+                        intersection=inter, # type: ignore
                     ))
 
     return results
@@ -672,7 +673,7 @@ def check_entry(bay: Bay, blocks: list[Block],
                     existing_block=new_block,  # self-reference sentinel for boundary violation
                     new_layer=0,
                     exist_layer=0,
-                    intersection=outside,
+                    intersection=outside, # type: ignore
                 ))
         return results
 
@@ -714,7 +715,7 @@ def check_entry(bay: Bay, blocks: list[Block],
                         existing_block=exist,
                         new_layer=k,
                         exist_layer=j,
-                        intersection=inter,
+                        intersection=inter, # type: ignore
                     )
                     if fast:
                         return [obs]

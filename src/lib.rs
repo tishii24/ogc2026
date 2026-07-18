@@ -1,3 +1,14 @@
+pub const ENABLE_LOG: bool = true;
+
+#[macro_export]
+macro_rules! log {
+    ($($arg:tt)*) => {{
+        if $crate::ENABLE_LOG {
+            eprintln!($($arg)*);
+        }
+    }};
+}
+
 pub mod annealing;
 pub mod collision;
 pub mod insert;

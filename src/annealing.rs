@@ -6,9 +6,12 @@ use std::{
 
 use rayon::prelude::*;
 
-use crate::util::{
-    rand::{RandPcg64Mcg, Random},
-    time::Timer,
+use crate::{
+    log,
+    util::{
+        rand::{RandPcg64Mcg, Random},
+        time::Timer,
+    },
 };
 
 const EPS: f64 = 1e-9;
@@ -329,7 +332,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
             .collect();
         let states: Vec<_> = shared.into_iter().map(SharedBest::into_inner).collect();
         for worker in &worker_results {
-            eprintln!(
+            log!(
                 "[{:.4}] [{:8} worker={}] iter={:8}, accepted={:8}, improved={:8}, active_domains={:8}, current={:?}, local_best={:?}, start_temp={:.6}, end_temp={:.6}\nneighbor stats:\n{}",
                 timer.elapsed_seconds(),
                 self.delegate.name(),
@@ -346,7 +349,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
             );
         }
         for (domain, state) in states.iter().enumerate() {
-            eprintln!(
+            log!(
                 "[{:.4}] [{}] result: domain={}, best={:.3}, finished={}",
                 timer.elapsed_seconds(),
                 self.delegate.name(),
@@ -466,7 +469,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
             if candidate_score + EPS < local.local_best_score {
                 local.local_best_score = candidate_score;
                 improved += 1;
-                eprintln!(
+                log!(
                     "[{:.4}] [{}]  local best: worker={}, domain={}, iter={:8}, score={:.3}",
                     timer.elapsed_seconds(),
                     self.delegate.name(),
@@ -476,7 +479,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
                     candidate_score,
                 );
                 if shared[domain].update(&local.current) {
-                    eprintln!(
+                    log!(
                         "[{:.4}] [{}] shared best: worker={}, domain={}, iter={:8}, score={:.3}",
                         timer.elapsed_seconds(),
                         self.delegate.name(),

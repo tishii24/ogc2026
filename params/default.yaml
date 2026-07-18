@@ -8,11 +8,11 @@ runtime:
 phases:
   initial_preoptimize:
     time_ratio: 0.1
-    max_seconds: 10.0
+    max_seconds: 20.0
   initial_build:
     time_ratio: 0.1
-    max_seconds: 10.0
-  bay_optimize_time_ratio: 0.3
+    max_seconds: 20.0
+  bay_optimize_time_ratio: 0.0
   global_constrained_time_ratio: 0.25
 
 precompute:
@@ -66,9 +66,9 @@ optimize_neighbor:
   default:
     probabilities:
       large_reconstruct: 0.2
-      shift: 8.0
+      shift: 3.0
       move: 0.1
-      rotate: 8.0
+      rotate: 0.5
       swap: 3.0
     min_removed_blocks: 7
     max_removed_blocks: 13
@@ -94,8 +94,8 @@ optimize_neighbor:
   bay:
     probabilities:
       large_reconstruct: 0.2
-      shift: 8.0
+      shift: 3.0
       move: 0.1
-      rotate: 8.0
+      rotate: 0.5
       swap: 3.0
   global: {}
