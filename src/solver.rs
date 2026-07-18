@@ -30,7 +30,6 @@ const GLOBAL_UNCONSTRAINED_SEED_OFFSET: u64 = 1 << 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct PreoptimizedBlock {
-    pub bay_id: usize,
     pub entry_time: i64,
 }
 
@@ -76,7 +75,6 @@ pub fn to_preoptimize_state(state: &OptimizeState) -> PreoptimizeState {
         blocks: ordered
             .into_iter()
             .map(|scheduled| PreoptimizedBlock {
-                bay_id: scheduled.bay_id,
                 entry_time: scheduled.entry_time,
             })
             .collect(),
@@ -157,6 +155,7 @@ pub fn solve(
         params.runtime.solver_seed,
         params.runtime.build_seed_offset,
         &params.bay_neighbor,
+        params.preoptimize.precedence_margin,
     )
     .ok_or_else(|| "failed to build initial optimize state".to_string())?;
     log!(
@@ -165,25 +164,13 @@ pub fn solve(
         initial.score
     );
 
-    let bay_start = timer.elapsed_seconds();
-    let bay_time_limit =
-        (timelimit * params.phases.bay_optimize_time_ratio).min((deadline - bay_start).max(0.0));
-    let bay_deadline = bay_start + bay_time_limit;
-    let initial = BayAnnealing::new(problem, &pre, &initial_abstract, timer).run(
-        initial,
-        bay_deadline,
-        &params.bay_optimize,
-        &params.bay_neighbor,
-        params.runtime.solver_seed,
-        params.runtime.worker_count,
+    let global = GlobalAnnealing::new(
+        problem,
+        &pre,
+        &initial_abstract,
+        params.preoptimize.precedence_margin,
+        timer,
     );
-    log!(
-        "[{:.4}] bay annealing score: {:.3}",
-        timer.elapsed_seconds(),
-        initial.score
-    );
-
-    let global = GlobalAnnealing::new(problem, &pre, &initial_abstract, timer);
     let global_start = timer.elapsed_seconds();
     let constrained_deadline = global_start
         + (deadline - global_start).max(0.0) * params.phases.global_constrained_time_ratio;
@@ -227,29 +214,21 @@ pub fn build_optimize_state(
     seed: u64,
     seed_offset: u64,
     neighbor_params: &NeighborParams,
+    precedence_margin: i64,
 ) -> Option<OptimizeState> {
-    let constraints = build_precedence_constraints(problem, state);
-
-    let mut blocks_by_bay = vec![Vec::new(); problem.bays.len()];
-    for (block_id, block) in state.blocks.iter().enumerate() {
-        blocks_by_bay[block.bay_id].push(block_id);
+    let constraints = build_precedence_constraints(problem, state, precedence_margin);
+    let block_ids: Vec<_> = (0..problem.blocks.len()).collect();
+    if block_ids.is_empty() {
+        return Some(OptimizeState {
+            score: 0.0,
+            blocks: Vec::new(),
+        });
     }
-
-    let active_bays: Vec<_> = blocks_by_bay
-        .iter()
-        .enumerate()
-        .filter_map(|(bay_id, blocks)| (!blocks.is_empty()).then_some(bay_id))
-        .collect();
 
     let build_deadline = timer.elapsed_seconds() + time_limit;
     let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
-
-    let seen_order_hashes: Vec<_> = (0..problem.bays.len())
-        .map(|_| Mutex::new(HashSet::new()))
-        .collect();
-
-    let bests: Vec<Mutex<Option<(i64, Vec<ScheduledBlock>)>>> =
-        (0..problem.bays.len()).map(|_| Mutex::new(None)).collect();
+    let seen_order_hashes = Mutex::new(HashSet::new());
+    let best = Mutex::new(None::<OptimizeState>);
 
     let worker_trials: Vec<_> = (0..worker_count)
         .into_par_iter()
@@ -258,50 +237,39 @@ pub fn build_optimize_state(
                 seed.wrapping_add(seed_offset)
                     .wrapping_add(worker_id as u64),
             );
-            let mut turn = worker_id;
             let mut trials = 0usize;
 
             while timer.elapsed_seconds() < build_deadline {
-                let bay_id = active_bays[turn % active_bays.len()];
-                turn += 1;
-
                 let weights = sample_reconstruct_order_weights(&mut rng, neighbor_params);
                 let order = build_topological_order(
                     problem,
                     pre,
-                    &blocks_by_bay[bay_id],
+                    &block_ids,
                     &constraints,
                     weights,
                     &mut rng,
                 );
-
                 let order_hash = hash_order(&order);
-                if !seen_order_hashes[bay_id].lock().unwrap().insert(order_hash) {
+                if !seen_order_hashes.lock().unwrap().insert(order_hash) {
                     continue;
                 }
 
-                let Some(schedule) =
-                    build_bay_schedule(problem, pre, bay_id, &order, &constraints, neighbor_params)
+                let Some(blocks) =
+                    build_schedule(problem, pre, &order, &constraints, neighbor_params)
                 else {
                     continue;
                 };
                 trials += 1;
 
-                let tardiness = bay_tardiness(problem, &schedule);
-                let mut best = bests[bay_id].lock().unwrap();
-
-                if best
-                    .as_ref()
-                    .is_none_or(|(best_tardiness, _)| tardiness < *best_tardiness)
-                {
-                    *best = Some((tardiness, schedule));
-
+                let score = score_schedule(problem, pre, &blocks);
+                let mut best = best.lock().unwrap();
+                if best.as_ref().is_none_or(|best| score < best.score) {
+                    *best = Some(OptimizeState { score, blocks });
                     log!(
-                        "[{:.4}] [build] best: worker={}, bay={}, tardiness={}",
+                        "[{:.4}] [build] best: worker={}, score={:.3}",
                         timer.elapsed_seconds(),
                         worker_id,
-                        bay_id,
-                        tardiness,
+                        score,
                     );
                 }
             }
@@ -318,33 +286,13 @@ pub fn build_optimize_state(
         );
     }
 
-    let mut bests: Vec<_> = bests
-        .into_iter()
-        .map(|best| best.into_inner().unwrap())
-        .collect();
-
-    let mut blocks = Vec::with_capacity(problem.blocks.len());
-    for bay_id in active_bays {
-        let (tardiness, schedule) = bests[bay_id].take()?;
-
-        log!(
-            "[{:.4}] [build] result: bay={}, tardiness={}",
-            timer.elapsed_seconds(),
-            bay_id,
-            tardiness,
-        );
-
-        blocks.extend(schedule);
-    }
-
-    let score = score_schedule(problem, pre, &blocks);
+    let best = best.into_inner().unwrap()?;
     log!(
         "[{:.4}] [build] finished: score={:.3}",
         timer.elapsed_seconds(),
-        score,
+        best.score,
     );
-
-    Some(OptimizeState { score, blocks })
+    Some(best)
 }
 
 fn hash_order(order: &[usize]) -> u64 {
@@ -1182,6 +1130,7 @@ pub fn sort_default_reconstruct_order<R: Random>(
 fn build_precedence_constraints(
     problem: &Problem,
     state: &PreoptimizeState,
+    precedence_margin: i64,
 ) -> PrecedenceConstraints {
     let block_count = problem.blocks.len();
     let start_times: Vec<_> = state.blocks.iter().map(|block| block.entry_time).collect();
@@ -1198,20 +1147,20 @@ fn build_precedence_constraints(
         let latest_start = (0..block_count)
             .filter(|&block_id| {
                 block_id != after
-                    && state.blocks[block_id].bay_id == state.blocks[after].bay_id
-                    && end_times[block_id] <= start_times[after]
+                    && end_times[block_id].saturating_add(precedence_margin) <= start_times[after]
             })
             .map(|block_id| start_times[block_id])
             .max();
 
         for before in 0..block_count {
             if before == after
-                || state.blocks[before].bay_id != state.blocks[after].bay_id
-                || end_times[before] > start_times[after]
+                || end_times[before].saturating_add(precedence_margin) > start_times[after]
             {
                 continue;
             }
-            if latest_start.is_some_and(|start_time| end_times[before] <= start_time) {
+            if latest_start.is_some_and(|start_time| {
+                end_times[before].saturating_add(precedence_margin) <= start_time
+            }) {
                 continue;
             }
             afters[before].push(after);
@@ -1270,10 +1219,9 @@ fn build_topological_order<R: Random>(
     order
 }
 
-fn build_bay_schedule(
+fn build_schedule(
     problem: &Problem,
     pre: &Precompute,
-    bay_id: usize,
     order: &[usize],
     constraints: &PrecedenceConstraints,
     params: &NeighborParams,
@@ -1281,7 +1229,6 @@ fn build_bay_schedule(
     let mut schedule = Vec::with_capacity(order.len());
     let mut scheduled_by_id: Vec<Option<ScheduledBlock>> = vec![None; problem.blocks.len()];
     let mut loads = vec![0.0; problem.bays.len()];
-    let bay_order = [bay_id];
 
     for &block_id in order {
         let block = &problem.blocks[block_id];
@@ -1291,7 +1238,7 @@ fn build_bay_schedule(
             .fold(block.release_time, i64::max);
         let original = ScheduledBlock {
             block_id,
-            bay_id,
+            bay_id: 0,
             orient_idx: 0,
             x: 0,
             y: 0,
@@ -1309,9 +1256,9 @@ fn build_bay_schedule(
             InsertSearchParams {
                 y_buffer: params.insert_y_buffer,
             },
-            &bay_order,
+            &pre.bay_order_by_pref[block_id],
         )?;
-        loads[bay_id] += block.workload as f64;
+        loads[scheduled.bay_id] += block.workload as f64;
         scheduled_by_id[block_id] = Some(scheduled);
         schedule.push(scheduled);
     }

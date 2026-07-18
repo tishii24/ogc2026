@@ -46,15 +46,11 @@ impl<'a> BayAnnealing<'a> {
         problem: &'a Problem,
         pre: &'a Precompute,
         abstract_state: &PreoptimizeState,
+        precedence_margin: i64,
         timer: Timer,
     ) -> Self {
-        let constraints = build_precedence_constraints(problem, abstract_state);
-        let mut target_tardiness = vec![0i64; problem.bays.len()];
-        for (block_id, scheduled) in abstract_state.blocks.iter().enumerate() {
-            let block = &problem.blocks[block_id];
-            let exit_time = scheduled.entry_time + block.processing_time;
-            target_tardiness[scheduled.bay_id] += (exit_time - block.due_date).max(0);
-        }
+        let constraints = build_precedence_constraints(problem, abstract_state, precedence_margin);
+        let target_tardiness = vec![0i64; problem.bays.len()];
         Self {
             problem,
             pre,
@@ -241,12 +237,13 @@ impl<'a> GlobalAnnealing<'a> {
         problem: &'a Problem,
         pre: &'a Precompute,
         abstract_state: &PreoptimizeState,
+        precedence_margin: i64,
         timer: Timer,
     ) -> Self {
         Self {
             problem,
             pre,
-            constraints: build_precedence_constraints(problem, abstract_state),
+            constraints: build_precedence_constraints(problem, abstract_state, precedence_margin),
             timer,
         }
     }

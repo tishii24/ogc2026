@@ -23,6 +23,8 @@ precompute:
 preoptimize:
   alpha: 0.8
   beta: 0.1
+  bay_padding: 0.0
+  precedence_margin: 1
   congestion_weight: 0.001
   exchange_threshold_w1_scale: 1.0
   neighbor_probabilities:

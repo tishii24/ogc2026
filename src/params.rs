@@ -101,6 +101,8 @@ pub struct PrecomputeParams {
 pub struct PreoptimizeSolverParams {
     pub alpha: f64,
     pub beta: f64,
+    pub bay_padding: f64,
+    pub precedence_margin: i64,
     pub congestion_weight: f64,
     pub exchange_threshold_w1_scale: f64,
     pub neighbor_probabilities: PreoptimizeNeighborProbabilities,
@@ -142,8 +144,7 @@ impl PreoptimizeAnnealingParams {
     pub fn make(&self, problem: &Problem, initial_score: f64) -> AnnealingParams {
         let start_temperature = (initial_score / problem.blocks.len() as f64
             * self.initial_score_per_block_scale)
-            .max(problem.weights.w1)
-            .max(problem.weights.w3);
+            .max(problem.weights.w1);
         AnnealingParams {
             exchange_interval: self.exchange_interval,
             start_temperature,
