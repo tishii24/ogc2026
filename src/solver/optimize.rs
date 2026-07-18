@@ -257,22 +257,18 @@ impl<'a> GlobalAnnealing<'a> {
         deadline: f64,
         params: &GlobalOptimizeParams,
         neighbor_params: &NeighborParams,
-        constrained_neighbor_params: &NeighborParams,
+        constrained: bool,
         seed: u64,
         max_worker_count: usize,
     ) -> OptimizeState {
         let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
-        let start_time = self.timer.elapsed_seconds();
         let delegate = GlobalAnnealingDelegate {
             problem: self.problem,
             pre: self.pre,
-            constraints: &self.constraints,
-            timer: self.timer,
-            constraint_deadline: start_time
-                + (deadline - start_time).max(0.0) * params.constraint_time_ratio,
+            constraints: constrained.then_some(&self.constraints),
+            name: if constrained { "global-c" } else { "global" },
             initial,
             exchange_threshold_w1_scale: params.exchange_threshold_w1_scale,
-            constrained_neighbor_params,
             params: neighbor_params,
         };
         Annealer::new(
@@ -289,12 +285,10 @@ impl<'a> GlobalAnnealing<'a> {
 struct GlobalAnnealingDelegate<'a> {
     problem: &'a Problem,
     pre: &'a Precompute,
-    constraints: &'a PrecedenceConstraints,
-    timer: Timer,
-    constraint_deadline: f64,
+    constraints: Option<&'a PrecedenceConstraints>,
+    name: &'static str,
     initial: OptimizeState,
     exchange_threshold_w1_scale: f64,
-    constrained_neighbor_params: &'a NeighborParams,
     params: &'a NeighborParams,
 }
 
@@ -307,7 +301,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
     }
 
     fn name(&self) -> &'static str {
-        "global"
+        self.name
     }
 
     fn neighbor_kinds(&self) -> &'static [&'static str] {
@@ -329,13 +323,8 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
         accept_threshold: f64,
         rng: &mut RandPcg64Mcg,
     ) -> AnnealingAttempt<Self::State> {
-        let constraints =
-            (self.timer.elapsed_seconds() < self.constraint_deadline).then_some(self.constraints);
-        let params = if constraints.is_some() {
-            self.constrained_neighbor_params
-        } else {
-            self.params
-        };
+        let constraints = self.constraints;
+        let params = self.params;
         let probabilities = params.probabilities();
         let neighbor = sample_neighbor(rng, &probabilities);
         let blocks = match neighbor {

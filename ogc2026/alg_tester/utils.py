@@ -102,7 +102,6 @@ from functools import lru_cache
 from typing import Optional
 
 from shapely.geometry import Polygon as ShapelyPolygon
-from shapely.ops import unary_union
 
 
 # -----------------------------------------------------------------------------
@@ -149,7 +148,7 @@ def _anchor_layers(layers: list) -> list:
 
     Returns a new list of layers; the original data is not modified.
     """
-    all_verts = [v for l in layers for v in l]
+    all_verts = [v for line in layers for v in line]
     if not all_verts:
         return [list(l) for l in layers]
     min_x = min(v[0] for v in all_verts)
@@ -1438,4 +1437,3 @@ def check_feasibility(prob_info: dict, solution: dict) -> dict:
         "obj2":      obj2,
         "obj3":      obj3,
     }
-

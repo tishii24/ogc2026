@@ -31,6 +31,7 @@ pub mod optimize;
 pub use optimize::{BayAnnealing, BayOptimizeState, GlobalAnnealing};
 
 const NEIGHBOR_KINDS: &[&str] = &["Large", "Shift", "Move", "Rotate", "Swap"];
+const GLOBAL_UNCONSTRAINED_SEED_OFFSET: u64 = 1 << 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct PreoptimizedBlock {
@@ -173,13 +174,35 @@ pub fn solve(
     );
     log!(timer, "bay annealing score: {:.3}", initial.score);
 
-    let best = GlobalAnnealing::new(problem, &pre, &initial_abstract, timer).run(
+    let global = GlobalAnnealing::new(problem, &pre, &initial_abstract, timer);
+    let global_start = timer.elapsed_seconds();
+    let constrained_deadline = global_start
+        + (deadline - global_start).max(0.0) * params.phases.global_constrained_time_ratio;
+    let initial = global.run(
+        initial,
+        constrained_deadline,
+        &params.global_optimize,
+        &params.bay_neighbor,
+        true,
+        params.runtime.solver_seed,
+        params.runtime.worker_count,
+    );
+    log!(
+        timer,
+        "constrained global annealing score: {:.3}",
+        initial.score
+    );
+
+    let best = global.run(
         initial,
         deadline,
         &params.global_optimize,
         &params.global_neighbor,
-        &params.bay_neighbor,
-        params.runtime.solver_seed,
+        false,
+        params
+            .runtime
+            .solver_seed
+            .wrapping_add(GLOBAL_UNCONSTRAINED_SEED_OFFSET),
         params.runtime.worker_count,
     );
     Ok(schedule_to_solution(&best.blocks))

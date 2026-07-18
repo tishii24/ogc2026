@@ -78,6 +78,7 @@ pub struct PhaseParams {
     pub initial_preoptimize: LimitedPhaseParams,
     pub initial_build: LimitedPhaseParams,
     pub bay_optimize_time_ratio: f64,
+    pub global_constrained_time_ratio: f64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -137,7 +138,6 @@ pub struct BayOptimizeParams {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalOptimizeParams {
-    pub constraint_time_ratio: f64,
     pub exchange_threshold_w1_scale: f64,
     pub annealing: AnnealingParamsConfig,
 }
