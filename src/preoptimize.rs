@@ -980,7 +980,7 @@ pub fn preoptimize(
         max_time: pre.search_horizon,
     };
     let initial = build_initial_state(problem, &mut context)?;
-    let annealing_params = params.annealing.make(problem);
+    let annealing_params = params.annealing.make(problem, initial.annealing_score());
     let timer = Timer::start(1.0);
     let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
     let delegate = PreoptimizeAnnealingDelegate {

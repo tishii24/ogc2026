@@ -275,7 +275,7 @@ impl<'a> GlobalAnnealing<'a> {
             deadline,
             worker_count,
             seed,
-            params.annealing.make(self.problem),
+            params.annealing.make(),
             delegate,
         )
         .run(self.timer)

@@ -39,8 +39,8 @@ preoptimize:
     max_time_shift: 10
   annealing:
     exchange_interval: 1000000
-    start_temperature_w1_scale: 0.5
-    end_temperature_w3_scale: 100.0
+    initial_score_per_block_scale: 1.0
+    end_temperature_ratio: 0.0001
     worker_temperature_scale: 0.0
     tabu_capacity: 4096
 
@@ -48,8 +48,8 @@ bay_optimize:
   exchange_threshold_w1_scale: 1.0
   annealing:
     exchange_interval: 2048
-    start_temperature_w1_scale: 0.5
-    end_temperature_w3_scale: 100.0
+    start_temperature_w1_scale: 0.01
+    end_temperature_w1_scale: 0.0001
     worker_temperature_scale: 1.0
     tabu_capacity: 4096
 
@@ -57,8 +57,8 @@ global_optimize:
   exchange_threshold_w1_scale: 1.0
   annealing:
     exchange_interval: 2048
-    start_temperature_w1_scale: 0.5
-    end_temperature_w3_scale: 100.0
+    start_temperature: 10.0
+    end_temperature: 0.01
     worker_temperature_scale: 10.0
     tabu_capacity: 4096
 
