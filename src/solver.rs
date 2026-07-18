@@ -5,8 +5,8 @@ use crate::{
     precompute::Precompute,
     preoptimize::{PreoptimizePrecompute, preoptimize},
     solver_util::{
-        NeighborKind, bay_tardiness, block_pref_spread, gen_rangef, schedule_to_solution,
-        score_schedule, score13_block,
+        NeighborKind, block_pref_spread, gen_rangef, schedule_to_solution, score_schedule,
+        score13_block,
     },
     util::{
         rand::{RandPcg64Mcg, Random},
@@ -23,7 +23,7 @@ use std::{
 
 pub mod optimize;
 
-pub use optimize::{BayAnnealing, BayOptimizeState, GlobalAnnealing};
+pub use optimize::GlobalAnnealing;
 
 const NEIGHBOR_KINDS: &[&str] = &["Large", "Shift", "Move", "Rotate", "Swap"];
 
@@ -152,7 +152,7 @@ pub fn solve(
         timer,
         params.runtime.worker_count,
         params.runtime.solver_seed,
-        &params.bay_neighbor,
+        &params.global_neighbor,
         params.preoptimize.precedence_margin,
     )
     .ok_or_else(|| "failed to build initial optimize state".to_string())?;
@@ -176,7 +176,7 @@ pub fn solve(
         initial,
         constrained_deadline,
         &params.global_optimize,
-        &params.bay_neighbor,
+        &params.global_neighbor,
         true,
         params.runtime.solver_seed,
         params.runtime.worker_count,
@@ -403,75 +403,6 @@ fn precedence_entry_time_range(
         }
     }
     (min_entry_time <= max_entry_time).then_some((min_entry_time, max_entry_time))
-}
-
-fn try_bay_large_reconstruct<R: Random>(
-    problem: &Problem,
-    pre: &Precompute,
-    constraints: &PrecedenceConstraints,
-    schedule: &[ScheduledBlock],
-    rng: &mut R,
-    accept_threshold: f64,
-    bay_id: usize,
-    params: &NeighborParams,
-) -> Option<Vec<ScheduledBlock>> {
-    let k = sample_removed_count(rng, params).min(schedule.len());
-    let removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng, params);
-    if removed_ids.is_empty() {
-        return None;
-    }
-
-    let weights = sample_reconstruct_order_weights(rng, params);
-    let order = build_topological_order(problem, pre, &removed_ids, constraints, weights, rng);
-    let original_by_id = scheduled_by_id(problem, schedule);
-    let mut removed = vec![false; problem.blocks.len()];
-    for &block_id in &removed_ids {
-        removed[block_id] = true;
-    }
-
-    let mut cur = Vec::with_capacity(schedule.len());
-    let mut loads = vec![0.0; problem.bays.len()];
-    let mut fixed_score = 0.0;
-    for &scheduled in schedule {
-        if removed[scheduled.block_id] {
-            continue;
-        }
-        loads[bay_id] += problem.blocks[scheduled.block_id].workload as f64;
-        fixed_score += problem.weights.w1
-            * (scheduled.exit_time - problem.blocks[scheduled.block_id].due_date).max(0) as f64;
-        cur.push(scheduled);
-    }
-    let mut current_by_id = scheduled_by_id(problem, &cur);
-    let bay_order = [bay_id];
-
-    for block_id in order {
-        if fixed_score > accept_threshold + 1e-9 {
-            return None;
-        }
-        let old = original_by_id[block_id]?;
-        let (min_entry_time, max_entry_time) =
-            precedence_entry_time_range(problem, constraints, &current_by_id, block_id)?;
-        let scheduled = insert_greedy(
-            problem,
-            pre,
-            old,
-            min_entry_time,
-            max_entry_time,
-            &cur,
-            &loads,
-            InsertSearchParams {
-                y_buffer: params.insert_y_buffer,
-            },
-            &bay_order,
-        )?;
-        loads[bay_id] += problem.blocks[block_id].workload as f64;
-        fixed_score += problem.weights.w1
-            * (scheduled.exit_time - problem.blocks[block_id].due_date).max(0) as f64;
-        current_by_id[block_id] = Some(scheduled);
-        cur.push(scheduled);
-    }
-
-    Some(cur)
 }
 
 fn update_best(

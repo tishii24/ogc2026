@@ -11,7 +11,6 @@ phases:
   initial_build:
     time_ratio: 0.1
     max_seconds: 20.0
-  bay_optimize_time_ratio: 0.0
   global_constrained_time_ratio: 0.25
 
 precompute:
@@ -45,14 +44,7 @@ preoptimize:
     worker_temperature_scale: 0.0
     tabu_capacity: 4096
 
-bay_optimize:
-  exchange_threshold_w1_scale: 1.0
-  annealing:
-    exchange_interval: 2048
-    start_temperature_w1_scale: 0.01
-    end_temperature_w1_scale: 0.0001
-    worker_temperature_scale: 1.0
-    tabu_capacity: 4096
+
 
 global_optimize:
   exchange_threshold_w1_scale: 1.0
@@ -92,5 +84,4 @@ optimize_neighbor:
     swap_max_shift_delta: 2
     move_sample_blocks: 16
     move_small_pool_size: 8
-  bay: {}
   global: {}

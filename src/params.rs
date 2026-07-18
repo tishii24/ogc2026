@@ -11,7 +11,6 @@ pub struct SolverParamsFile {
     pub phases: PhaseParams,
     pub precompute: PrecomputeParams,
     pub preoptimize: PreoptimizeSolverParams,
-    pub bay_optimize: BayOptimizeParams,
     pub global_optimize: GlobalOptimizeParams,
     pub optimize_neighbor: OptimizeNeighborParams,
 }
@@ -22,9 +21,7 @@ pub struct SolverParams {
     pub phases: PhaseParams,
     pub precompute: PrecomputeParams,
     pub preoptimize: PreoptimizeSolverParams,
-    pub bay_optimize: BayOptimizeParams,
     pub global_optimize: GlobalOptimizeParams,
-    pub bay_neighbor: NeighborParams,
     pub global_neighbor: NeighborParams,
 }
 
@@ -40,10 +37,6 @@ impl SolverParams {
 
 impl SolverParamsFile {
     fn resolve(self) -> Result<SolverParams, String> {
-        let bay_neighbor = self
-            .optimize_neighbor
-            .default
-            .with_override(&self.optimize_neighbor.bay);
         let global_neighbor = self
             .optimize_neighbor
             .default
@@ -53,9 +46,7 @@ impl SolverParamsFile {
             phases: self.phases,
             precompute: self.precompute,
             preoptimize: self.preoptimize,
-            bay_optimize: self.bay_optimize,
             global_optimize: self.global_optimize,
-            bay_neighbor,
             global_neighbor,
         };
         Ok(params)
@@ -76,7 +67,6 @@ pub struct RuntimeParams {
 pub struct PhaseParams {
     pub initial_preoptimize: LimitedPhaseParams,
     pub initial_build: LimitedPhaseParams,
-    pub bay_optimize_time_ratio: f64,
     pub global_constrained_time_ratio: f64,
 }
 
@@ -156,35 +146,6 @@ impl PreoptimizeAnnealingParams {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct BayOptimizeParams {
-    pub exchange_threshold_w1_scale: f64,
-    pub annealing: BayAnnealingParams,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BayAnnealingParams {
-    pub exchange_interval: usize,
-    pub start_temperature_w1_scale: f64,
-    pub end_temperature_w1_scale: f64,
-    pub worker_temperature_scale: f64,
-    pub tabu_capacity: usize,
-}
-
-impl BayAnnealingParams {
-    pub fn make(&self, problem: &Problem) -> AnnealingParams {
-        AnnealingParams {
-            exchange_interval: self.exchange_interval,
-            start_temperature: self.start_temperature_w1_scale * problem.weights.w1,
-            end_temperature: self.end_temperature_w1_scale * problem.weights.w1,
-            worker_temperature_scale: self.worker_temperature_scale,
-            tabu_capacity: self.tabu_capacity,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct GlobalOptimizeParams {
     pub exchange_threshold_w1_scale: f64,
     pub annealing: AnnealingParamsConfig,
@@ -216,8 +177,6 @@ impl AnnealingParamsConfig {
 #[serde(deny_unknown_fields)]
 pub struct OptimizeNeighborParams {
     pub default: NeighborParams,
-    #[serde(default)]
-    pub bay: NeighborParamsOverride,
     #[serde(default)]
     pub global: NeighborParamsOverride,
 }

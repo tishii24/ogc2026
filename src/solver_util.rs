@@ -116,10 +116,3 @@ pub fn block_pref_spread(problem: &Problem, block_id: usize) -> i64 {
     let max_pref = prefs.iter().copied().max().unwrap_or(min_pref);
     max_pref - min_pref
 }
-
-pub fn bay_tardiness(problem: &Problem, schedule: &[ScheduledBlock]) -> i64 {
-    schedule
-        .iter()
-        .map(|scheduled| (scheduled.exit_time - problem.blocks[scheduled.block_id].due_date).max(0))
-        .sum()
-}
