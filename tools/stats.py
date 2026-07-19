@@ -39,6 +39,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="Only show the last N versions in natural sort order.",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output summaries as JSON.",
+    )
     return parser.parse_args()
 
 
@@ -551,10 +557,13 @@ def main() -> int:
         selected_versions = set(versions[-args.last_versions :])
         rows = [row for row in rows if row.get("version", "") in selected_versions]
 
-    if args.matrix:
+    summaries = summarize(root, rows, suite_cases, best_rows)
+    if args.json_output:
+        print(json.dumps(summaries, ensure_ascii=False))
+    elif args.matrix:
         print_score_matrix(rows, suite_cases, best_rows)
     else:
-        print_table(summarize(root, rows, suite_cases, best_rows))
+        print_table(summaries)
     return 0
 
 

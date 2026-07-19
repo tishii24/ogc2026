@@ -111,35 +111,6 @@ pub fn solve(
     let pre = Precompute::build(problem, &params.precompute);
     log!("[{:.4}] precompute built", timer.elapsed_seconds());
 
-    // let greedy_time_limit = phase_time_limit(
-    //     timelimit,
-    //     params.phases.initial_greedy.time_ratio,
-    //     params.phases.initial_greedy.max_seconds,
-    // )
-    // .min((deadline - timer.elapsed_seconds()).max(1e-4));
-    // let greedy = build_initial_optimize_state(
-    //     problem,
-    //     &pre,
-    //     greedy_time_limit,
-    //     timer,
-    //     params.runtime.worker_count,
-    //     params.runtime.solver_seed,
-    //     &params.global_neighbor,
-    // )
-    // .ok_or_else(|| "failed to build greedy optimize state".to_string())?;
-    // let greedy_tardiness = schedule_tardiness(problem, &greedy.blocks);
-    // log!(
-    //     "[{:.4}] initial greedy score: {:.3}, tardiness={}",
-    //     timer.elapsed_seconds(),
-    //     greedy.score,
-    //     greedy_tardiness,
-    // );
-
-    // let (initial, initial_abstract, constrained) = if greedy_tardiness == 0 {
-    //     log!("[{:.4}] preoptimize skipped", timer.elapsed_seconds(),);
-    //     let initial_abstract = to_preoptimize_state(&greedy);
-    //     (greedy, initial_abstract, false)
-    // } else {
     log!(
         "[{:.4}] building preoptimize precompute...",
         timer.elapsed_seconds()
@@ -192,8 +163,6 @@ pub fn solve(
         timer.elapsed_seconds(),
         initial.score
     );
-    // (initial, initial_abstract, true)
-    // };
 
     let global = GlobalAnnealing::new(
         problem,
@@ -202,7 +171,6 @@ pub fn solve(
         params.preoptimize.precedence_margin,
         timer,
     );
-    // let initial = if constrained {
     let global_start = timer.elapsed_seconds();
     let constrained_deadline = global_start
         + (deadline - global_start).max(0.0) * params.phases.global_constrained_time_ratio;
@@ -220,10 +188,6 @@ pub fn solve(
         timer.elapsed_seconds(),
         initial.score
     );
-    // initial
-    // } else {
-    //     initial
-    // };
 
     let best = global.run(
         initial,
@@ -235,32 +199,6 @@ pub fn solve(
         params.runtime.worker_count,
     );
     Ok(schedule_to_solution(&best.blocks))
-}
-
-pub fn build_initial_optimize_state(
-    problem: &Problem,
-    pre: &Precompute,
-    time_limit: f64,
-    timer: Timer,
-    max_worker_count: usize,
-    seed: u64,
-    neighbor_params: &NeighborParams,
-) -> Option<OptimizeState> {
-    let block_count = problem.blocks.len();
-    let constraints = PrecedenceConstraints {
-        befores: vec![Vec::new(); block_count],
-        afters: vec![Vec::new(); block_count],
-    };
-    build_optimize_state_with_constraints(
-        problem,
-        pre,
-        &constraints,
-        time_limit,
-        timer,
-        max_worker_count,
-        seed,
-        neighbor_params,
-    )
 }
 
 pub fn build_optimize_state(
@@ -385,92 +323,6 @@ pub fn build_optimize_state(
         score,
     );
     Some(OptimizeState { score, blocks })
-}
-
-fn build_optimize_state_with_constraints(
-    problem: &Problem,
-    pre: &Precompute,
-    constraints: &PrecedenceConstraints,
-    time_limit: f64,
-    timer: Timer,
-    max_worker_count: usize,
-    seed: u64,
-    neighbor_params: &NeighborParams,
-) -> Option<OptimizeState> {
-    let block_ids: Vec<_> = (0..problem.blocks.len()).collect();
-    if block_ids.is_empty() {
-        return Some(OptimizeState {
-            score: 0.0,
-            blocks: Vec::new(),
-        });
-    }
-
-    let build_deadline = timer.elapsed_seconds() + time_limit;
-    let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
-    let seen_order_hashes = Mutex::new(HashSet::new());
-    let best = Mutex::new(None::<OptimizeState>);
-
-    let worker_trials: Vec<_> = (0..worker_count)
-        .into_par_iter()
-        .map(|worker_id| {
-            let mut rng =
-                RandPcg64Mcg::new(seed.wrapping_add(1 << 16).wrapping_add(worker_id as u64));
-            let mut trials = 0usize;
-
-            while timer.elapsed_seconds() < build_deadline {
-                let weights = sample_reconstruct_order_weights(&mut rng, neighbor_params);
-                let order = build_topological_order(
-                    problem,
-                    pre,
-                    &block_ids,
-                    constraints,
-                    weights,
-                    &mut rng,
-                );
-                let order_hash = hash_order(&order);
-                if !seen_order_hashes.lock().unwrap().insert(order_hash) {
-                    continue;
-                }
-
-                let Some(blocks) =
-                    build_schedule(problem, pre, &order, constraints, neighbor_params)
-                else {
-                    continue;
-                };
-                trials += 1;
-
-                let score = score_schedule(problem, pre, &blocks);
-                let mut best = best.lock().unwrap();
-                if best.as_ref().is_none_or(|best| score < best.score) {
-                    *best = Some(OptimizeState { score, blocks });
-                    log!(
-                        "[{:.4}] [build] best: worker={}, score={:.3}",
-                        timer.elapsed_seconds(),
-                        worker_id,
-                        score,
-                    );
-                }
-            }
-            trials
-        })
-        .collect();
-
-    for (worker_id, trials) in worker_trials.into_iter().enumerate() {
-        log!(
-            "[{:.4}] [build worker={}] trials={}",
-            timer.elapsed_seconds(),
-            worker_id,
-            trials,
-        );
-    }
-
-    let best = best.into_inner().unwrap()?;
-    log!(
-        "[{:.4}] [build] finished: score={:.3}",
-        timer.elapsed_seconds(),
-        best.score,
-    );
-    Some(best)
 }
 
 fn hash_order(order: &[usize]) -> u64 {
@@ -1372,52 +1224,6 @@ fn build_bay_schedule(
             &bay_order,
         )?;
         loads[bay_id] += block.workload as f64;
-        scheduled_by_id[block_id] = Some(scheduled);
-        schedule.push(scheduled);
-    }
-    Some(schedule)
-}
-
-fn build_schedule(
-    problem: &Problem,
-    pre: &Precompute,
-    order: &[usize],
-    constraints: &PrecedenceConstraints,
-    params: &NeighborParams,
-) -> Option<Vec<ScheduledBlock>> {
-    let mut schedule = Vec::with_capacity(order.len());
-    let mut scheduled_by_id: Vec<Option<ScheduledBlock>> = vec![None; problem.blocks.len()];
-    let mut loads = vec![0.0; problem.bays.len()];
-
-    for &block_id in order {
-        let block = &problem.blocks[block_id];
-        let min_entry_time = constraints.befores[block_id]
-            .iter()
-            .map(|&before| scheduled_by_id[before].unwrap().exit_time)
-            .fold(block.release_time, i64::max);
-        let original = ScheduledBlock {
-            block_id,
-            bay_id: 0,
-            orient_idx: 0,
-            x: 0,
-            y: 0,
-            entry_time: block.release_time,
-            exit_time: block.release_time + block.processing_time,
-        };
-        let scheduled = insert_greedy(
-            problem,
-            pre,
-            original,
-            min_entry_time,
-            i64::MAX,
-            &schedule,
-            &loads,
-            InsertSearchParams {
-                y_buffer: params.insert_y_buffer,
-            },
-            &pre.bay_order_by_pref[block_id],
-        )?;
-        loads[scheduled.bay_id] += block.workload as f64;
         scheduled_by_id[block_id] = Some(scheduled);
         schedule.push(scheduled);
     }
