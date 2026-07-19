@@ -45,6 +45,11 @@ def parse_args() -> argparse.Namespace:
         dest="json_output",
         help="Output summaries as JSON.",
     )
+    parser.add_argument(
+        "--include-tune",
+        action="store_true",
+        help="Show versions whose name contains 'tune'.",
+    )
     return parser.parse_args()
 
 
@@ -542,6 +547,8 @@ def main() -> int:
     if suite_cases is not None:
         suite_case_set = set(suite_cases)
         rows = [row for row in rows if row.get("case", "") in suite_case_set]
+    if not args.include_tune:
+        rows = [row for row in rows if "tune" not in row.get("version", "").lower()]
     if not rows:
         print("error: no valid rows found", file=sys.stderr)
         return 1

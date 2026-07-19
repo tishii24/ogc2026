@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any, Iterator
 
-import yaml
+import yaml # type: ignore
 
 
 def parse_args() -> argparse.Namespace:
@@ -149,6 +149,7 @@ def load_relative_scores(
         sys.executable,
         str(root / "tools" / "stats.py"),
         "--json",
+        "--include-tune",
         "--suite",
         str(suite),
         "--tl",

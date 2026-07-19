@@ -5,14 +5,11 @@ runtime:
   local_search_time_buffer_seconds: 3.0
 
 phases:
-  initial_greedy:
-    time_ratio: 0.1
-    max_seconds: 20.0
   initial_preoptimize:
     time_ratio: 0.1
-    max_seconds: 20.0
+    max_seconds: 10.0
   initial_build:
-    time_ratio: 0.05
+    time_ratio: 0.1
     max_seconds: 10.0
   global_constrained_time_ratio: 0.25
 

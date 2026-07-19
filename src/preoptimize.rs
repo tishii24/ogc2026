@@ -3,13 +3,14 @@ use crate::{
     annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
     log,
     params::{NeighborParams, PreoptimizeSolverParams},
+    precompute::orientation_union,
     solver::{PreoptimizeState, PreoptimizedBlock, sort_default_reconstruct_order},
     util::{
         rand::{RandPcg64Mcg, Random},
         time::Timer,
     },
 };
-use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
+use geo::Area;
 
 #[derive(Clone, Copy, Debug)]
 struct OrientationArea {
@@ -189,23 +190,9 @@ fn evaluate_schedule(
     (objective, z1, z2, z3)
 }
 
-fn layer_polygon(layer: &[[f64; 2]]) -> Polygon<f64> {
-    let mut coords: Vec<_> = layer.iter().map(|&[x, y]| Coord { x, y }).collect();
-    if coords.first() != coords.last() {
-        coords.push(coords[0]);
-    }
-    Polygon::new(LineString::from(coords), vec![])
-}
-
 fn orientation_area(orientation: &Orientation) -> Result<OrientationArea, String> {
-    let mut polygons = orientation.layers.iter().map(|layer| layer_polygon(layer));
-    let first = polygons
-        .next()
+    let union = orientation_union(orientation)
         .ok_or_else(|| "orientation must contain at least one layer".to_string())?;
-    let mut union = MultiPolygon(vec![first]);
-    for polygon in polygons {
-        union = union.union(&polygon);
-    }
 
     let mut min_x = f64::INFINITY;
     let mut min_y = f64::INFINITY;

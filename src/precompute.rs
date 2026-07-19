@@ -1,4 +1,5 @@
 use crate::{collision::CollisionPrecompute, params::PrecomputeParams, *};
+use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use std::cmp::Reverse;
 
 #[derive(Clone, Copy, Debug)]
@@ -56,22 +57,33 @@ fn orientation_bbox(orientation: &Orientation) -> (f64, (f64, f64)) {
     )
 }
 
-fn polygon_area(layer: &[[f64; 2]]) -> f64 {
-    let mut area = 0.0;
-    for i in 0..layer.len() {
-        let [x0, y0] = layer[i];
-        let [x1, y1] = layer[(i + 1) % layer.len()];
-        area += x0 * y1 - x1 * y0;
+fn layer_polygon(layer: &[[f64; 2]]) -> Polygon<f64> {
+    let mut coords: Vec<_> = layer.iter().map(|&[x, y]| Coord { x, y }).collect();
+    if coords.first() != coords.last() {
+        coords.push(coords[0]);
     }
-    (area * 0.5).abs()
+    Polygon::new(LineString::from(coords), vec![])
+}
+
+pub(crate) fn orientation_union(orientation: &Orientation) -> Option<MultiPolygon<f64>> {
+    let mut polygons = orientation.layers.iter().map(|layer| layer_polygon(layer));
+    let first = polygons.next()?;
+    let mut union = MultiPolygon(vec![first]);
+    for polygon in polygons {
+        union = union.union(&polygon);
+    }
+    Some(union)
 }
 
 fn block_area(block: &Block) -> f64 {
     block
         .shape
         .iter()
-        .flat_map(|orientation| orientation.layers.iter())
-        .map(|layer| polygon_area(layer))
+        .map(|orientation| {
+            orientation_union(orientation)
+                .map(|union| union.unsigned_area())
+                .unwrap_or(0.0)
+        })
         .fold(0.0, f64::max)
 }
 

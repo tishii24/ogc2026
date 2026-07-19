@@ -1,23 +1,21 @@
 todo:
 - refactor
-- target-bay
-- 良い解ではブロック同士が重なっているか確認する
+- reconstructの改善
+  - targeted-reconstruct
+  - obj2を軽視する
+- kick
 - precompute-pair-wise
 - 温度の調整
 - preoptimizeを途中で打ち切る
 - pre.block-areaの修正
   - unionを使う
-- reconstructの改善
-  - targeted-reconstruct
-  - obj2を軽視する
 - preoptimizeの改善
 - 高速化
-- kick
 - safety
-- パラメータチューニング
+- チューニング
 
 safety:
-- 定期的・最後にpy側にいくつかの解を返して、check-feasibilityをする
+- 最後にpy側にいくつかの解を返して、check-feasibilityをする
   - todo: check-feasibilityの高速化
 - AIチェック
 - panicを排除する
