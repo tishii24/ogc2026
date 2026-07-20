@@ -1,16 +1,13 @@
 use crate::{
     Problem, ScheduledBlock,
     collision::{BlockOrient, BlockPlacement, CollisionResult},
+    params::InsertParams,
     precompute::Precompute,
     solver_util::normalized_imbalance,
+    util::rand::Random,
 };
 
 type Interval = (i64, i64);
-
-#[derive(Clone, Copy)]
-pub struct InsertSearchParams {
-    pub y_buffer: i64,
-}
 
 struct InsertCandidate {
     scheduled: ScheduledBlock,
@@ -54,7 +51,7 @@ struct OldTimeInfo {
     overlap_entry_time_max: i64,
 }
 
-pub fn insert_greedy(
+pub fn insert_greedy<R: Random>(
     problem: &Problem,
     pre: &Precompute,
     original: ScheduledBlock,
@@ -62,8 +59,9 @@ pub fn insert_greedy(
     max_entry_time: i64,
     schedule: &[ScheduledBlock],
     loads: &[f64],
-    params: InsertSearchParams,
+    params: &InsertParams,
     bay_order: &[usize],
+    rng: &mut R,
 ) -> Option<ScheduledBlock> {
     fn insert_candidate_better(a: &InsertCandidate, b: &InsertCandidate) -> bool {
         a.score_delta
@@ -146,15 +144,18 @@ pub fn insert_greedy(
                         .crane_pairs_both_directions(new_orient, old_orient)
                 })
                 .collect();
-            let mut anchor_y: Option<i64> = None;
+            let mut ys: Vec<i64> = (range.min_y..=range.max_y).collect();
+            rng.shuffle(&mut ys);
+            let sample_count = (ys.len() as f64 * params.y_sample_ratio).ceil() as usize;
+            ys.truncate(sample_count);
+            let mut remaining_y_buffer = None;
 
-            for y in range.min_y..=range.max_y {
-                if let Some(anchor_y) = anchor_y {
-                    if y > anchor_y + params.y_buffer {
-                        break;
-                    }
+            for y in ys {
+                if remaining_y_buffer == Some(0) {
+                    break;
                 }
 
+                let mut valid_y = false;
                 events.clear();
                 states.fill(HitState::default());
                 active_old_ids.clear();
@@ -246,8 +247,8 @@ pub fn insert_greedy(
                             best = Some(candidate);
                         }
 
-                        if tardiness <= original_tardiness && anchor_y.is_none() {
-                            anchor_y = Some(y);
+                        if tardiness <= original_tardiness {
+                            valid_y = true;
                         }
                     }
 
@@ -258,6 +259,12 @@ pub fn insert_greedy(
                     if x > range.max_x {
                         break;
                     }
+                }
+
+                match &mut remaining_y_buffer {
+                    None if valid_y => remaining_y_buffer = Some(params.y_buffer),
+                    Some(remaining) => *remaining -= 1,
+                    None => {}
                 }
             }
         }

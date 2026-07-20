@@ -18,6 +18,10 @@ precompute:
   other_block_neighbor_area_top_k: 16
   other_block_neighbor_align_delta: 3
 
+insert:
+  y_sample_ratio: 0.5
+  y_buffer: 10
+
 preoptimize:
   alpha: 0.8
   beta: 0.1
@@ -74,7 +78,6 @@ optimize_neighbor:
     reconstruct_pref_spread_weight_range: [0.0, 1.0]
     reconstruct_limit_time_urgency_weight_range: [0.0, 1.0]
     reconstruct_order_random_weight_range: [0.0, 0.5]
-    insert_y_buffer: 10
     shift_max_x: 5
     shift_max_y: 5
     rotate_max_shift_delta: 2

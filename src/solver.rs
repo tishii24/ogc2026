@@ -1,7 +1,7 @@
 use crate::{
-    insert::{InsertSearchParams, insert_greedy, try_place_block},
+    insert::{insert_greedy, try_place_block},
     log,
-    params::{NeighborParams, SolverParams},
+    params::{InsertParams, NeighborParams, SolverParams},
     precompute::Precompute,
     preoptimize::{PreoptimizePrecompute, preoptimize},
     solver_util::{
@@ -155,6 +155,7 @@ pub fn solve(
         params.runtime.worker_count,
         params.runtime.solver_seed,
         &params.global_neighbor,
+        &params.insert,
         params.preoptimize.precedence_margin,
     )
     .ok_or_else(|| "failed to build initial optimize state".to_string())?;
@@ -179,6 +180,7 @@ pub fn solve(
         constrained_deadline,
         &params.global_optimize,
         &params.global_neighbor,
+        &params.insert,
         true,
         params.runtime.solver_seed,
         params.runtime.worker_count,
@@ -194,6 +196,7 @@ pub fn solve(
         deadline,
         &params.global_optimize,
         &params.global_neighbor,
+        &params.insert,
         false,
         params.runtime.solver_seed.wrapping_add(1 << 32),
         params.runtime.worker_count,
@@ -210,6 +213,7 @@ pub fn build_optimize_state(
     max_worker_count: usize,
     seed: u64,
     neighbor_params: &NeighborParams,
+    insert_params: &InsertParams,
     precedence_margin: i64,
 ) -> Option<OptimizeState> {
     let constraints = build_precedence_constraints(problem, state, precedence_margin);
@@ -264,9 +268,15 @@ pub fn build_optimize_state(
                     continue;
                 }
 
-                let Some(schedule) =
-                    build_bay_schedule(problem, pre, bay_id, &order, &constraints, neighbor_params)
-                else {
+                let Some(schedule) = build_bay_schedule(
+                    problem,
+                    pre,
+                    bay_id,
+                    &order,
+                    &constraints,
+                    insert_params,
+                    &mut rng,
+                ) else {
                     continue;
                 };
                 trials += 1;
@@ -342,6 +352,7 @@ fn try_large_reconstruct<R: Random>(
     rng: &mut R,
     accept_threshold: f64,
     params: &NeighborParams,
+    insert_params: &InsertParams,
 ) -> Option<Vec<ScheduledBlock>> {
     let k = sample_removed_count(rng, params).min(problem.blocks.len());
 
@@ -398,10 +409,9 @@ fn try_large_reconstruct<R: Random>(
             max_entry_time,
             &cur,
             &loads,
-            InsertSearchParams {
-                y_buffer: params.insert_y_buffer,
-            },
+            insert_params,
             &pre.bay_order_by_pref[old.block_id],
+            rng,
         )?;
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
         fixed_score13 += score13_block(problem, pre, scheduled);
@@ -747,6 +757,7 @@ fn try_move_neighbor<R: Random>(
     constraints: Option<&PrecedenceConstraints>,
     fixed_bay_id: Option<usize>,
     params: &NeighborParams,
+    insert_params: &InsertParams,
 ) -> Option<Vec<ScheduledBlock>> {
     fn move_obj13(problem: &Problem, pre: &Precompute, s: ScheduledBlock) -> f64 {
         let block = &problem.blocks[s.block_id];
@@ -809,10 +820,9 @@ fn try_move_neighbor<R: Random>(
         max_entry_time,
         &base,
         &loads,
-        InsertSearchParams {
-            y_buffer: params.insert_y_buffer,
-        },
+        insert_params,
         bay_order,
+        rng,
     )?;
     if scheduled == old {
         return None;
@@ -1182,13 +1192,14 @@ fn build_topological_order<R: Random>(
     order
 }
 
-fn build_bay_schedule(
+fn build_bay_schedule<R: Random>(
     problem: &Problem,
     pre: &Precompute,
     bay_id: usize,
     order: &[usize],
     constraints: &PrecedenceConstraints,
-    params: &NeighborParams,
+    params: &InsertParams,
+    rng: &mut R,
 ) -> Option<Vec<ScheduledBlock>> {
     let mut schedule = Vec::with_capacity(order.len());
     let mut scheduled_by_id: Vec<Option<ScheduledBlock>> = vec![None; problem.blocks.len()];
@@ -1218,10 +1229,9 @@ fn build_bay_schedule(
             i64::MAX,
             &schedule,
             &loads,
-            InsertSearchParams {
-                y_buffer: params.insert_y_buffer,
-            },
+            params,
             &bay_order,
+            rng,
         )?;
         loads[bay_id] += block.workload as f64;
         scheduled_by_id[block_id] = Some(scheduled);

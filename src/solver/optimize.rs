@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
-    params::GlobalOptimizeParams,
+    params::{GlobalOptimizeParams, InsertParams},
     solver_util::sample_neighbor,
 };
 
@@ -44,6 +44,7 @@ impl<'a> GlobalAnnealing<'a> {
         deadline: f64,
         params: &GlobalOptimizeParams,
         neighbor_params: &NeighborParams,
+        insert_params: &InsertParams,
         constrained: bool,
         seed: u64,
         max_worker_count: usize,
@@ -57,6 +58,7 @@ impl<'a> GlobalAnnealing<'a> {
             initial,
             exchange_threshold_w1_scale: params.exchange_threshold_w1_scale,
             params: neighbor_params,
+            insert_params,
         };
         Annealer::new(
             deadline,
@@ -77,6 +79,7 @@ struct GlobalAnnealingDelegate<'a> {
     initial: OptimizeState,
     exchange_threshold_w1_scale: f64,
     params: &'a NeighborParams,
+    insert_params: &'a InsertParams,
 }
 
 impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
@@ -123,6 +126,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 rng,
                 accept_threshold,
                 params,
+                self.insert_params,
             ),
             NeighborKind::Shift => try_shift_neighbor(
                 self.problem,
@@ -140,6 +144,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 constraints,
                 None,
                 params,
+                self.insert_params,
             ),
             NeighborKind::Rotate => try_rotate_neighbor(
                 self.problem,

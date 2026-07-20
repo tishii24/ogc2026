@@ -10,6 +10,7 @@ pub struct SolverParamsFile {
     pub runtime: RuntimeParams,
     pub phases: PhaseParams,
     pub precompute: PrecomputeParams,
+    pub insert: InsertParams,
     pub preoptimize: PreoptimizeSolverParams,
     pub global_optimize: GlobalOptimizeParams,
     pub optimize_neighbor: OptimizeNeighborParams,
@@ -20,6 +21,7 @@ pub struct SolverParams {
     pub runtime: RuntimeParams,
     pub phases: PhaseParams,
     pub precompute: PrecomputeParams,
+    pub insert: InsertParams,
     pub preoptimize: PreoptimizeSolverParams,
     pub global_optimize: GlobalOptimizeParams,
     pub global_neighbor: NeighborParams,
@@ -45,6 +47,7 @@ impl SolverParamsFile {
             runtime: self.runtime,
             phases: self.phases,
             precompute: self.precompute,
+            insert: self.insert,
             preoptimize: self.preoptimize,
             global_optimize: self.global_optimize,
             global_neighbor,
@@ -83,6 +86,13 @@ pub struct PrecomputeParams {
     pub orientation_neighbor_limit: usize,
     pub other_block_neighbor_area_top_k: usize,
     pub other_block_neighbor_align_delta: i64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InsertParams {
+    pub y_sample_ratio: f64,
+    pub y_buffer: usize,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -198,7 +208,6 @@ pub struct NeighborParams {
     pub reconstruct_pref_spread_weight_range: (f64, f64),
     pub reconstruct_limit_time_urgency_weight_range: (f64, f64),
     pub reconstruct_order_random_weight_range: (f64, f64),
-    pub insert_y_buffer: i64,
     pub shift_max_x: i64,
     pub shift_max_y: i64,
     pub rotate_max_shift_delta: i64,
@@ -249,7 +258,6 @@ impl NeighborParams {
             reconstruct_order_random_weight_range: value
                 .reconstruct_order_random_weight_range
                 .unwrap_or(self.reconstruct_order_random_weight_range),
-            insert_y_buffer: value.insert_y_buffer.unwrap_or(self.insert_y_buffer),
             shift_max_x: value.shift_max_x.unwrap_or(self.shift_max_x),
             shift_max_y: value.shift_max_y.unwrap_or(self.shift_max_y),
             rotate_max_shift_delta: value
@@ -319,7 +327,6 @@ pub struct NeighborParamsOverride {
     pub reconstruct_pref_spread_weight_range: Option<(f64, f64)>,
     pub reconstruct_limit_time_urgency_weight_range: Option<(f64, f64)>,
     pub reconstruct_order_random_weight_range: Option<(f64, f64)>,
-    pub insert_y_buffer: Option<i64>,
     pub shift_max_x: Option<i64>,
     pub shift_max_y: Option<i64>,
     pub rotate_max_shift_delta: Option<i64>,

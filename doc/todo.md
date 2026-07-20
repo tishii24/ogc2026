@@ -15,8 +15,9 @@ todo:
 - チューニング
 
 safety:
-- 最後にpy側にいくつかの解を返して、check-feasibilityをする
-  - todo: check-feasibilityの高速化
+- 最後にpy側にいくつかの解を返して、スコアが良い順にcheck-feasibilityをする
+  - feasibleなものが見つかったら返す
+  - todo: check-feasibilityの無駄なところを落として高速化
 - AIチェック
 - panicを排除する
   - 空のblockがある場合（2点しかない場合）
