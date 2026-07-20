@@ -12,8 +12,7 @@ type Interval = (i64, i64);
 struct InsertCandidate {
     scheduled: ScheduledBlock,
     score_delta: f64,
-    bbox_right: f64,
-    bbox_top: f64,
+    noise: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -67,9 +66,7 @@ pub fn insert_greedy<R: Random>(
         a.score_delta
             .total_cmp(&b.score_delta)
             .then(a.scheduled.entry_time.cmp(&b.scheduled.entry_time))
-            .then(a.bbox_right.total_cmp(&b.bbox_right))
-            .then(a.bbox_top.total_cmp(&b.bbox_top))
-            .then(a.scheduled.block_id.cmp(&b.scheduled.block_id))
+            .then(a.noise.total_cmp(&b.noise))
             .is_lt()
     }
 
@@ -128,7 +125,6 @@ pub fn insert_greedy<R: Random>(
                 block_id,
                 orient_idx,
             };
-            let bounds = pre.orientation_bbox_bounds[block_id][orient_idx];
             let crane_pair_cache: Vec<_> = bay_old_blocks
                 .iter()
                 .enumerate()
@@ -237,8 +233,7 @@ pub fn insert_greedy<R: Random>(
                         let candidate = InsertCandidate {
                             scheduled,
                             score_delta,
-                            bbox_right: scheduled.x as f64 + bounds.max_x,
-                            bbox_top: scheduled.y as f64 + bounds.max_y,
+                            noise: rng.nextf(),
                         };
                         if best
                             .as_ref()
