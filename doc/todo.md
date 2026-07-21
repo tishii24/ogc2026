@@ -1,5 +1,10 @@
 todo:
 - refactor
+- 最初のブロックほどランダム性を高める
+- 確率的に探索範囲を絞って多様化
+- 元の位置から離れているほど高い評価
+- ベスト解をもらってくる確率をスコアの差に応じて確率的にする
+- https://nnethercote.github.io/perf-book/build-configuration.html#maximizing-runtime-speed
 - reconstructの改善
   - targeted-reconstruct
   - obj2を軽視する
@@ -7,8 +12,7 @@ todo:
 - precompute-pair-wise
 - 温度の調整
 - preoptimizeを途中で打ち切る
-- pre.block-areaの修正
-  - unionを使う
+- Hashを荒くする
 - preoptimizeの改善
 - 高速化
 - safety
@@ -33,6 +37,7 @@ precompute:
 
 solver:
 - 同じような時刻のブロックを近くに集めると、後のブロックを入れやすくなる？
+- 限界高速化
 - 調整
   - dx,dyをnon-positiveに限定する
 - 強い最適化

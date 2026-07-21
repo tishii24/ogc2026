@@ -17,6 +17,9 @@
 ## tools/stats.py
 - `log/score.csv`をもとに、（version, timelimit）ごとにスコアを集計する
 
+## tools/stats_server.py
+- ブラウザから条件を指定し、reloadごとに`tools/stats.py`を再実行して表示する
+
 ## tools/visualizer.py
 - runner.pyが作成した実行結果を可視化する
 
@@ -44,6 +47,10 @@ python tools/stats.py --suite suites/half.json
 
 # version, timelimit ごとのケース別スコア表示
 python tools/stats.py --suite suites/half.json --matrix
+
+# 統計情報をブラウザで表示
+python tools/stats_server.py
+# http://127.0.0.1:8000 を開く
 ```
 
 ## Docker で Linux 向け提出物を作る

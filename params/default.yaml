@@ -19,7 +19,8 @@ precompute:
   other_block_neighbor_align_delta: 3
 
 insert:
-  y_sample_ratio: 1.0
+  y_sample_ratio_base: 1.0
+  y_sample_ratio_min: 1.0
   y_buffer: 10
 
 preoptimize:

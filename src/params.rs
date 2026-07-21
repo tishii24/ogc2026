@@ -91,7 +91,8 @@ pub struct PrecomputeParams {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InsertParams {
-    pub y_sample_ratio: f64,
+    pub y_sample_ratio_base: f64,
+    pub y_sample_ratio_min: f64,
     pub y_buffer: usize,
 }
 

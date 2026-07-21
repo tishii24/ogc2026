@@ -401,6 +401,11 @@ fn try_large_reconstruct<R: Random>(
         } else {
             (i64::MIN, i64::MAX)
         };
+        let k = schedule.len() - cur.len();
+        let y_sample_ratio = insert_params
+            .y_sample_ratio_base
+            .powi((k - 1) as i32)
+            .clamp(insert_params.y_sample_ratio_min, 1.0);
         let scheduled = insert_greedy(
             problem,
             pre,
@@ -410,6 +415,7 @@ fn try_large_reconstruct<R: Random>(
             &cur,
             &loads,
             insert_params,
+            y_sample_ratio,
             &pre.bay_order_by_pref[old.block_id],
             rng,
         )?;
@@ -821,6 +827,7 @@ fn try_move_neighbor<R: Random>(
         &base,
         &loads,
         insert_params,
+        1.0,
         bay_order,
         rng,
     )?;
@@ -1230,6 +1237,7 @@ fn build_bay_schedule<R: Random>(
             &schedule,
             &loads,
             params,
+            1.0,
             &bay_order,
             rng,
         )?;

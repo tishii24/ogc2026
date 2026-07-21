@@ -464,11 +464,11 @@ def score_cell(row: dict[str, str] | None) -> str:
     return format_number(objective)
 
 
-def print_score_matrix(
+def build_score_matrix(
     rows: list[dict[str, str]],
     cases: list[str] | None = None,
     best_rows: list[dict[str, str]] | None = None,
-) -> None:
+) -> tuple[list[str], list[list[str]]]:
     if cases is None:
         cases = sorted(
             {row.get("case", "") for row in rows if row.get("case", "")},
@@ -512,7 +512,15 @@ def print_score_matrix(
                 objectives.append(objective)
         best_cells.append(format_number(min(objectives)) if objectives else "-")
     table_rows.append(["best", "-"] + best_cells)
+    return headers, table_rows
 
+
+def print_score_matrix(
+    rows: list[dict[str, str]],
+    cases: list[str] | None = None,
+    best_rows: list[dict[str, str]] | None = None,
+) -> None:
+    headers, table_rows = build_score_matrix(rows, cases, best_rows)
     print_rows(headers, table_rows)
 
 
@@ -566,7 +574,11 @@ def main() -> int:
 
     summaries = summarize(root, rows, suite_cases, best_rows)
     if args.json_output:
-        print(json.dumps(summaries, ensure_ascii=False))
+        output: Any = summaries
+        if args.matrix:
+            headers, table_rows = build_score_matrix(rows, suite_cases, best_rows)
+            output = {"headers": headers, "rows": table_rows}
+        print(json.dumps(output, ensure_ascii=False))
     elif args.matrix:
         print_score_matrix(rows, suite_cases, best_rows)
     else:
