@@ -166,17 +166,10 @@ struct InsertCandidate {
 }
 
 #[derive(Clone, Copy)]
-enum HitDir {
-    NewOld,
-    OldNew,
-}
-
-#[derive(Clone, Copy)]
 struct XEvent {
-    x: i64,
-    old_idx: usize,
-    dir: HitDir,
-    delta: i8,
+    x_offset: u32,
+    old_idx: u32,
+    update: i8,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -426,10 +419,9 @@ pub fn insert_greedy<R: Random>(
         let mut event_sort_scratch = Vec::with_capacity(bay_old_blocks.len() * 4);
         let mut event_counts = Vec::new();
         let mut states = vec![HitState::default(); bay_old_blocks.len()];
-        #[cfg(feature = "profile-insert")]
         let mut event_group_seen = vec![0u64; bay_old_blocks.len()];
-        #[cfg(feature = "profile-insert")]
         let mut event_group_generation = 0u64;
+        let mut touched_old_ids = Vec::with_capacity(bay_old_blocks.len());
         let mut crane_pair_cache = Vec::with_capacity(bay_old_blocks.len());
         #[cfg(feature = "profile-insert")]
         {
@@ -516,7 +508,7 @@ pub fn insert_greedy<R: Random>(
                             old.x - hi,
                             old.x - lo,
                             old_idx,
-                            HitDir::NewOld,
+                            1,
                             range.min_x,
                             range.max_x,
                             &mut events,
@@ -527,7 +519,7 @@ pub fn insert_greedy<R: Random>(
                             old.x + lo,
                             old.x + hi,
                             old_idx,
-                            HitDir::OldNew,
+                            2,
                             range.min_x,
                             range.max_x,
                             &mut events,
@@ -554,6 +546,7 @@ pub fn insert_greedy<R: Random>(
                     profile.event_sort += event_sort_start.elapsed();
                 }
                 let mut event_pos = 0;
+                let mut x_offset = 0u32;
                 let mut x = range.min_x;
                 loop {
                     #[cfg(feature = "profile-insert")]
@@ -563,28 +556,31 @@ pub fn insert_greedy<R: Random>(
                     }
                     #[cfg(feature = "profile-insert")]
                     let event_apply_start = Instant::now();
-                    #[cfg(feature = "profile-insert")]
-                    {
-                        event_group_generation += 1;
-                    }
-                    while event_pos < events.len() && events[event_pos].x == x {
+                    event_group_generation += 1;
+                    touched_old_ids.clear();
+                    while event_pos < events.len() && events[event_pos].x_offset == x_offset {
                         let event = events[event_pos];
-                        #[cfg(feature = "profile-insert")]
-                        if event_group_seen[event.old_idx] != event_group_generation {
-                            event_group_seen[event.old_idx] = event_group_generation;
-                            profile.event_x_old_groups += 1;
+                        let old_idx = event.old_idx as usize;
+                        if event_group_seen[old_idx] != event_group_generation {
+                            event_group_seen[old_idx] = event_group_generation;
+                            touched_old_ids.push(old_idx);
+                            active_slots.set_all(
+                                forbidden_slots.states[old_idx][hit_state_index(states[old_idx])],
+                                false,
+                            );
+                            #[cfg(feature = "profile-insert")]
+                            {
+                                profile.event_x_old_groups += 1;
+                            }
                         }
-                        let old_idx = event.old_idx;
-                        active_slots.set_all(
-                            forbidden_slots.states[old_idx][hit_state_index(states[old_idx])],
-                            false,
-                        );
                         apply_x_event(event, &mut states);
+                        event_pos += 1;
+                    }
+                    for &old_idx in &touched_old_ids {
                         active_slots.set_all(
                             forbidden_slots.states[old_idx][hit_state_index(states[old_idx])],
                             true,
                         );
-                        event_pos += 1;
                     }
                     #[cfg(feature = "profile-insert")]
                     {
@@ -660,7 +656,8 @@ pub fn insert_greedy<R: Random>(
                     if event_pos >= events.len() {
                         break;
                     }
-                    x = events[event_pos].x;
+                    x_offset = events[event_pos].x_offset;
+                    x = range.min_x + x_offset as i64;
                     if x > range.max_x {
                         break;
                     }
@@ -747,7 +744,7 @@ fn push_x_event(
     l: i64,
     r: i64,
     old_idx: usize,
-    dir: HitDir,
+    update: i8,
     min_x: i64,
     max_x: i64,
     events: &mut Vec<XEvent>,
@@ -759,17 +756,15 @@ fn push_x_event(
     }
 
     events.push(XEvent {
-        x: l,
-        old_idx,
-        dir,
-        delta: 1,
+        x_offset: (l - min_x) as u32,
+        old_idx: old_idx as u32,
+        update,
     });
     if let Some(x) = r.checked_add(1) {
         events.push(XEvent {
-            x,
-            old_idx,
-            dir,
-            delta: -1,
+            x_offset: (x - min_x) as u32,
+            old_idx: old_idx as u32,
+            update: -update,
         });
     }
 }
@@ -785,7 +780,7 @@ fn counting_sort_x_events(
     counts.resize(bucket_count, 0);
     counts.fill(0);
     for event in events.iter() {
-        counts[(event.x - min_x) as usize] += 1;
+        counts[event.x_offset as usize] += 1;
     }
 
     let mut offset = 0;
@@ -798,14 +793,13 @@ fn counting_sort_x_events(
     scratch.resize(
         events.len(),
         XEvent {
-            x: 0,
+            x_offset: 0,
             old_idx: 0,
-            dir: HitDir::NewOld,
-            delta: 0,
+            update: 0,
         },
     );
     for &event in events.iter() {
-        let position = &mut counts[(event.x - min_x) as usize];
+        let position = &mut counts[event.x_offset as usize];
         scratch[*position] = event;
         *position += 1;
     }
@@ -813,24 +807,19 @@ fn counting_sort_x_events(
 }
 
 fn apply_x_event(event: XEvent, states: &mut [HitState]) {
-    let old_idx = event.old_idx;
-    match event.dir {
-        HitDir::NewOld => {
-            if event.delta > 0 {
-                states[old_idx].new_old += 1;
-            } else {
-                debug_assert!(states[old_idx].new_old > 0);
-                states[old_idx].new_old -= 1;
-            }
+    let state = &mut states[event.old_idx as usize];
+    match event.update {
+        1 => state.new_old += 1,
+        -1 => {
+            debug_assert!(state.new_old > 0);
+            state.new_old -= 1;
         }
-        HitDir::OldNew => {
-            if event.delta > 0 {
-                states[old_idx].old_new += 1;
-            } else {
-                debug_assert!(states[old_idx].old_new > 0);
-                states[old_idx].old_new -= 1;
-            }
+        2 => state.old_new += 1,
+        -2 => {
+            debug_assert!(state.old_new > 0);
+            state.old_new -= 1;
         }
+        _ => unreachable!(),
     }
 }
 
