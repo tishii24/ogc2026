@@ -39,13 +39,13 @@ steps:
     mode: combinations
     parameters:
       - preoptimize.precedence_margin: 0
-        phases.global_constrained_time_ratio: 0.25
+        phases.global_constrained.time_ratio: 0.25
       - preoptimize.precedence_margin: 2
-        phases.global_constrained_time_ratio: 0.1
+        phases.global_constrained.time_ratio: 0.1
       - preoptimize.precedence_margin: 2
-        phases.global_constrained_time_ratio: 0.25
+        phases.global_constrained.time_ratio: 0.25
       - preoptimize.precedence_margin: 5
-        phases.global_constrained_time_ratio: 0.25
+        phases.global_constrained.time_ratio: 0.25
 
   - name: global-temperature
     mode: combinations

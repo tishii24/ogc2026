@@ -70,7 +70,7 @@ pub struct RuntimeParams {
 pub struct PhaseParams {
     pub initial_preoptimize: LimitedPhaseParams,
     pub initial_build: LimitedPhaseParams,
-    pub global_constrained_time_ratio: f64,
+    pub global_constrained: LimitedPhaseParams,
 }
 
 #[derive(Clone, Debug, Deserialize)]

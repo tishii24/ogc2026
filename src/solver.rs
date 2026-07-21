@@ -173,8 +173,12 @@ pub fn solve(
         timer,
     );
     let global_start = timer.elapsed_seconds();
-    let constrained_deadline = global_start
-        + (deadline - global_start).max(0.0) * params.phases.global_constrained_time_ratio;
+    let constrained_time_limit = phase_time_limit(
+        (deadline - global_start).max(0.0),
+        params.phases.global_constrained.time_ratio,
+        params.phases.global_constrained.max_seconds,
+    );
+    let constrained_deadline = global_start + constrained_time_limit;
     let initial = global.run(
         initial,
         constrained_deadline,

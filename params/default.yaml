@@ -11,7 +11,9 @@ phases:
   initial_build:
     time_ratio: 0.1
     max_seconds: 10.0
-  global_constrained_time_ratio: 0.25
+  global_constrained:
+    time_ratio: 0.25
+    max_seconds: 20.0
 
 precompute:
   orientation_neighbor_limit: 100
