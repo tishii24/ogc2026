@@ -1,6 +1,5 @@
 todo:
 - refactor
-- 残りk個になったら、改善するベイの組合せのみ探索する
 - 小さいケースを調査させる
   - timeのwindowを2つにする？
 - ランダム性を高める
@@ -10,10 +9,8 @@ todo:
   - 元の位置から離れているほど高い評価
 - 温度の調整
   - ベスト解をもらってくる確率をスコアの差に応じて確率的にする
+- 残りk個になったら、改善するベイの組合せのみ探索する
 - gcloudで実行
-- reconstructの改善
-  - targeted-reconstruct
-  - obj2を軽視する
 - kick
 - preoptimizeの改善
   - 途中で打ち切る
@@ -45,6 +42,9 @@ solver:
 - 限界高速化
 - 調整
   - dx,dyをnon-positiveに限定する
+- reconstructの改善
+  - targeted-reconstruct
+  - obj2を軽視する
 - 強い最適化
   - packing-scoreの計算（bboxの重なりなど）
   - 重なっている面積が少なくなる方に動かす
