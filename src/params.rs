@@ -201,7 +201,9 @@ pub struct NeighborParams {
     pub max_removed_blocks: usize,
     pub remove_pool_factor: usize,
     pub remove_count_sample_power: f64,
-    pub remove_seed_per_block: usize,
+    pub remove_seed_per_block: (usize, usize),
+    pub remove_entry_base_interval: usize,
+    pub remove_entry_seed_candidate_count: usize,
     pub remove_random_seed_ratio: f64,
     pub remove_x_distance_weight_max: f64,
     pub remove_y_distance_weight_max: f64,
@@ -236,6 +238,12 @@ impl NeighborParams {
             remove_seed_per_block: value
                 .remove_seed_per_block
                 .unwrap_or(self.remove_seed_per_block),
+            remove_entry_base_interval: value
+                .remove_entry_base_interval
+                .unwrap_or(self.remove_entry_base_interval),
+            remove_entry_seed_candidate_count: value
+                .remove_entry_seed_candidate_count
+                .unwrap_or(self.remove_entry_seed_candidate_count),
             remove_random_seed_ratio: value
                 .remove_random_seed_ratio
                 .unwrap_or(self.remove_random_seed_ratio),
@@ -320,7 +328,9 @@ pub struct NeighborParamsOverride {
     pub max_removed_blocks: Option<usize>,
     pub remove_pool_factor: Option<usize>,
     pub remove_count_sample_power: Option<f64>,
-    pub remove_seed_per_block: Option<usize>,
+    pub remove_seed_per_block: Option<(usize, usize)>,
+    pub remove_entry_base_interval: Option<usize>,
+    pub remove_entry_seed_candidate_count: Option<usize>,
     pub remove_random_seed_ratio: Option<f64>,
     pub remove_x_distance_weight_max: Option<f64>,
     pub remove_y_distance_weight_max: Option<f64>,
