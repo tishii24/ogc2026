@@ -1,11 +1,13 @@
 todo:
 - refactor
-- Removeするブロックはtの範囲を決める
-- ベイ、オリエンテーションをランダムにする
 - 残りk個になったら、改善するベイの組合せのみ探索する
-- 最初のブロックほどランダム性を高める
-- 確率的に探索範囲を絞って多様化
-- 元の位置から離れているほど高い評価
+- gcloudで実行
+- remove-blocksを改善する
+- ランダム性を高める
+  - 最初のブロックほどランダム性を高める
+  - ベイ、オリエンテーションをランダムにする
+  - 確率的に探索範囲を絞って多様化
+  - 元の位置から離れているほど高い評価
 - ベスト解をもらってくる確率をスコアの差に応じて確率的にする
 - https://nnethercote.github.io/perf-book/build-configuration.html#maximizing-runtime-speed
 - reconstructの改善
