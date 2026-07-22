@@ -213,6 +213,7 @@ pub struct NeighborParams {
     pub reconstruct_pref_spread_weight_range: (f64, f64),
     pub reconstruct_limit_time_urgency_weight_range: (f64, f64),
     pub reconstruct_order_random_weight_range: (f64, f64),
+    pub reconstruct_bay_assignment_max_combinations: usize,
     pub shift_max_x: i64,
     pub shift_max_y: i64,
     pub rotate_max_shift_delta: i64,
@@ -275,6 +276,9 @@ impl NeighborParams {
             reconstruct_order_random_weight_range: value
                 .reconstruct_order_random_weight_range
                 .unwrap_or(self.reconstruct_order_random_weight_range),
+            reconstruct_bay_assignment_max_combinations: value
+                .reconstruct_bay_assignment_max_combinations
+                .unwrap_or(self.reconstruct_bay_assignment_max_combinations),
             shift_max_x: value.shift_max_x.unwrap_or(self.shift_max_x),
             shift_max_y: value.shift_max_y.unwrap_or(self.shift_max_y),
             rotate_max_shift_delta: value
@@ -364,6 +368,7 @@ pub struct NeighborParamsOverride {
     pub reconstruct_pref_spread_weight_range: Option<(f64, f64)>,
     pub reconstruct_limit_time_urgency_weight_range: Option<(f64, f64)>,
     pub reconstruct_order_random_weight_range: Option<(f64, f64)>,
+    pub reconstruct_bay_assignment_max_combinations: Option<usize>,
     pub shift_max_x: Option<i64>,
     pub shift_max_y: Option<i64>,
     pub rotate_max_shift_delta: Option<i64>,

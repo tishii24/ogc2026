@@ -3,6 +3,8 @@ todo:
 - 残りk個になったら、改善するベイの組合せのみ探索する
 - gcloudで実行
 - remove-blocksを改善する
+  - entry-windowを削除する
+  - timeのwindowを2つにする
 - ランダム性を高める
   - 最初のブロックほどランダム性を高める
   - ベイ、オリエンテーションをランダムにする
@@ -27,6 +29,7 @@ safety:
 - 最後にpy側にいくつかの解を返して、スコアが良い順にcheck-feasibilityをする
   - feasibleなものが見つかったら返す
   - todo: check-feasibilityの無駄なところを落として高速化
+- tardiness>0に絶対になるケースがあるか調べる
 - AIチェック
 - panicを排除する
   - 空のblockがある場合（2点しかない場合）

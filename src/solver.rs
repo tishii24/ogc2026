@@ -5,8 +5,8 @@ use crate::{
     precompute::Precompute,
     preoptimize::{PreoptimizePrecompute, preoptimize},
     solver_util::{
-        NeighborKind, block_pref_spread, gen_rangef, schedule_tardiness, schedule_to_solution,
-        score_schedule, score13_block,
+        NeighborKind, block_pref_spread, gen_rangef, normalized_imbalance, schedule_tardiness,
+        schedule_to_solution, score_schedule, score13_block,
     },
     util::{
         rand::{RandPcg64Mcg, Random},
@@ -353,6 +353,97 @@ fn hash_order(order: &[usize]) -> u64 {
     hash
 }
 
+fn bay_assignment_combination_count(
+    bay_count: usize,
+    block_count: usize,
+    limit: usize,
+) -> Option<usize> {
+    let mut count = 1;
+    for _ in 0..block_count {
+        if count > limit / bay_count {
+            return None;
+        }
+        count *= bay_count;
+    }
+    Some(count)
+}
+
+fn bay_assignment_lower_bound(
+    problem: &Problem,
+    pre: &Precompute,
+    fixed_score13: f64,
+    loads: &[f64],
+    remaining_blocks: &[usize],
+    assignment: &[usize],
+) -> f64 {
+    let mut score = fixed_score13;
+    let mut final_loads = loads.to_vec();
+    for (&block_id, &bay_id) in remaining_blocks.iter().zip(assignment) {
+        let block = &problem.blocks[block_id];
+        let min_tardiness = (block.release_time + block.processing_time - block.due_date).max(0);
+        score += problem.weights.w1 * min_tardiness as f64
+            + problem.weights.w3 * pre.pref_penalty[block_id][bay_id] as f64;
+        final_loads[bay_id] += block.workload as f64;
+    }
+    score + problem.weights.w2 * normalized_imbalance(pre, &final_loads)
+}
+
+fn enumerate_bay_assignments(
+    problem: &Problem,
+    pre: &Precompute,
+    fixed_score13: f64,
+    loads: &[f64],
+    remaining_blocks: &[usize],
+    combination_count: usize,
+    accept_threshold: f64,
+) -> Vec<Vec<usize>> {
+    let bay_count = problem.bays.len();
+    let can_fit: Vec<Vec<bool>> = remaining_blocks
+        .iter()
+        .map(|&block_id| {
+            (0..bay_count)
+                .map(|bay_id| {
+                    pre.orientation_order_by_bbox[block_id]
+                        .iter()
+                        .any(|&orient_idx| {
+                            pre.collision
+                                .fit_range(bay_id, block_id, orient_idx)
+                                .is_some()
+                        })
+                })
+                .collect()
+        })
+        .collect();
+
+    let mut result = Vec::new();
+    for mut value in 0..combination_count {
+        let mut assignment = Vec::with_capacity(remaining_blocks.len());
+        let mut valid = true;
+        for fits in &can_fit {
+            let bay_id = value % bay_count;
+            value /= bay_count;
+            if !fits[bay_id] {
+                valid = false;
+                break;
+            }
+            assignment.push(bay_id);
+        }
+        if valid
+            && bay_assignment_lower_bound(
+                problem,
+                pre,
+                fixed_score13,
+                loads,
+                remaining_blocks,
+                &assignment,
+            ) <= accept_threshold + 1e-9
+        {
+            result.push(assignment);
+        }
+    }
+    result
+}
+
 fn try_large_reconstruct<R: Random>(
     problem: &Problem,
     pre: &Precompute,
@@ -394,11 +485,35 @@ fn try_large_reconstruct<R: Random>(
         cur.push(scheduled);
     }
     let mut current_by_id = constraints.map(|_| scheduled_by_id(problem, &cur));
+    let mut bay_assignments: Option<Vec<Vec<usize>>> = None;
 
-    for block_id in order {
+    for (order_index, &block_id) in order.iter().enumerate() {
         if fixed_score13 > accept_threshold + 1e-9 {
             return None;
         }
+        let remaining_blocks = &order[order_index..];
+        if bay_assignments.is_none()
+            && let Some(combination_count) = bay_assignment_combination_count(
+                problem.bays.len(),
+                remaining_blocks.len(),
+                params.reconstruct_bay_assignment_max_combinations,
+            )
+        {
+            let assignments = enumerate_bay_assignments(
+                problem,
+                pre,
+                fixed_score13,
+                &loads,
+                remaining_blocks,
+                combination_count,
+                accept_threshold,
+            );
+            if assignments.is_empty() {
+                return None;
+            }
+            bay_assignments = Some(assignments);
+        }
+
         let old = original_by_id[block_id]?;
         let (min_entry_time, max_entry_time) = if let Some(constraints) = constraints {
             precedence_entry_time_range(
@@ -415,19 +530,83 @@ fn try_large_reconstruct<R: Random>(
             .y_sample_ratio_base
             .powi((k - 1) as i32)
             .clamp(insert_params.y_sample_ratio_min, 1.0);
-        let scheduled = insert_greedy(
-            problem,
-            pre,
-            old,
-            min_entry_time,
-            max_entry_time,
-            &cur,
-            &loads,
-            insert_params,
-            y_sample_ratio,
-            &pre.bay_order_by_pref[old.block_id],
-            rng,
-        )?;
+
+        let (scheduled, next_bay_assignments) = if let Some(assignments) = bay_assignments.as_ref()
+        {
+            let mut bay_counts = vec![0usize; problem.bays.len()];
+            for assignment in assignments {
+                bay_counts[assignment[0]] += 1;
+            }
+            let mut bay_order = pre.bay_order_by_pref[block_id].clone();
+            bay_order.retain(|&bay_id| bay_counts[bay_id] > 0);
+            bay_order.sort_by_key(|&bay_id| Reverse(bay_counts[bay_id]));
+
+            let mut selected = None;
+            for bay_id in bay_order {
+                let Some(scheduled) = insert_greedy(
+                    problem,
+                    pre,
+                    old,
+                    min_entry_time,
+                    max_entry_time,
+                    &cur,
+                    &loads,
+                    insert_params,
+                    y_sample_ratio,
+                    &[bay_id],
+                    rng,
+                ) else {
+                    continue;
+                };
+
+                let next_fixed_score13 = fixed_score13 + score13_block(problem, pre, scheduled);
+                let mut next_loads = loads.clone();
+                next_loads[bay_id] += problem.blocks[block_id].workload as f64;
+                let next_remaining_blocks = &remaining_blocks[1..];
+                let next_assignments: Vec<Vec<usize>> = assignments
+                    .iter()
+                    .filter(|assignment| assignment[0] == bay_id)
+                    .filter_map(|assignment| {
+                        let suffix = &assignment[1..];
+                        (bay_assignment_lower_bound(
+                            problem,
+                            pre,
+                            next_fixed_score13,
+                            &next_loads,
+                            next_remaining_blocks,
+                            suffix,
+                        ) <= accept_threshold + 1e-9)
+                            .then(|| suffix.to_vec())
+                    })
+                    .collect();
+                if !next_assignments.is_empty() {
+                    selected = Some((scheduled, next_assignments));
+                    break;
+                }
+            }
+            selected?
+        } else {
+            (
+                insert_greedy(
+                    problem,
+                    pre,
+                    old,
+                    min_entry_time,
+                    max_entry_time,
+                    &cur,
+                    &loads,
+                    insert_params,
+                    y_sample_ratio,
+                    &pre.bay_order_by_pref[old.block_id],
+                    rng,
+                )?,
+                Vec::new(),
+            )
+        };
+
+        if bay_assignments.is_some() {
+            bay_assignments = Some(next_bay_assignments);
+        }
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
         fixed_score13 += score13_block(problem, pre, scheduled);
         if let Some(current_by_id) = &mut current_by_id {

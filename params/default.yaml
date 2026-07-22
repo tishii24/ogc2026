@@ -87,6 +87,7 @@ optimize_neighbor:
     reconstruct_pref_spread_weight_range: [0.0, 1.0]
     reconstruct_limit_time_urgency_weight_range: [0.0, 1.0]
     reconstruct_order_random_weight_range: [0.0, 0.5]
+    reconstruct_bay_assignment_max_combinations: 1000
     shift_max_x: 5
     shift_max_y: 5
     rotate_max_shift_delta: 2
