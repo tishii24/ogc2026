@@ -957,17 +957,48 @@ fn choose_removed_blocks_local<R: Random>(
 
     let mut seed_pool = bad_pool.clone();
     rng.shuffle(&mut seed_pool);
-    for &block_id in seed_pool.iter().take(bad_seed_count) {
+    let (anchor_id, remaining_bad_seed_count, remaining_random_seed_count) = if bad_seed_count > 0 {
+        (seed_pool[0], bad_seed_count - 1, random_seed_count)
+    } else {
+        let index = rng.gen_range(0, schedule.len());
+        (schedule[index].block_id, 0, random_seed_count - 1)
+    };
+    push_removed_block(&mut selected, &mut used, anchor_id, k);
+    let anchor_entry_time = by_block[anchor_id].unwrap().entry_time;
+
+    seed_pool.retain(|&block_id| !used[block_id]);
+    seed_pool.sort_by_key(|&block_id| {
+        by_block[block_id]
+            .unwrap()
+            .entry_time
+            .abs_diff(anchor_entry_time)
+    });
+    for &block_id in seed_pool.iter().take(remaining_bad_seed_count) {
         push_removed_block(&mut selected, &mut used, block_id, k);
     }
 
-    let mut random_seed_pool: Vec<usize> = schedule.iter().map(|s| s.block_id).collect();
+    let mut random_seed_pool: Vec<usize> = schedule
+        .iter()
+        .map(|s| s.block_id)
+        .filter(|&block_id| !used[block_id])
+        .collect();
     rng.shuffle(&mut random_seed_pool);
-    let random_seed_end = selected.len() + random_seed_count;
-    for block_id in random_seed_pool {
-        if selected.len() >= random_seed_end {
-            break;
-        }
+    random_seed_pool.sort_by_key(|&block_id| {
+        by_block[block_id]
+            .unwrap()
+            .entry_time
+            .abs_diff(anchor_entry_time)
+    });
+    random_seed_pool.truncate(
+        (remaining_random_seed_count * params.remove_pool_factor)
+            .min(random_seed_pool.len())
+            .max(remaining_random_seed_count),
+    );
+    rng.shuffle(&mut random_seed_pool);
+    for block_id in random_seed_pool
+        .into_iter()
+        .take(remaining_random_seed_count)
+    {
         push_removed_block(&mut selected, &mut used, block_id, k);
     }
 
