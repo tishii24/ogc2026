@@ -758,14 +758,61 @@ fn choose_large_reconstruct_blocks(
     if k == 0 {
         return Vec::new();
     }
-    let seed = select_block(problem, context, state, rng);
-    let mut remaining: Vec<_> = (0..problem.blocks.len())
-        .filter(|&block_id| block_id != seed)
-        .collect();
-    rng.shuffle(&mut remaining);
+    let anchor = select_block(problem, context, state, rng);
+    let anchor_entry_time = state.schedule[anchor].entry_time;
+    let seed_count = k.div_ceil(context.params.neighbor.remove_seed_per_block);
     let mut selected = Vec::with_capacity(k);
-    selected.push(seed);
-    selected.extend(remaining.into_iter().take(k - 1));
+    let mut used = vec![false; problem.blocks.len()];
+    selected.push(anchor);
+    used[anchor] = true;
+
+    let mut seed_pool: Vec<_> = (0..problem.blocks.len())
+        .filter(|&block_id| block_id != anchor)
+        .collect();
+    rng.shuffle(&mut seed_pool);
+    seed_pool.sort_by_key(|&block_id| {
+        state.schedule[block_id]
+            .entry_time
+            .abs_diff(anchor_entry_time)
+    });
+    for block_id in seed_pool.into_iter().take(seed_count - 1) {
+        selected.push(block_id);
+        used[block_id] = true;
+    }
+
+    let seeds = selected.clone();
+    for (seed_index, &seed_id) in seeds.iter().enumerate() {
+        if selected.len() >= k {
+            break;
+        }
+        let seed = state.schedule[seed_id];
+        let seeds_left = seeds.len() - seed_index;
+        let need = (k - selected.len()).div_ceil(seeds_left);
+        let mut neighbors: Vec<_> = (0..problem.blocks.len())
+            .filter(|&block_id| !used[block_id] && state.schedule[block_id].bay_id == seed.bay_id)
+            .collect();
+        rng.shuffle(&mut neighbors);
+        neighbors.sort_by_key(|&block_id| {
+            state.schedule[block_id]
+                .entry_time
+                .abs_diff(seed.entry_time)
+        });
+        for block_id in neighbors.into_iter().take(need) {
+            selected.push(block_id);
+            used[block_id] = true;
+        }
+    }
+
+    let mut fill_pool: Vec<_> = (0..problem.blocks.len())
+        .filter(|&block_id| !used[block_id])
+        .collect();
+    rng.shuffle(&mut fill_pool);
+    fill_pool.sort_by_key(|&block_id| {
+        state.schedule[block_id]
+            .entry_time
+            .abs_diff(anchor_entry_time)
+    });
+    selected.extend(fill_pool.into_iter().take(k - selected.len()));
     selected
 }
 

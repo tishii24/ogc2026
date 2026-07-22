@@ -124,6 +124,7 @@ pub struct PreoptimizeNeighborParams {
     pub min_removed_blocks: usize,
     pub max_removed_blocks: usize,
     pub remove_count_sample_power: f64,
+    pub remove_seed_per_block: usize,
     pub bad_block_sample_count: usize,
     pub bad_block_select_probability: f64,
     pub max_relocate_attempts: usize,
