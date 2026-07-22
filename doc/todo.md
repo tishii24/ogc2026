@@ -1,26 +1,24 @@
 todo:
 - refactor
 - 残りk個になったら、改善するベイの組合せのみ探索する
-- gcloudで実行
-- remove-blocksを改善する
-  - entry-windowを削除する
-  - timeのwindowを2つにする
+- 小さいケースを調査させる
+- timeのwindowを2つにする
 - ランダム性を高める
   - 最初のブロックほどランダム性を高める
   - ベイ、オリエンテーションをランダムにする
   - 確率的に探索範囲を絞って多様化
   - 元の位置から離れているほど高い評価
 - ベスト解をもらってくる確率をスコアの差に応じて確率的にする
-- https://nnethercote.github.io/perf-book/build-configuration.html#maximizing-runtime-speed
+- gcloudで実行
 - reconstructの改善
   - targeted-reconstruct
   - obj2を軽視する
 - kick
-- precompute-pair-wise
 - 温度の調整
-- preoptimizeを途中で打ち切る
-- Hashを荒くする
 - preoptimizeの改善
+  - 途中で打ち切る
+  - 近傍を増やす
+- Hashを荒くする
 - 高速化
 - safety
 - チューニング

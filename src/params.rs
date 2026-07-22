@@ -202,10 +202,6 @@ pub struct NeighborParams {
     pub remove_count_sample_power: f64,
     pub remove_seed_per_block: usize,
     pub remove_random_seed_ratio: f64,
-    pub remove_method_weights: RemoveMethodWeights,
-    pub remove_entry_time_window_ratio_range: (f64, f64),
-    pub remove_entry_time_seed_count_range: (usize, usize),
-    pub remove_entry_time_neighbors_per_seed_range: (usize, usize),
     pub remove_x_distance_weight_max: f64,
     pub remove_y_distance_weight_max: f64,
     pub reconstruct_workload_weight_range: (f64, f64),
@@ -213,7 +209,6 @@ pub struct NeighborParams {
     pub reconstruct_pref_spread_weight_range: (f64, f64),
     pub reconstruct_limit_time_urgency_weight_range: (f64, f64),
     pub reconstruct_order_random_weight_range: (f64, f64),
-    pub reconstruct_bay_assignment_max_combinations: usize,
     pub shift_max_x: i64,
     pub shift_max_y: i64,
     pub rotate_max_shift_delta: i64,
@@ -243,18 +238,6 @@ impl NeighborParams {
             remove_random_seed_ratio: value
                 .remove_random_seed_ratio
                 .unwrap_or(self.remove_random_seed_ratio),
-            remove_method_weights: self
-                .remove_method_weights
-                .with_override(&value.remove_method_weights),
-            remove_entry_time_window_ratio_range: value
-                .remove_entry_time_window_ratio_range
-                .unwrap_or(self.remove_entry_time_window_ratio_range),
-            remove_entry_time_seed_count_range: value
-                .remove_entry_time_seed_count_range
-                .unwrap_or(self.remove_entry_time_seed_count_range),
-            remove_entry_time_neighbors_per_seed_range: value
-                .remove_entry_time_neighbors_per_seed_range
-                .unwrap_or(self.remove_entry_time_neighbors_per_seed_range),
             remove_x_distance_weight_max: value
                 .remove_x_distance_weight_max
                 .unwrap_or(self.remove_x_distance_weight_max),
@@ -276,9 +259,6 @@ impl NeighborParams {
             reconstruct_order_random_weight_range: value
                 .reconstruct_order_random_weight_range
                 .unwrap_or(self.reconstruct_order_random_weight_range),
-            reconstruct_bay_assignment_max_combinations: value
-                .reconstruct_bay_assignment_max_combinations
-                .unwrap_or(self.reconstruct_bay_assignment_max_combinations),
             shift_max_x: value.shift_max_x.unwrap_or(self.shift_max_x),
             shift_max_y: value.shift_max_y.unwrap_or(self.shift_max_y),
             rotate_max_shift_delta: value
@@ -307,22 +287,6 @@ pub struct NeighborProbabilities {
     pub move_block: f64,
     pub rotate: f64,
     pub swap: f64,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RemoveMethodWeights {
-    pub local_proximity: f64,
-    pub entry_time_window: f64,
-}
-
-impl RemoveMethodWeights {
-    fn with_override(&self, value: &RemoveMethodWeightsOverride) -> Self {
-        Self {
-            local_proximity: value.local_proximity.unwrap_or(self.local_proximity),
-            entry_time_window: value.entry_time_window.unwrap_or(self.entry_time_window),
-        }
-    }
 }
 
 impl NeighborProbabilities {
@@ -357,10 +321,6 @@ pub struct NeighborParamsOverride {
     pub remove_count_sample_power: Option<f64>,
     pub remove_seed_per_block: Option<usize>,
     pub remove_random_seed_ratio: Option<f64>,
-    pub remove_method_weights: RemoveMethodWeightsOverride,
-    pub remove_entry_time_window_ratio_range: Option<(f64, f64)>,
-    pub remove_entry_time_seed_count_range: Option<(usize, usize)>,
-    pub remove_entry_time_neighbors_per_seed_range: Option<(usize, usize)>,
     pub remove_x_distance_weight_max: Option<f64>,
     pub remove_y_distance_weight_max: Option<f64>,
     pub reconstruct_workload_weight_range: Option<(f64, f64)>,
@@ -368,7 +328,6 @@ pub struct NeighborParamsOverride {
     pub reconstruct_pref_spread_weight_range: Option<(f64, f64)>,
     pub reconstruct_limit_time_urgency_weight_range: Option<(f64, f64)>,
     pub reconstruct_order_random_weight_range: Option<(f64, f64)>,
-    pub reconstruct_bay_assignment_max_combinations: Option<usize>,
     pub shift_max_x: Option<i64>,
     pub shift_max_y: Option<i64>,
     pub rotate_max_shift_delta: Option<i64>,
@@ -376,13 +335,6 @@ pub struct NeighborParamsOverride {
     pub swap_max_shift_delta: Option<i64>,
     pub move_sample_blocks: Option<usize>,
     pub move_small_pool_size: Option<usize>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct RemoveMethodWeightsOverride {
-    pub local_proximity: Option<f64>,
-    pub entry_time_window: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

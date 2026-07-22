@@ -74,12 +74,6 @@ optimize_neighbor:
     remove_count_sample_power: 2.0
     remove_seed_per_block: 4
     remove_random_seed_ratio: 0.25
-    remove_method_weights:
-      local_proximity: 1.0
-      entry_time_window: 1.0
-    remove_entry_time_window_ratio_range: [0.05, 0.2]
-    remove_entry_time_seed_count_range: [2, 4]
-    remove_entry_time_neighbors_per_seed_range: [1, 3]
     remove_x_distance_weight_max: 3.0
     remove_y_distance_weight_max: 3.0
     reconstruct_workload_weight_range: [0.0, 1.0]
@@ -87,7 +81,6 @@ optimize_neighbor:
     reconstruct_pref_spread_weight_range: [0.0, 1.0]
     reconstruct_limit_time_urgency_weight_range: [0.0, 1.0]
     reconstruct_order_random_weight_range: [0.0, 0.5]
-    reconstruct_bay_assignment_max_combinations: 1000
     shift_max_x: 5
     shift_max_y: 5
     rotate_max_shift_delta: 2
