@@ -45,6 +45,7 @@ class StatsHandler(BaseHTTPRequestHandler):
         last_versions = query_value(query, "n")
         matrix = query_value(query, "m") == "1"
         include_tune = query_value(query, "include_tune") == "1"
+        all_feasible = query_value(query, "all_feasible") == "1"
 
         stats_args: list[str] = []
         if suite:
@@ -57,6 +58,8 @@ class StatsHandler(BaseHTTPRequestHandler):
             stats_args.append("--matrix")
         if include_tune:
             stats_args.append("--include-tune")
+        if all_feasible:
+            stats_args.append("--all-feasible")
         stats_args.append("--json")
 
         command = [sys.executable, str(self.root / "tools" / "stats.py"), *stats_args]
@@ -90,6 +93,7 @@ class StatsHandler(BaseHTTPRequestHandler):
             last_versions,
             matrix,
             include_tune,
+            all_feasible,
             display_command,
             content,
             result.returncode,
@@ -170,7 +174,7 @@ class StatsHandler(BaseHTTPRequestHandler):
                     matrix
                     and best_row is not None
                     and row is not best_row
-                    and index >= 2
+                    and headers[index] not in {"version", "relative_score", "tl"}
                     and value not in {"NG", "-"}
                     and value == best_row[index]
                 ):
@@ -200,12 +204,14 @@ class StatsHandler(BaseHTTPRequestHandler):
         last_versions: str,
         matrix: bool,
         include_tune: bool,
+        all_feasible: bool,
         command: str,
         content: str,
         returncode: int,
     ) -> str:
         matrix_checked = " checked" if matrix else ""
         tune_checked = " checked" if include_tune else ""
+        feasible_checked = " checked" if all_feasible else ""
         status_class = "error" if returncode else ""
         return f"""<!doctype html>
 <html lang="ja">
@@ -255,6 +261,7 @@ pre {{ margin: 0; padding: 12px; border: 1px solid #fecaca; border-radius: 8px; 
 </label>
 <label class="checkbox"><input type="checkbox" name="m" value="1"{matrix_checked}>matrix (-m)</label>
 <label class="checkbox"><input type="checkbox" name="include_tune" value="1"{tune_checked}>include tune</label>
+<label class="checkbox"><input type="checkbox" name="all_feasible" value="1"{feasible_checked}>all feasible</label>
 <button type="submit">表示</button>
 </form>
 <div class="command {status_class}">$ {html.escape(command)}</div>

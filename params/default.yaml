@@ -71,12 +71,12 @@ optimize_neighbor:
       swap: 3.0
     min_removed_blocks: 7
     max_removed_blocks: 13
-    remove_pool_factor: 2
+    remove_pool_factor: 4
     remove_count_sample_power: 2.0
-    remove_seed_per_block: [2, 4]
+    remove_seed_per_block: [1, 3]
     remove_entry_base_interval: 3
-    remove_entry_seed_candidate_count: 4
-    remove_random_seed_ratio: 0.25
+    remove_entry_seed_candidate_count: 10
+    remove_random_seed_ratio: 0.5
     remove_x_distance_weight_max: 3.0
     remove_y_distance_weight_max: 3.0
     reconstruct_workload_weight_range: [0.0, 1.0]

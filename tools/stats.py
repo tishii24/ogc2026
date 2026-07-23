@@ -50,6 +50,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Show versions whose name contains 'tune'.",
     )
+    parser.add_argument(
+        "--all-feasible",
+        action="store_true",
+        help="Only show version/timelimit pairs feasible for every case in --suite.",
+    )
     return parser.parse_args()
 
 
@@ -198,6 +203,23 @@ def row_key(row: dict[str, str]) -> tuple[str, float] | None:
     if not version or timelimit is None:
         return None
     return (version, timelimit)
+
+
+def filter_all_feasible(
+    rows: list[dict[str, str]], cases: list[str]
+) -> list[dict[str, str]]:
+    target_cases = set(cases)
+    feasible_cases: dict[tuple[str, float], set[str]] = defaultdict(set)
+    for row in rows:
+        key = row_key(row)
+        case = row.get("case", "")
+        if key is not None and case in target_cases and parse_bool(row.get("feasible", "")):
+            feasible_cases[key].add(case)
+
+    valid_keys = {
+        key for key, feasible in feasible_cases.items() if feasible == target_cases
+    }
+    return [row for row in rows if row_key(row) in valid_keys]
 
 
 def load_case_weights(root: Path, case: str) -> tuple[float, float, float]:
@@ -468,6 +490,7 @@ def build_score_matrix(
     rows: list[dict[str, str]],
     cases: list[str] | None = None,
     best_rows: list[dict[str, str]] | None = None,
+    summaries: list[dict[str, Any]] | None = None,
 ) -> tuple[list[str], list[list[str]]]:
     if cases is None:
         cases = sorted(
@@ -492,12 +515,23 @@ def build_score_matrix(
         for row in rows
     }
 
-    headers = ["version", "tl"] + [case_label(case) for case in cases]
+    relative_scores = {
+        (item["version"], item["timelimit"]): item["relative_score"]
+        for item in summaries or []
+    }
+    headers = ["version", "relative_score", "tl"] + [
+        case_label(case) for case in cases
+    ]
     table_rows = []
     for version, timelimit in row_keys:
         assert timelimit is not None
+        relative_score = relative_scores.get((version, timelimit))
         table_rows.append(
-            [version, format_number(timelimit)]
+            [
+                version,
+                f"{relative_score:.3f}" if relative_score is not None else "-",
+                format_number(timelimit),
+            ]
             + [score_cell(by_key.get((version, timelimit, case))) for case in cases]
         )
 
@@ -511,7 +545,7 @@ def build_score_matrix(
             if parse_bool(row.get("feasible", "")) and objective is not None:
                 objectives.append(objective)
         best_cells.append(format_number(min(objectives)) if objectives else "-")
-    table_rows.append(["best", "-"] + best_cells)
+    table_rows.append(["best", "-", "-"] + best_cells)
     return headers, table_rows
 
 
@@ -519,14 +553,18 @@ def print_score_matrix(
     rows: list[dict[str, str]],
     cases: list[str] | None = None,
     best_rows: list[dict[str, str]] | None = None,
+    summaries: list[dict[str, Any]] | None = None,
 ) -> None:
-    headers, table_rows = build_score_matrix(rows, cases, best_rows)
+    headers, table_rows = build_score_matrix(rows, cases, best_rows, summaries)
     print_rows(headers, table_rows)
 
 
 def main() -> int:
     args = parse_args()
     root = repo_root()
+    if args.all_feasible and not args.suite:
+        print("error: --all-feasible requires --suite", file=sys.stderr)
+        return 1
     suite_cases: list[str] | None = None
     if args.suite:
         try:
@@ -557,6 +595,9 @@ def main() -> int:
         rows = [row for row in rows if row.get("case", "") in suite_case_set]
     if not args.include_tune:
         rows = [row for row in rows if "tune" not in row.get("version", "").lower()]
+    if args.all_feasible:
+        assert suite_cases is not None
+        rows = filter_all_feasible(rows, suite_cases)
     if not rows:
         print("error: no valid rows found", file=sys.stderr)
         return 1
@@ -576,11 +617,13 @@ def main() -> int:
     if args.json_output:
         output: Any = summaries
         if args.matrix:
-            headers, table_rows = build_score_matrix(rows, suite_cases, best_rows)
+            headers, table_rows = build_score_matrix(
+                rows, suite_cases, best_rows, summaries
+            )
             output = {"headers": headers, "rows": table_rows}
         print(json.dumps(output, ensure_ascii=False))
     elif args.matrix:
-        print_score_matrix(rows, suite_cases, best_rows)
+        print_score_matrix(rows, suite_cases, best_rows, summaries)
     else:
         print_table(summaries)
     return 0
