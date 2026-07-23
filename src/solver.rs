@@ -46,6 +46,13 @@ pub(crate) struct OptimizeState {
 }
 
 #[derive(Clone, Copy)]
+enum RemoveSeedMethod {
+    Badness,
+    Fluidity,
+    Random,
+}
+
+#[derive(Clone, Copy)]
 struct BlockOrderWeights {
     workload: f64,
     volume: f64,
@@ -858,6 +865,34 @@ fn choose_removed_blocks<R: Random>(
     ids.truncate(pool_len);
     let bad_pool = ids;
 
+    let slack_weight = gen_rangef(rng, params.remove_fluidity_slack_weight_range);
+    let pref_spread_weight = gen_rangef(rng, params.remove_fluidity_pref_spread_weight_range);
+    let max_slack = schedule
+        .iter()
+        .map(|scheduled| {
+            let block = &problem.blocks[scheduled.block_id];
+            (block.due_date - block.release_time - block.processing_time).max(0) as f64
+        })
+        .fold(0.0, f64::max)
+        .max(1.0);
+    let max_pref_spread = schedule
+        .iter()
+        .map(|scheduled| block_pref_spread(problem, scheduled.block_id) as f64)
+        .fold(0.0, f64::max)
+        .max(1.0);
+    let mut fluidity = vec![0.0; problem.blocks.len()];
+    for scheduled in schedule {
+        let block = &problem.blocks[scheduled.block_id];
+        let slack = (block.due_date - block.release_time - block.processing_time).max(0) as f64;
+        let pref_spread = block_pref_spread(problem, scheduled.block_id) as f64;
+        fluidity[scheduled.block_id] = slack_weight * slack / max_slack
+            + pref_spread_weight * (1.0 - pref_spread / max_pref_spread);
+    }
+    let mut fluid_pool: Vec<usize> = schedule.iter().map(|s| s.block_id).collect();
+    rng.shuffle(&mut fluid_pool);
+    fluid_pool.sort_by(|&a, &b| fluidity[b].total_cmp(&fluidity[a]));
+    fluid_pool.truncate(pool_len);
+
     let mut seed_sizes = Vec::new();
     let mut seed_size_sum = 0;
     while seed_size_sum < k {
@@ -872,8 +907,20 @@ fn choose_removed_blocks<R: Random>(
     }
     let seed_count = seed_sizes.len();
     let base_count = (1 + (seed_count - 1) / params.remove_entry_base_interval).min(seed_count);
-    let seed_is_random: Vec<bool> = (0..seed_count)
-        .map(|_| rng.nextf() < params.remove_random_seed_ratio)
+    let method_weights = params.remove_seed_method_weights;
+    let total_method_weight =
+        method_weights.badness + method_weights.fluidity + method_weights.random;
+    let seed_methods: Vec<_> = (0..seed_count)
+        .map(|_| {
+            let value = rng.nextf() * total_method_weight;
+            if value < method_weights.badness {
+                RemoveSeedMethod::Badness
+            } else if value < method_weights.badness + method_weights.fluidity {
+                RemoveSeedMethod::Fluidity
+            } else {
+                RemoveSeedMethod::Random
+            }
+        })
         .collect();
 
     let mut selected = Vec::with_capacity(k);
@@ -882,10 +929,10 @@ fn choose_removed_blocks<R: Random>(
     let mut entry_bases = Vec::with_capacity(base_count);
 
     for seed_index in 0..base_count {
-        let mut seed_pool: Vec<usize> = if seed_is_random[seed_index] {
-            schedule.iter().map(|s| s.block_id).collect()
-        } else {
-            bad_pool.clone()
+        let mut seed_pool: Vec<usize> = match seed_methods[seed_index] {
+            RemoveSeedMethod::Badness => bad_pool.clone(),
+            RemoveSeedMethod::Fluidity => fluid_pool.clone(),
+            RemoveSeedMethod::Random => schedule.iter().map(|s| s.block_id).collect(),
         };
         seed_pool.retain(|&block_id| !used[block_id]);
         rng.shuffle(&mut seed_pool);
@@ -898,10 +945,10 @@ fn choose_removed_blocks<R: Random>(
     for seed_index in base_count..seed_count {
         let base_id = entry_bases[rng.gen_range(0, entry_bases.len())];
         let base = by_block[base_id].unwrap();
-        let mut seed_pool: Vec<usize> = if seed_is_random[seed_index] {
-            schedule.iter().map(|s| s.block_id).collect()
-        } else {
-            bad_pool.clone()
+        let mut seed_pool: Vec<usize> = match seed_methods[seed_index] {
+            RemoveSeedMethod::Badness => bad_pool.clone(),
+            RemoveSeedMethod::Fluidity => fluid_pool.clone(),
+            RemoveSeedMethod::Random => schedule.iter().map(|s| s.block_id).collect(),
         };
         seed_pool.retain(|&block_id| !used[block_id]);
         rng.shuffle(&mut seed_pool);

@@ -1,9 +1,9 @@
 todo:
 - refactor
-- shiftはxを全て試す
-- 流動性の高いブロックを選ぶ（pref-spreadが小さい）
-- large-reconstructのremove-blockで、seedを選ぶ部分と、その後にseedの周りのblockを回収する部分を分けて、seedを選ぶ部分に以下を追加したいです
-方針を検討してください
+- 流動性の高いブロックを選ぶ
+  - pref-spreadが小さい
+  - slackに余裕がある
+- large-reconstructのremove-blockで、seedを選ぶ部分と、その後にseedの周りのblockを回収する部分を分けて、seedを選ぶ部分を確率的に切り替えられる機構にしたいです　今は現行ロジック一つだけ対応する感じにリファクタリングする感じで良いです
 - 温度の調整
   - ベスト解をもらってくる確率をスコアの差に応じて確率的にする
 - ランダム性を高める
@@ -18,6 +18,7 @@ todo:
 - 高速化
 - safety
 - 時間ごとのチューニング
+  - 時間に応じて近傍サイズを大きくする
 
 safety:
 - 最後にpy側にいくつかの解を返して、スコアが良い順にcheck-feasibilityをする

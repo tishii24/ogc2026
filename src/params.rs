@@ -204,7 +204,9 @@ pub struct NeighborParams {
     pub remove_seed_per_block: (usize, usize),
     pub remove_entry_base_interval: usize,
     pub remove_entry_seed_candidate_count: usize,
-    pub remove_random_seed_ratio: f64,
+    pub remove_seed_method_weights: RemoveSeedMethodWeights,
+    pub remove_fluidity_slack_weight_range: (f64, f64),
+    pub remove_fluidity_pref_spread_weight_range: (f64, f64),
     pub remove_x_distance_weight_max: f64,
     pub remove_y_distance_weight_max: f64,
     pub reconstruct_workload_weight_range: (f64, f64),
@@ -243,9 +245,15 @@ impl NeighborParams {
             remove_entry_seed_candidate_count: value
                 .remove_entry_seed_candidate_count
                 .unwrap_or(self.remove_entry_seed_candidate_count),
-            remove_random_seed_ratio: value
-                .remove_random_seed_ratio
-                .unwrap_or(self.remove_random_seed_ratio),
+            remove_seed_method_weights: value
+                .remove_seed_method_weights
+                .unwrap_or(self.remove_seed_method_weights),
+            remove_fluidity_slack_weight_range: value
+                .remove_fluidity_slack_weight_range
+                .unwrap_or(self.remove_fluidity_slack_weight_range),
+            remove_fluidity_pref_spread_weight_range: value
+                .remove_fluidity_pref_spread_weight_range
+                .unwrap_or(self.remove_fluidity_pref_spread_weight_range),
             remove_x_distance_weight_max: value
                 .remove_x_distance_weight_max
                 .unwrap_or(self.remove_x_distance_weight_max),
@@ -279,6 +287,14 @@ impl NeighborParams {
                 .unwrap_or(self.move_small_pool_size),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveSeedMethodWeights {
+    pub badness: f64,
+    pub fluidity: f64,
+    pub random: f64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -325,7 +341,9 @@ pub struct NeighborParamsOverride {
     pub remove_seed_per_block: Option<(usize, usize)>,
     pub remove_entry_base_interval: Option<usize>,
     pub remove_entry_seed_candidate_count: Option<usize>,
-    pub remove_random_seed_ratio: Option<f64>,
+    pub remove_seed_method_weights: Option<RemoveSeedMethodWeights>,
+    pub remove_fluidity_slack_weight_range: Option<(f64, f64)>,
+    pub remove_fluidity_pref_spread_weight_range: Option<(f64, f64)>,
     pub remove_x_distance_weight_max: Option<f64>,
     pub remove_y_distance_weight_max: Option<f64>,
     pub reconstruct_workload_weight_range: Option<(f64, f64)>,
