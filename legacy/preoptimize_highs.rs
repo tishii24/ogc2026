@@ -16,7 +16,7 @@ struct StartVariable {
     entry_time: i64,
 }
 
-pub fn preoptimize_highs(
+pub(crate) fn preoptimize_highs(
     problem: &Problem,
     params: PreoptimizeParams,
 ) -> Result<PreoptimizeResult, String> {

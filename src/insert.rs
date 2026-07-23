@@ -1,6 +1,6 @@
 use crate::{
     Problem, ScheduledBlock,
-    collision::{BlockOrient, BlockPlacement, CollisionResult, OrientPairCollision},
+    collision::{BlockOrient, OrientPairCollision},
     params::InsertParams,
     precompute::Precompute,
     solver_util::normalized_imbalance,
@@ -92,7 +92,7 @@ fn finish_insert_profile(mut profile: InsertProfile, start: Instant) {
 }
 
 #[cfg(feature = "profile-insert")]
-pub fn print_insert_profile() {
+pub(crate) fn print_insert_profile() {
     let Some(profile) = INSERT_PROFILE.get() else {
         return;
     };
@@ -328,7 +328,7 @@ impl ActiveIntervalSlots {
     }
 }
 
-pub struct PlacementXScanner<'a> {
+pub(crate) struct PlacementXScanner<'a> {
     pre: &'a Precompute,
     block_id: usize,
     bay_id: usize,
@@ -353,7 +353,7 @@ pub struct PlacementXScanner<'a> {
 }
 
 impl<'a> PlacementXScanner<'a> {
-    pub fn new(
+    pub(crate) fn new(
         problem: &Problem,
         pre: &'a Precompute,
         schedule: &[ScheduledBlock],
@@ -405,7 +405,7 @@ impl<'a> PlacementXScanner<'a> {
         })
     }
 
-    pub fn scan_y(
+    pub(crate) fn scan_y(
         &mut self,
         orient_idx: usize,
         y: i64,
@@ -632,7 +632,7 @@ impl<'a> PlacementXScanner<'a> {
     }
 }
 
-pub fn insert_greedy<R: Random>(
+pub(crate) fn insert_greedy<R: Random>(
     problem: &Problem,
     pre: &Precompute,
     original: ScheduledBlock,
@@ -775,40 +775,6 @@ pub fn insert_greedy<R: Random>(
     #[cfg(feature = "profile-insert")]
     finish_insert_profile(profile, profile_start);
     result
-}
-
-pub fn try_place_block(
-    problem: &Problem,
-    pre: &Precompute,
-    schedule: &[ScheduledBlock],
-    block_id: usize,
-    bay_id: usize,
-    orient_idx: usize,
-    x: i64,
-    y: i64,
-    min_entry_time: i64,
-    max_entry_time: i64,
-) -> Option<ScheduledBlock> {
-    let block = &problem.blocks[block_id];
-    let tentative = ScheduledBlock {
-        block_id,
-        bay_id,
-        orient_idx,
-        x,
-        y,
-        entry_time: 0,
-        exit_time: block.processing_time,
-    };
-    let min_entry_time = block.release_time.max(min_entry_time);
-    if min_entry_time > max_entry_time {
-        return None;
-    }
-    let entry_time = get_insert_t(pre, tentative, schedule, min_entry_time, max_entry_time)?;
-    Some(ScheduledBlock {
-        entry_time,
-        exit_time: entry_time + block.processing_time,
-        ..tentative
-    })
 }
 
 fn old_time_info(
@@ -986,81 +952,4 @@ fn build_forbidden_slot_precompute(
         states[old_idx][state_idx].slots[item_idx] = slot as u32;
     }
     ForbiddenSlotPrecompute { intervals, states }
-}
-
-fn add_forbidden_from_hit_state(
-    info: OldTimeInfo,
-    new_old_hit: bool,
-    old_new_hit: bool,
-    forbidden: &mut Vec<Interval>,
-) {
-    forbidden.extend_from_slice(forbidden_interval_set(info, new_old_hit, old_new_hit).as_slice());
-}
-
-fn first_feasible_time(forbidden: &[Interval], min_t: i64, max_t: i64) -> Option<i64> {
-    first_feasible_time_impl(forbidden, min_t, max_t, |_| {})
-}
-
-#[inline]
-fn first_feasible_time_impl(
-    forbidden: &[Interval],
-    min_t: i64,
-    max_t: i64,
-    mut on_iteration: impl FnMut(usize),
-) -> Option<i64> {
-    let mut t = min_t;
-    loop {
-        on_iteration(forbidden.len());
-        let mut next_t = t;
-        for &(l, r) in forbidden {
-            if l <= t && t <= r {
-                if r == i64::MAX {
-                    return None;
-                }
-                next_t = next_t.max(r + 1);
-            }
-        }
-
-        if next_t == t {
-            return Some(t);
-        }
-        if next_t > max_t {
-            return None;
-        }
-        t = next_t;
-    }
-}
-
-fn get_insert_t(
-    pre: &Precompute,
-    new_block: ScheduledBlock,
-    schedule: &[ScheduledBlock],
-    min_t: i64,
-    max_t: i64,
-) -> Option<i64> {
-    let mut forbidden = Vec::with_capacity(16);
-    for &old in schedule.iter().filter(|old| old.bay_id == new_block.bay_id) {
-        let process_t = new_block.exit_time - new_block.entry_time;
-        let Some(info) = old_time_info(old, process_t, min_t, max_t) else {
-            continue;
-        };
-
-        let new_place = BlockPlacement {
-            block_id: new_block.block_id,
-            orient_idx: new_block.orient_idx,
-            x: new_block.x,
-            y: new_block.y,
-        };
-        let old_place = BlockPlacement {
-            block_id: old.block_id,
-            orient_idx: old.orient_idx,
-            x: old.x,
-            y: old.y,
-        };
-
-        let new_old_hit = pre.collision.crane(new_place, old_place) == CollisionResult::Hit;
-        let old_new_hit = pre.collision.crane(old_place, new_place) == CollisionResult::Hit;
-        add_forbidden_from_hit_state(info, new_old_hit, old_new_hit, &mut forbidden);
-    }
-    first_feasible_time(&forbidden, min_t, max_t)
 }

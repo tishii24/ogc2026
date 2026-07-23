@@ -5,7 +5,7 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
-pub fn _can_insert(
+pub(crate) fn _can_insert(
     pre: &Precompute,
     new_block: ScheduledBlock,
     schedule: &[ScheduledBlock],

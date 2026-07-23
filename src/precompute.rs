@@ -3,24 +3,24 @@ use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use std::cmp::Reverse;
 
 #[derive(Clone, Copy, Debug)]
-pub struct OtherBlockNeighbor {
-    pub block_id: usize,
-    pub orient_idx: usize,
-    pub dx: i64,
-    pub dy: i64,
+pub(crate) struct OtherBlockNeighbor {
+    pub(crate) block_id: usize,
+    pub(crate) orient_idx: usize,
+    pub(crate) dx: i64,
+    pub(crate) dy: i64,
 }
 
-pub struct Precompute {
-    pub collision: CollisionPrecompute,
-    pub bay_load_scale: Vec<f64>,
-    pub pref_penalty: Vec<Vec<i64>>,
-    pub bay_order_by_pref: Vec<Vec<usize>>,
-    pub orientation_order_by_bbox: Vec<Vec<usize>>,
-    pub orientation_bbox_center: Vec<Vec<(f64, f64)>>,
-    pub orientation_bbox_bounds: Vec<Vec<Boundsf>>,
-    pub orientation_neighbors: Vec<Vec<Vec<(usize, i64, i64)>>>,
-    pub other_block_neighbors: Vec<Vec<Vec<OtherBlockNeighbor>>>,
-    pub block_area: Vec<f64>,
+pub(crate) struct Precompute {
+    pub(crate) collision: CollisionPrecompute,
+    pub(crate) bay_load_scale: Vec<f64>,
+    pub(crate) pref_penalty: Vec<Vec<i64>>,
+    pub(crate) bay_order_by_pref: Vec<Vec<usize>>,
+    pub(crate) orientation_order_by_bbox: Vec<Vec<usize>>,
+    pub(crate) orientation_bbox_center: Vec<Vec<(f64, f64)>>,
+    pub(crate) orientation_bbox_bounds: Vec<Vec<Boundsf>>,
+    pub(crate) orientation_neighbors: Vec<Vec<Vec<(usize, i64, i64)>>>,
+    pub(crate) other_block_neighbors: Vec<Vec<Vec<OtherBlockNeighbor>>>,
+    pub(crate) block_area: Vec<f64>,
 }
 
 fn orientation_bbox_bounds(orientation: &Orientation) -> Boundsf {
@@ -261,7 +261,7 @@ fn build_other_block_neighbors(
 }
 
 impl Precompute {
-    pub fn build(problem: &Problem, params: &PrecomputeParams) -> Self {
+    pub(crate) fn build(problem: &Problem, params: &PrecomputeParams) -> Self {
         let collision = CollisionPrecompute::build(problem);
 
         let bay_area: Vec<f64> = problem

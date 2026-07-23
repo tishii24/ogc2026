@@ -16,24 +16,24 @@ use crate::{
 
 const EPS: f64 = 1e-9;
 
-pub trait AnnealingState: Clone + Send + Sync {
+pub(crate) trait AnnealingState: Clone + Send + Sync {
     fn annealing_score(&self) -> f64;
 
     fn tabu_key(&self) -> Option<u64>;
 }
 
-pub struct SharedBest<S: AnnealingState> {
+pub(crate) struct SharedBest<S: AnnealingState> {
     inner: Mutex<S>,
 }
 
 impl<S: AnnealingState> SharedBest<S> {
-    pub fn new(state: S) -> Self {
+    pub(crate) fn new(state: S) -> Self {
         Self {
             inner: Mutex::new(state),
         }
     }
 
-    pub fn update(&self, candidate: &S) -> bool {
+    pub(crate) fn update(&self, candidate: &S) -> bool {
         let mut best = self.inner.lock().unwrap();
         if candidate.annealing_score() + EPS >= best.annealing_score() {
             return false;
@@ -42,21 +42,17 @@ impl<S: AnnealingState> SharedBest<S> {
         true
     }
 
-    pub fn get_if_better(&self, current_score: f64, exchange_threshold: f64) -> Option<S> {
+    pub(crate) fn get_if_better(&self, current_score: f64, exchange_threshold: f64) -> Option<S> {
         let best = self.inner.lock().unwrap();
         (best.annealing_score() + exchange_threshold + EPS < current_score).then(|| best.clone())
     }
 
-    pub fn score(&self) -> f64 {
-        self.inner.lock().unwrap().annealing_score()
-    }
-
-    pub fn into_inner(self) -> S {
+    pub(crate) fn into_inner(self) -> S {
         self.inner.into_inner().unwrap()
     }
 }
 
-pub struct TemperatureSchedule {
+pub(crate) struct TemperatureSchedule {
     start_time: f64,
     deadline: f64,
     start_temperature: f64,
@@ -64,7 +60,7 @@ pub struct TemperatureSchedule {
 }
 
 impl TemperatureSchedule {
-    pub fn new(
+    pub(crate) fn new(
         start_time: f64,
         deadline: f64,
         start_temperature: f64,
@@ -78,22 +74,22 @@ impl TemperatureSchedule {
         }
     }
 
-    pub fn temperature(&self, elapsed: f64) -> f64 {
+    pub(crate) fn temperature(&self, elapsed: f64) -> f64 {
         let progress = ((elapsed - self.start_time) / (self.deadline - self.start_time).max(1e-4))
             .clamp(0.0, 1.0);
         self.start_temperature * (self.end_temperature / self.start_temperature).powf(progress)
     }
 }
 
-pub struct AnnealingWorkerContext {
-    pub rng: RandPcg64Mcg,
+pub(crate) struct AnnealingWorkerContext {
+    pub(crate) rng: RandPcg64Mcg,
     temperature: TemperatureSchedule,
     deadline: f64,
     iterations: usize,
 }
 
 impl AnnealingWorkerContext {
-    pub fn new(
+    pub(crate) fn new(
         timer: Timer,
         deadline: f64,
         start_temperature: f64,
@@ -113,7 +109,7 @@ impl AnnealingWorkerContext {
         }
     }
 
-    pub fn next(&mut self, timer: Timer) -> Option<f64> {
+    pub(crate) fn next(&mut self, timer: Timer) -> Option<f64> {
         let elapsed = timer.elapsed_seconds();
         if elapsed >= self.deadline {
             return None;
@@ -122,24 +118,24 @@ impl AnnealingWorkerContext {
         Some(self.temperature.temperature(elapsed))
     }
 
-    pub fn should_exchange(&self, interval: usize) -> bool {
+    pub(crate) fn should_exchange(&self, interval: usize) -> bool {
         self.iterations % interval == 0
     }
 
-    pub fn iterations(&self) -> usize {
+    pub(crate) fn iterations(&self) -> usize {
         self.iterations
     }
 }
 
-pub fn accept(delta: f64, temperature: f64, rng: &mut impl Random) -> bool {
-    delta <= 0.0 || rng.nextf() < (-delta / temperature).exp()
-}
-
-pub fn acceptance_threshold(current_score: f64, temperature: f64, rng: &mut impl Random) -> f64 {
+pub(crate) fn acceptance_threshold(
+    current_score: f64,
+    temperature: f64,
+    rng: &mut impl Random,
+) -> f64 {
     current_score - temperature * rng.nextf().ln()
 }
 
-pub fn worker_temperature_scale(worker_id: usize, worker_count: usize, scale: f64) -> f64 {
+pub(crate) fn worker_temperature_scale(worker_id: usize, worker_count: usize, scale: f64) -> f64 {
     if worker_count <= 1 {
         return 1.0;
     }
@@ -147,27 +143,27 @@ pub fn worker_temperature_scale(worker_id: usize, worker_count: usize, scale: f6
     1.0 + scale * ratio.powf(2.0)
 }
 
-pub struct AnnealingParams {
-    pub exchange_interval: usize,
-    pub start_temperature: f64,
-    pub end_temperature: f64,
-    pub worker_temperature_scale: f64,
-    pub tabu_capacity: usize,
+pub(crate) struct AnnealingParams {
+    pub(crate) exchange_interval: usize,
+    pub(crate) start_temperature: f64,
+    pub(crate) end_temperature: f64,
+    pub(crate) worker_temperature_scale: f64,
+    pub(crate) tabu_capacity: usize,
 }
 
-pub struct AnnealingAttempt<S> {
-    pub neighbor_kind: usize,
-    pub candidate: Option<S>,
+pub(crate) struct AnnealingAttempt<S> {
+    pub(crate) neighbor_kind: usize,
+    pub(crate) candidate: Option<S>,
 }
 
 #[derive(Clone, Default)]
-pub struct NeighborStats {
-    pub selected: usize,
-    pub succeeded: usize,
-    pub improved: usize,
-    pub accepted: usize,
-    pub improved_delta_sum: f64,
-    pub time_sec: f64,
+pub(crate) struct NeighborStats {
+    pub(crate) selected: usize,
+    pub(crate) succeeded: usize,
+    pub(crate) improved: usize,
+    pub(crate) accepted: usize,
+    pub(crate) improved_delta_sum: f64,
+    pub(crate) time_sec: f64,
 }
 
 fn format_neighbor_stats(stats: &[NeighborStats], kinds: &[&str]) -> String {
@@ -214,20 +210,20 @@ fn format_neighbor_stats(stats: &[NeighborStats], kinds: &[&str]) -> String {
         .join("\n")
 }
 
-pub struct WorkerSummary {
-    pub worker_id: usize,
-    pub iterations: usize,
-    pub accepted: usize,
-    pub improved: usize,
-    pub active_domains: usize,
-    pub start_temperature: f64,
-    pub end_temperature: f64,
-    pub current_scores: Vec<f64>,
-    pub local_best_scores: Vec<f64>,
-    pub neighbor_stats: Vec<NeighborStats>,
+pub(crate) struct WorkerSummary {
+    pub(crate) worker_id: usize,
+    pub(crate) iterations: usize,
+    pub(crate) accepted: usize,
+    pub(crate) improved: usize,
+    pub(crate) active_domains: usize,
+    pub(crate) start_temperature: f64,
+    pub(crate) end_temperature: f64,
+    pub(crate) current_scores: Vec<f64>,
+    pub(crate) local_best_scores: Vec<f64>,
+    pub(crate) neighbor_stats: Vec<NeighborStats>,
 }
 
-pub trait AnnealingDelegate: Sync {
+pub(crate) trait AnnealingDelegate: Sync {
     type State: AnnealingState;
     type Output;
 
@@ -290,16 +286,16 @@ struct WorkerDomain<S> {
     tabu: TabuList,
 }
 
-pub struct Annealer<D> {
-    pub deadline: f64,
-    pub worker_count: usize,
-    pub rng_seed: u64,
-    pub params: AnnealingParams,
-    pub delegate: D,
+pub(crate) struct Annealer<D> {
+    pub(crate) deadline: f64,
+    pub(crate) worker_count: usize,
+    pub(crate) rng_seed: u64,
+    pub(crate) params: AnnealingParams,
+    pub(crate) delegate: D,
 }
 
 impl<D: AnnealingDelegate> Annealer<D> {
-    pub fn new(
+    pub(crate) fn new(
         deadline: f64,
         worker_count: usize,
         rng_seed: u64,
@@ -315,7 +311,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
         }
     }
 
-    pub fn run(self, timer: Timer) -> D::Output {
+    pub(crate) fn run(self, timer: Timer) -> D::Output {
         let initial_states = self.delegate.initial_states();
         assert!(!initial_states.is_empty());
         assert!(self.worker_count > 0);

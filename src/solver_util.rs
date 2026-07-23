@@ -5,7 +5,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug)]
-pub enum NeighborKind {
+pub(crate) enum NeighborKind {
     LargeReconstruct,
     Shift,
     Move,
@@ -14,7 +14,7 @@ pub enum NeighborKind {
 }
 
 impl NeighborKind {
-    pub fn index(&self) -> usize {
+    pub(crate) fn index(&self) -> usize {
         match self {
             NeighborKind::LargeReconstruct => 0,
             NeighborKind::Shift => 1,
@@ -25,21 +25,25 @@ impl NeighborKind {
     }
 }
 
-pub fn score13_block(problem: &Problem, pre: &Precompute, s: ScheduledBlock) -> f64 {
+pub(crate) fn score13_block(problem: &Problem, pre: &Precompute, s: ScheduledBlock) -> f64 {
     let block = &problem.blocks[s.block_id];
     let tardiness = (s.exit_time - block.due_date).max(0);
     let pref_penalty = pre.pref_penalty[s.block_id][s.bay_id];
     problem.weights.w1 * tardiness as f64 + problem.weights.w3 * pref_penalty as f64
 }
 
-pub fn schedule_tardiness(problem: &Problem, schedule: &[ScheduledBlock]) -> i64 {
+pub(crate) fn schedule_tardiness(problem: &Problem, schedule: &[ScheduledBlock]) -> i64 {
     schedule
         .iter()
         .map(|s| (s.exit_time - problem.blocks[s.block_id].due_date).max(0))
         .sum()
 }
 
-pub fn score_schedule(problem: &Problem, pre: &Precompute, schedule: &[ScheduledBlock]) -> f64 {
+pub(crate) fn score_schedule(
+    problem: &Problem,
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+) -> f64 {
     let mut obj1 = 0.0;
     let mut obj3 = 0.0;
     let mut loads = vec![0.0; problem.bays.len()];
@@ -55,7 +59,7 @@ pub fn score_schedule(problem: &Problem, pre: &Precompute, schedule: &[Scheduled
     problem.weights.w1 * obj1 + problem.weights.w2 * obj2 + problem.weights.w3 * obj3
 }
 
-pub fn normalized_imbalance(pre: &Precompute, loads: &[f64]) -> f64 {
+pub(crate) fn normalized_imbalance(pre: &Precompute, loads: &[f64]) -> f64 {
     if loads.len() < 2 {
         return 0.0;
     }
@@ -70,7 +74,7 @@ pub fn normalized_imbalance(pre: &Precompute, loads: &[f64]) -> f64 {
     (max_value - min_value).floor()
 }
 
-pub fn schedule_to_solution(schedule: &[ScheduledBlock]) -> Solution {
+pub(crate) fn schedule_to_solution(schedule: &[ScheduledBlock]) -> Solution {
     let mut operations: BTreeMap<i64, Vec<Operation>> = BTreeMap::new();
 
     for s in schedule {
@@ -98,7 +102,10 @@ pub fn schedule_to_solution(schedule: &[ScheduledBlock]) -> Solution {
     Solution { operations }
 }
 
-pub fn sample_neighbor<R: Random>(rng: &mut R, probs: &[(NeighborKind, f64)]) -> NeighborKind {
+pub(crate) fn sample_neighbor<R: Random>(
+    rng: &mut R,
+    probs: &[(NeighborKind, f64)],
+) -> NeighborKind {
     let total = probs.iter().map(|&(_, prob)| prob).sum::<f64>();
     debug_assert!(total > 0.0);
 
@@ -112,12 +119,12 @@ pub fn sample_neighbor<R: Random>(rng: &mut R, probs: &[(NeighborKind, f64)]) ->
     probs.iter().rev().find(|&&(_, prob)| prob > 0.0).unwrap().0
 }
 
-pub fn gen_rangef(rng: &mut impl Random, r: (f64, f64)) -> f64 {
+pub(crate) fn gen_rangef(rng: &mut impl Random, r: (f64, f64)) -> f64 {
     rng.gen_rangef(r.0, r.1)
 }
 
 /// TODO: precomputeに持っていく
-pub fn block_pref_spread(problem: &Problem, block_id: usize) -> i64 {
+pub(crate) fn block_pref_spread(problem: &Problem, block_id: usize) -> i64 {
     let prefs = &problem.blocks[block_id].bay_preferences;
     let min_pref = prefs.iter().copied().min().unwrap_or(0);
     let max_pref = prefs.iter().copied().max().unwrap_or(min_pref);

@@ -21,28 +21,28 @@ use std::{
     sync::Mutex,
 };
 
-pub mod optimize;
+pub(crate) mod optimize;
 
-pub use optimize::GlobalAnnealing;
+pub(crate) use optimize::GlobalAnnealing;
 
 const NEIGHBOR_KINDS: &[&str] = &["Large", "Shift", "Move", "Rotate", "Swap"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
-pub struct PreoptimizedBlock {
-    pub bay_id: usize,
-    pub entry_time: i64,
+pub(crate) struct PreoptimizedBlock {
+    pub(crate) bay_id: usize,
+    pub(crate) entry_time: i64,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct PreoptimizeState {
     pub score: f64,
-    pub blocks: Vec<PreoptimizedBlock>,
+    pub(crate) blocks: Vec<PreoptimizedBlock>,
 }
 
 #[derive(Clone, Debug)]
-pub struct OptimizeState {
-    pub score: f64,
-    pub blocks: Vec<ScheduledBlock>,
+pub(crate) struct OptimizeState {
+    pub(crate) score: f64,
+    pub(crate) blocks: Vec<ScheduledBlock>,
 }
 
 #[derive(Clone, Copy)]
@@ -65,21 +65,6 @@ struct BlockOrderContext {
 struct PrecedenceConstraints {
     befores: Vec<Vec<usize>>,
     afters: Vec<Vec<usize>>,
-}
-
-pub fn to_preoptimize_state(state: &OptimizeState) -> PreoptimizeState {
-    let mut ordered = state.blocks.clone();
-    ordered.sort_unstable_by_key(|scheduled| scheduled.block_id);
-    PreoptimizeState {
-        score: state.score,
-        blocks: ordered
-            .into_iter()
-            .map(|scheduled| PreoptimizedBlock {
-                bay_id: scheduled.bay_id,
-                entry_time: scheduled.entry_time,
-            })
-            .collect(),
-    }
 }
 
 fn sample_reconstruct_order_weights(
@@ -213,7 +198,7 @@ pub fn solve(
     Ok(schedule_to_solution(&best.blocks))
 }
 
-pub fn build_optimize_state(
+pub(crate) fn build_optimize_state(
     problem: &Problem,
     pre: &Precompute,
     state: &PreoptimizeState,
@@ -1073,7 +1058,7 @@ fn sort_block_order<R: Random>(
     });
 }
 
-pub fn sort_default_reconstruct_order<R: Random>(
+pub(crate) fn sort_default_reconstruct_order<R: Random>(
     problem: &Problem,
     block_areas: &[f64],
     order: &mut [usize],

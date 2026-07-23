@@ -142,7 +142,7 @@ pub struct PreoptimizeAnnealingParams {
 }
 
 impl PreoptimizeAnnealingParams {
-    pub fn make(&self, problem: &Problem, initial_score: f64) -> AnnealingParams {
+    pub(crate) fn make(&self, problem: &Problem, initial_score: f64) -> AnnealingParams {
         let start_temperature = (initial_score / problem.blocks.len() as f64
             * self.initial_score_per_block_scale)
             .max(problem.weights.w1);
@@ -174,7 +174,7 @@ pub struct AnnealingParamsConfig {
 }
 
 impl AnnealingParamsConfig {
-    pub fn make(&self) -> AnnealingParams {
+    pub(crate) fn make(&self) -> AnnealingParams {
         AnnealingParams {
             exchange_interval: self.exchange_interval,
             start_temperature: self.start_temperature,
@@ -221,7 +221,7 @@ pub struct NeighborParams {
 }
 
 impl NeighborParams {
-    pub fn probabilities(&self) -> [(NeighborKind, f64); 5] {
+    pub(crate) fn probabilities(&self) -> [(NeighborKind, f64); 5] {
         self.probabilities.weighted()
     }
 

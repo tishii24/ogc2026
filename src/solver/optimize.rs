@@ -15,7 +15,7 @@ impl AnnealingState for OptimizeState {
     }
 }
 
-pub struct GlobalAnnealing<'a> {
+pub(crate) struct GlobalAnnealing<'a> {
     problem: &'a Problem,
     pre: &'a Precompute,
     constraints: PrecedenceConstraints,
@@ -23,7 +23,7 @@ pub struct GlobalAnnealing<'a> {
 }
 
 impl<'a> GlobalAnnealing<'a> {
-    pub fn new(
+    pub(crate) fn new(
         problem: &'a Problem,
         pre: &'a Precompute,
         abstract_state: &PreoptimizeState,
@@ -38,7 +38,7 @@ impl<'a> GlobalAnnealing<'a> {
         }
     }
 
-    pub fn run(
+    pub(crate) fn run(
         &self,
         initial: OptimizeState,
         deadline: f64,

@@ -18,7 +18,6 @@ pub mod preoptimize;
 pub mod solver;
 pub mod solver_util;
 pub mod util;
-pub mod vis;
 
 use std::collections::BTreeMap;
 
@@ -26,20 +25,20 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct Problem {
-    pub bays: Vec<Bay>,
-    pub blocks: Vec<Block>,
+    pub(crate) bays: Vec<Bay>,
+    pub(crate) blocks: Vec<Block>,
     #[serde(default)]
-    pub weights: Weights,
+    pub(crate) weights: Weights,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy)]
-pub struct Weights {
+pub(crate) struct Weights {
     #[serde(default = "default_weight")]
-    pub w1: f64,
+    pub(crate) w1: f64,
     #[serde(default = "default_weight")]
-    pub w2: f64,
+    pub(crate) w2: f64,
     #[serde(default = "default_weight")]
-    pub w3: f64,
+    pub(crate) w3: f64,
 }
 
 impl Default for Weights {
@@ -57,26 +56,26 @@ fn default_weight() -> f64 {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Bay {
-    pub width: i64,
-    pub height: i64,
+pub(crate) struct Bay {
+    pub(crate) width: i64,
+    pub(crate) height: i64,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Block {
-    pub release_time: i64,
-    pub due_date: i64,
-    pub processing_time: i64,
+pub(crate) struct Block {
+    pub(crate) release_time: i64,
+    pub(crate) due_date: i64,
+    pub(crate) processing_time: i64,
     #[serde(default)]
-    pub workload: i64,
-    pub bay_preferences: Vec<i64>,
-    pub shape: Vec<Orientation>,
+    pub(crate) workload: i64,
+    pub(crate) bay_preferences: Vec<i64>,
+    pub(crate) shape: Vec<Orientation>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Orientation {
+pub(crate) struct Orientation {
     #[serde(deserialize_with = "deserialize_non_empty_layers")]
-    pub layers: Vec<Vec<[f64; 2]>>,
+    pub(crate) layers: Vec<Vec<[f64; 2]>>,
 }
 
 fn deserialize_non_empty_layers<'de, D>(deserializer: D) -> Result<Vec<Vec<[f64; 2]>>, D::Error>
@@ -101,68 +100,54 @@ where
 
 #[derive(Debug, Serialize)]
 pub struct Solution {
-    pub operations: BTreeMap<i64, Vec<Operation>>,
+    pub(crate) operations: BTreeMap<i64, Vec<Operation>>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct Operation {
+pub(crate) struct Operation {
     #[serde(rename = "type")]
-    pub op_type: &'static str,
-    pub block_id: usize,
-    pub bay_id: usize,
+    pub(crate) op_type: &'static str,
+    pub(crate) block_id: usize,
+    pub(crate) bay_id: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub x: Option<i64>,
+    pub(crate) x: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub y: Option<i64>,
+    pub(crate) y: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub orient_idx: Option<usize>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Placement {
-    pub bay_id: usize,
-    pub orient_idx: usize,
-    pub x: i64,
-    pub y: i64,
+    pub(crate) orient_idx: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub struct ScheduledBlock {
-    pub block_id: usize,
-    pub bay_id: usize,
-    pub orient_idx: usize,
-    pub x: i64,
-    pub y: i64,
-    pub entry_time: i64,
-    pub exit_time: i64,
+pub(crate) struct ScheduledBlock {
+    pub(crate) block_id: usize,
+    pub(crate) bay_id: usize,
+    pub(crate) orient_idx: usize,
+    pub(crate) x: i64,
+    pub(crate) y: i64,
+    pub(crate) entry_time: i64,
+    pub(crate) exit_time: i64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Boundsi {
-    pub min_x: i64,
-    pub max_x: i64,
-    pub min_y: i64,
-    pub max_y: i64,
-}
-
-impl Boundsi {
-    pub fn contains(&self, x: i64, y: i64) -> bool {
-        self.min_x <= x && x <= self.max_x && self.min_y <= y && y <= self.max_y
-    }
+pub(crate) struct Boundsi {
+    pub(crate) min_x: i64,
+    pub(crate) max_x: i64,
+    pub(crate) min_y: i64,
+    pub(crate) max_y: i64,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Boundsf {
-    pub min_x: f64,
-    pub min_y: f64,
-    pub max_x: f64,
-    pub max_y: f64,
+pub(crate) struct Boundsf {
+    pub(crate) min_x: f64,
+    pub(crate) min_y: f64,
+    pub(crate) max_x: f64,
+    pub(crate) max_y: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Pointf {
-    pub x: f64,
-    pub y: f64,
+pub(crate) struct Pointf {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
 }
 
 #[cfg(test)]
