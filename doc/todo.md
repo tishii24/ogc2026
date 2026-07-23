@@ -1,8 +1,9 @@
 todo:
 - refactor
+- shiftはxを全て試す
+- 流動性の高いブロックを選ぶ（pref-spreadが小さい）
 - large-reconstructのremove-blockで、seedを選ぶ部分と、その後にseedの周りのblockを回収する部分を分けて、seedを選ぶ部分に以下を追加したいです
 方針を検討してください
-- 流動性の高いブロックを選ぶ（pref-spreadが小さい）
 - 温度の調整
   - ベスト解をもらってくる確率をスコアの差に応じて確率的にする
 - ランダム性を高める
@@ -16,7 +17,7 @@ todo:
   - 途中で打ち切る
 - 高速化
 - safety
-- チューニング
+- 時間ごとのチューニング
 
 safety:
 - 最後にpy側にいくつかの解を返して、スコアが良い順にcheck-feasibilityをする

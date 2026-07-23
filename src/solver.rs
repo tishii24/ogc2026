@@ -1,5 +1,5 @@
 use crate::{
-    insert::{insert_greedy, try_place_block},
+    insert::{PlacementXScanner, insert_greedy},
     log,
     params::{InsertParams, NeighborParams, SolverParams},
     precompute::Precompute,
@@ -513,42 +513,24 @@ fn try_shift_neighbor<R: Random>(
     } else {
         (i64::MIN, i64::MAX)
     };
-    let range = pre
-        .collision
-        .fit_range(old.bay_id, old.block_id, old.orient_idx)?;
+    let mut scanner = PlacementXScanner::new(
+        problem,
+        pre,
+        &base,
+        old.block_id,
+        old.bay_id,
+        min_entry_time,
+        max_entry_time,
+    )?;
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
-
-    for dist in (0..=params.shift_max_x + params.shift_max_y).rev() {
-        let min_abs_dx = (dist - params.shift_max_y).max(0);
-        let max_abs_dx = dist.min(params.shift_max_x);
-
-        for abs_dx in min_abs_dx..=max_abs_dx {
-            let abs_dy = dist - abs_dx;
-            let x = old.x - abs_dx;
-            let y = old.y - abs_dy;
-            if !range.contains(x, y) {
-                continue;
+    for dy in params.shift_dy_range.0..=params.shift_dy_range.1 {
+        let y = old.y + dy;
+        scanner.scan_y(old.orient_idx, y, |moved| {
+            if moved != old {
+                update_best(problem, &mut best, moved);
             }
-
-            let Some(moved) = try_place_block(
-                problem,
-                pre,
-                &base,
-                old.block_id,
-                old.bay_id,
-                old.orient_idx,
-                x,
-                y,
-                min_entry_time,
-                max_entry_time,
-            ) else {
-                continue;
-            };
-            if moved == old {
-                continue;
-            }
-            update_best(problem, &mut best, moved);
-        }
+            false
+        });
     }
 
     let moved = best?.2;
@@ -588,43 +570,23 @@ fn try_rotate_neighbor<R: Random>(
     } else {
         (i64::MIN, i64::MAX)
     };
+    let mut scanner = PlacementXScanner::new(
+        problem,
+        pre,
+        &base,
+        old.block_id,
+        old.bay_id,
+        min_entry_time,
+        max_entry_time,
+    )?;
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
-    for &(orient_idx, dx, dy) in &pre.orientation_neighbors[old.block_id][old.orient_idx] {
-        let Some(range) = pre
-            .collision
-            .fit_range(old.bay_id, old.block_id, orient_idx)
-        else {
-            continue;
-        };
-
-        for ddx in -params.rotate_max_shift_delta..=params.rotate_max_shift_delta {
-            for ddy in -params.rotate_max_shift_delta..=params.rotate_max_shift_delta {
-                let x = old.x + dx + ddx;
-                let y = old.y + dy + ddy;
-                if !range.contains(x, y) {
-                    continue;
-                }
-
-                let Some(rotated) = try_place_block(
-                    problem,
-                    pre,
-                    &base,
-                    old.block_id,
-                    old.bay_id,
-                    orient_idx,
-                    x,
-                    y,
-                    min_entry_time,
-                    max_entry_time,
-                ) else {
-                    continue;
-                };
-                if rotated == old {
-                    continue;
-                }
-
+    for &(orient_idx, _, dy) in &pre.orientation_neighbors[old.block_id][old.orient_idx] {
+        for ddy in params.rotate_dy_range.0..=params.rotate_dy_range.1 {
+            let y = old.y + dy + ddy;
+            scanner.scan_y(orient_idx, y, |rotated| {
                 update_best(problem, &mut best, rotated);
-            }
+                false
+            });
         }
     }
 
@@ -640,39 +602,26 @@ fn try_swap_place(
     schedule: &[ScheduledBlock],
     bay_id: usize,
     orient_idx: usize,
-    base_x: i64,
     base_y: i64,
     min_entry_time: i64,
     max_entry_time: i64,
     params: &NeighborParams,
 ) -> Option<ScheduledBlock> {
-    let range = pre.collision.fit_range(bay_id, old.block_id, orient_idx)?;
+    let mut scanner = PlacementXScanner::new(
+        problem,
+        pre,
+        schedule,
+        old.block_id,
+        bay_id,
+        min_entry_time,
+        max_entry_time,
+    )?;
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
-
-    for ddx in -params.swap_max_shift_delta..=params.swap_max_shift_delta {
-        for ddy in -params.swap_max_shift_delta..=params.swap_max_shift_delta {
-            let x = base_x + ddx;
-            let y = base_y + ddy;
-            if !range.contains(x, y) {
-                continue;
-            }
-
-            let Some(scheduled) = try_place_block(
-                problem,
-                pre,
-                schedule,
-                old.block_id,
-                bay_id,
-                orient_idx,
-                x,
-                y,
-                min_entry_time,
-                max_entry_time,
-            ) else {
-                continue;
-            };
+    for dy in params.swap_dy_range.0..=params.swap_dy_range.1 {
+        scanner.scan_y(orient_idx, base_y + dy, |scheduled| {
             update_best(problem, &mut best, scheduled);
-        }
+            false
+        });
     }
 
     Some(best?.2)
@@ -721,14 +670,12 @@ fn try_swap_neighbor<R: Random>(
             a_old,
             b_old.bay_id,
             a_old.orient_idx,
-            b_old.x - candidate.dx,
             b_old.y - candidate.dy,
         ),
         (
             b_old,
             a_old.bay_id,
             candidate.orient_idx,
-            a_old.x + candidate.dx,
             a_old.y + candidate.dy,
         ),
     ];
@@ -738,7 +685,7 @@ fn try_swap_neighbor<R: Random>(
         targets.swap(0, 1);
     }
 
-    for (old, bay_id, orient_idx, base_x, base_y) in targets {
+    for (old, bay_id, orient_idx, base_y) in targets {
         let (min_entry_time, max_entry_time) = if let Some(constraints) = constraints {
             let by_id = scheduled_by_id(problem, &cur);
             precedence_entry_time_range(problem, constraints, &by_id, old.block_id)?
@@ -752,7 +699,6 @@ fn try_swap_neighbor<R: Random>(
             &cur,
             bay_id,
             orient_idx,
-            base_x,
             base_y,
             min_entry_time,
             max_entry_time,

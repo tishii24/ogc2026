@@ -212,11 +212,10 @@ pub struct NeighborParams {
     pub reconstruct_pref_spread_weight_range: (f64, f64),
     pub reconstruct_limit_time_urgency_weight_range: (f64, f64),
     pub reconstruct_order_random_weight_range: (f64, f64),
-    pub shift_max_x: i64,
-    pub shift_max_y: i64,
-    pub rotate_max_shift_delta: i64,
+    pub shift_dy_range: (i64, i64),
+    pub rotate_dy_range: (i64, i64),
     pub swap_neighbor_top_k: usize,
-    pub swap_max_shift_delta: i64,
+    pub swap_dy_range: (i64, i64),
     pub move_sample_blocks: usize,
     pub move_small_pool_size: usize,
 }
@@ -268,17 +267,12 @@ impl NeighborParams {
             reconstruct_order_random_weight_range: value
                 .reconstruct_order_random_weight_range
                 .unwrap_or(self.reconstruct_order_random_weight_range),
-            shift_max_x: value.shift_max_x.unwrap_or(self.shift_max_x),
-            shift_max_y: value.shift_max_y.unwrap_or(self.shift_max_y),
-            rotate_max_shift_delta: value
-                .rotate_max_shift_delta
-                .unwrap_or(self.rotate_max_shift_delta),
+            shift_dy_range: value.shift_dy_range.unwrap_or(self.shift_dy_range),
+            rotate_dy_range: value.rotate_dy_range.unwrap_or(self.rotate_dy_range),
             swap_neighbor_top_k: value
                 .swap_neighbor_top_k
                 .unwrap_or(self.swap_neighbor_top_k),
-            swap_max_shift_delta: value
-                .swap_max_shift_delta
-                .unwrap_or(self.swap_max_shift_delta),
+            swap_dy_range: value.swap_dy_range.unwrap_or(self.swap_dy_range),
             move_sample_blocks: value.move_sample_blocks.unwrap_or(self.move_sample_blocks),
             move_small_pool_size: value
                 .move_small_pool_size
@@ -339,11 +333,10 @@ pub struct NeighborParamsOverride {
     pub reconstruct_pref_spread_weight_range: Option<(f64, f64)>,
     pub reconstruct_limit_time_urgency_weight_range: Option<(f64, f64)>,
     pub reconstruct_order_random_weight_range: Option<(f64, f64)>,
-    pub shift_max_x: Option<i64>,
-    pub shift_max_y: Option<i64>,
-    pub rotate_max_shift_delta: Option<i64>,
+    pub shift_dy_range: Option<(i64, i64)>,
+    pub rotate_dy_range: Option<(i64, i64)>,
     pub swap_neighbor_top_k: Option<usize>,
-    pub swap_max_shift_delta: Option<i64>,
+    pub swap_dy_range: Option<(i64, i64)>,
     pub move_sample_blocks: Option<usize>,
     pub move_small_pool_size: Option<usize>,
 }
