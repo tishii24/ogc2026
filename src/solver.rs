@@ -42,6 +42,7 @@ pub struct PreoptimizeState {
 #[derive(Clone, Debug)]
 pub(crate) struct OptimizeState {
     pub(crate) score: f64,
+    pub(crate) z1: i64,
     pub(crate) blocks: Vec<ScheduledBlock>,
 }
 
@@ -242,6 +243,7 @@ pub(crate) fn build_optimize_state(
     if active_bays.is_empty() {
         return Some(OptimizeState {
             score: 0.0,
+            z1: 0,
             blocks: Vec::new(),
         });
     }
@@ -338,13 +340,13 @@ pub(crate) fn build_optimize_state(
         blocks.extend(schedule);
     }
 
-    let score = score_schedule(problem, pre, &blocks);
+    let (score, z1) = score_schedule(problem, pre, &blocks);
     log!(
         "[{:.4}] [build] finished: score={:.3}",
         timer.elapsed_seconds(),
         score,
     );
-    Some(OptimizeState { score, blocks })
+    Some(OptimizeState { score, z1, blocks })
 }
 
 fn hash_order(order: &[usize]) -> u64 {

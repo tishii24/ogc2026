@@ -151,6 +151,10 @@ impl AnnealingState for PreoptimizeAnnealingState {
         self.objective
     }
 
+    fn has_tardiness(&self) -> bool {
+        self.z1 > 0.0
+    }
+
     fn tabu_key(&self) -> Option<u64> {
         None
     }
@@ -874,10 +878,6 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
         PREOPTIMIZE_NEIGHBOR_KINDS
     }
 
-    fn exchange_threshold(&self, _domain: usize) -> f64 {
-        self.context.params.exchange_threshold_w1_scale * self.problem.weights.w1
-    }
-
     fn propose(
         &self,
         _domain: usize,
@@ -973,7 +973,7 @@ pub fn preoptimize(
         max_time: pre.search_horizon,
     };
     let initial = build_initial_state(problem, &mut context)?;
-    let annealing_params = params.annealing.make(problem, initial.annealing_score());
+    let annealing_params = params.annealing.make(problem);
     let timer = Timer::start(1.0);
     let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
     let delegate = PreoptimizeAnnealingDelegate {

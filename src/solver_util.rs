@@ -43,20 +43,23 @@ pub(crate) fn score_schedule(
     problem: &Problem,
     pre: &Precompute,
     schedule: &[ScheduledBlock],
-) -> f64 {
-    let mut obj1 = 0.0;
+) -> (f64, i64) {
+    let mut obj1 = 0;
     let mut obj3 = 0.0;
     let mut loads = vec![0.0; problem.bays.len()];
 
     for s in schedule {
         let block = &problem.blocks[s.block_id];
-        obj1 += (s.exit_time - block.due_date).max(0) as f64;
+        obj1 += (s.exit_time - block.due_date).max(0);
         loads[s.bay_id] += block.workload as f64;
         obj3 += pre.pref_penalty[s.block_id][s.bay_id] as f64;
     }
 
     let obj2 = normalized_imbalance(pre, &loads);
-    problem.weights.w1 * obj1 + problem.weights.w2 * obj2 + problem.weights.w3 * obj3
+    (
+        problem.weights.w1 * obj1 as f64 + problem.weights.w2 * obj2 + problem.weights.w3 * obj3,
+        obj1,
+    )
 }
 
 pub(crate) fn normalized_imbalance(pre: &Precompute, loads: &[f64]) -> f64 {

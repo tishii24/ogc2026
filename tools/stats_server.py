@@ -28,6 +28,13 @@ def query_value(query: dict[str, list[str]], name: str) -> str:
     return query.get(name, [""])[0].strip()
 
 
+def list_suites(root: Path) -> list[str]:
+    return [
+        str(path.relative_to(root))
+        for path in sorted((root / "suites").glob("*.json"))
+    ]
+
+
 class StatsHandler(BaseHTTPRequestHandler):
     def __init__(self, *args: object, root: Path, **kwargs: object) -> None:
         self.root = root
@@ -41,6 +48,7 @@ class StatsHandler(BaseHTTPRequestHandler):
 
         query = parse_qs(url.query, keep_blank_values=True)
         suite = query_value(query, "suite")
+        suite_options = list_suites(self.root)
         timelimit = query_value(query, "tl")
         last_versions = query_value(query, "n")
         matrix = query_value(query, "m") == "1"
@@ -89,6 +97,7 @@ class StatsHandler(BaseHTTPRequestHandler):
         )
         page = self.render_page(
             suite,
+            suite_options,
             timelimit,
             last_versions,
             matrix,
@@ -200,6 +209,7 @@ class StatsHandler(BaseHTTPRequestHandler):
     @staticmethod
     def render_page(
         suite: str,
+        suite_options: list[str],
         timelimit: str,
         last_versions: str,
         matrix: bool,
@@ -213,6 +223,13 @@ class StatsHandler(BaseHTTPRequestHandler):
         tune_checked = " checked" if include_tune else ""
         feasible_checked = " checked" if all_feasible else ""
         status_class = "error" if returncode else ""
+        suite_option_html = ['<option value="">all cases</option>']
+        for option in suite_options:
+            selected = " selected" if option == suite else ""
+            escaped = html.escape(option, quote=True)
+            suite_option_html.append(
+                f'<option value="{escaped}"{selected}>{escaped}</option>'
+            )
         return f"""<!doctype html>
 <html lang="ja">
 <head>
@@ -224,8 +241,8 @@ body {{ font-family: system-ui, sans-serif; margin: 24px; color: #1f2937; backgr
 h1 {{ margin: 0 0 16px; }}
 form {{ display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-bottom: 16px; padding: 14px; border: 1px solid #d8dee8; border-radius: 8px; background: white; }}
 label {{ display: grid; gap: 4px; font-size: 13px; font-weight: 600; }}
-input[type="text"], input[type="number"] {{ padding: 6px 8px; border: 1px solid #b8c1cf; border-radius: 4px; }}
-input[name="suite"] {{ width: 220px; }}
+input[type="text"], input[type="number"], select {{ padding: 6px 8px; border: 1px solid #b8c1cf; border-radius: 4px; }}
+select[name="suite"] {{ width: 220px; }}
 .checkbox {{ display: flex; align-items: center; gap: 5px; padding-bottom: 6px; }}
 button {{ padding: 7px 16px; border: 0; border-radius: 4px; color: white; background: #2563eb; cursor: pointer; }}
 button:hover {{ background: #1d4ed8; }}
@@ -251,7 +268,7 @@ pre {{ margin: 0; padding: 12px; border: 1px solid #fecaca; border-radius: 8px; 
 <h1>Stats</h1>
 <form method="get" action="/">
 <label>suite
-<input type="text" name="suite" value="{html.escape(suite, quote=True)}" placeholder="suites/half.json">
+<select name="suite">{"".join(suite_option_html)}</select>
 </label>
 <label>tl
 <input type="number" name="tl" value="{html.escape(timelimit, quote=True)}" step="any">

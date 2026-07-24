@@ -10,6 +10,10 @@ impl AnnealingState for OptimizeState {
         self.score
     }
 
+    fn has_tardiness(&self) -> bool {
+        self.z1 > 0
+    }
+
     fn tabu_key(&self) -> Option<u64> {
         Some(hash_schedule(&self.blocks))
     }
@@ -56,7 +60,6 @@ impl<'a> GlobalAnnealing<'a> {
             constraints: constrained.then_some(&self.constraints),
             name: if constrained { "global-c" } else { "global" },
             initial,
-            exchange_threshold_w1_scale: params.exchange_threshold_w1_scale,
             params: neighbor_params,
             insert_params,
         };
@@ -64,7 +67,7 @@ impl<'a> GlobalAnnealing<'a> {
             deadline,
             worker_count,
             seed,
-            params.annealing.make(),
+            params.annealing.make(self.problem),
             delegate,
         )
         .run(self.timer)
@@ -77,7 +80,6 @@ struct GlobalAnnealingDelegate<'a> {
     constraints: Option<&'a PrecedenceConstraints>,
     name: &'static str,
     initial: OptimizeState,
-    exchange_threshold_w1_scale: f64,
     params: &'a NeighborParams,
     insert_params: &'a InsertParams,
 }
@@ -96,10 +98,6 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
 
     fn neighbor_kinds(&self) -> &'static [&'static str] {
         NEIGHBOR_KINDS
-    }
-
-    fn exchange_threshold(&self, _domain: usize) -> f64 {
-        self.exchange_threshold_w1_scale * self.problem.weights.w1
     }
 
     fn is_finished(&self, _domain: usize, _state: &Self::State) -> bool {
@@ -166,9 +164,9 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
         };
         AnnealingAttempt {
             neighbor_kind: neighbor.index(),
-            candidate: blocks.map(|blocks| OptimizeState {
-                score: score_schedule(self.problem, self.pre, &blocks),
-                blocks,
+            candidate: blocks.map(|blocks| {
+                let (score, z1) = score_schedule(self.problem, self.pre, &blocks);
+                OptimizeState { score, z1, blocks }
             }),
         }
     }

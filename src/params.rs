@@ -104,10 +104,9 @@ pub struct PreoptimizeSolverParams {
     pub bay_padding: f64,
     pub precedence_margin: i64,
     pub congestion_weight: f64,
-    pub exchange_threshold_w1_scale: f64,
     pub neighbor_probabilities: PreoptimizeNeighborProbabilities,
     pub neighbor: PreoptimizeNeighborParams,
-    pub annealing: PreoptimizeAnnealingParams,
+    pub annealing: AnnealingParamsConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -133,33 +132,7 @@ pub struct PreoptimizeNeighborParams {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PreoptimizeAnnealingParams {
-    pub exchange_interval: usize,
-    pub initial_score_per_block_scale: f64,
-    pub end_temperature_ratio: f64,
-    pub worker_temperature_scale: f64,
-    pub tabu_capacity: usize,
-}
-
-impl PreoptimizeAnnealingParams {
-    pub(crate) fn make(&self, problem: &Problem, initial_score: f64) -> AnnealingParams {
-        let start_temperature = (initial_score / problem.blocks.len() as f64
-            * self.initial_score_per_block_scale)
-            .max(problem.weights.w1);
-        AnnealingParams {
-            exchange_interval: self.exchange_interval,
-            start_temperature,
-            end_temperature: start_temperature * self.end_temperature_ratio,
-            worker_temperature_scale: self.worker_temperature_scale,
-            tabu_capacity: self.tabu_capacity,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct GlobalOptimizeParams {
-    pub exchange_threshold_w1_scale: f64,
     pub annealing: AnnealingParamsConfig,
 }
 
@@ -167,18 +140,28 @@ pub struct GlobalOptimizeParams {
 #[serde(deny_unknown_fields)]
 pub struct AnnealingParamsConfig {
     pub exchange_interval: usize,
-    pub start_temperature: f64,
-    pub end_temperature: f64,
+    pub positive_tardiness_temperature_w1_scale: (f64, f64),
+    pub zero_tardiness_temperature_w3_scale: (f64, f64),
+    pub exchange_threshold_w1_scale: f64,
+    pub exchange_threshold_w3_scale: f64,
     pub worker_temperature_scale: f64,
     pub tabu_capacity: usize,
 }
 
 impl AnnealingParamsConfig {
-    pub(crate) fn make(&self) -> AnnealingParams {
+    pub(crate) fn make(&self, problem: &Problem) -> AnnealingParams {
         AnnealingParams {
             exchange_interval: self.exchange_interval,
-            start_temperature: self.start_temperature,
-            end_temperature: self.end_temperature,
+            positive_tardiness_temperature: (
+                self.positive_tardiness_temperature_w1_scale.0 * problem.weights.w1,
+                self.positive_tardiness_temperature_w1_scale.1 * problem.weights.w1,
+            ),
+            zero_tardiness_temperature: (
+                self.zero_tardiness_temperature_w3_scale.0 * problem.weights.w3,
+                self.zero_tardiness_temperature_w3_scale.1 * problem.weights.w3,
+            ),
+            exchange_threshold: (self.exchange_threshold_w1_scale * problem.weights.w1)
+                .min(self.exchange_threshold_w3_scale * problem.weights.w3),
             worker_temperature_scale: self.worker_temperature_scale,
             tabu_capacity: self.tabu_capacity,
         }

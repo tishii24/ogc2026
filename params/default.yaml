@@ -31,7 +31,6 @@ preoptimize:
   bay_padding: 0.0
   precedence_margin: 2
   congestion_weight: 0.001
-  exchange_threshold_w1_scale: 0.0
   neighbor_probabilities:
     relocate: 0.8
     swap: 0.15
@@ -47,17 +46,20 @@ preoptimize:
     max_time_shift: 10
   annealing:
     exchange_interval: 1000000
-    initial_score_per_block_scale: 1.0
-    end_temperature_ratio: 0.0001
+    positive_tardiness_temperature_w1_scale: [0.1, 0.01]
+    zero_tardiness_temperature_w3_scale: [10.0, 1.0]
+    exchange_threshold_w1_scale: 0.5
+    exchange_threshold_w3_scale: 50.0
     worker_temperature_scale: 0.0
     tabu_capacity: 4096
 
 global_optimize:
-  exchange_threshold_w1_scale: 0.0
   annealing:
     exchange_interval: 2048
-    start_temperature: 1000.0
-    end_temperature: 1.0
+    positive_tardiness_temperature_w1_scale: [0.1, 0.01]
+    zero_tardiness_temperature_w3_scale: [10.0, 1.0]
+    exchange_threshold_w1_scale: 0.5
+    exchange_threshold_w3_scale: 50.0
     worker_temperature_scale: 10.0
     tabu_capacity: 4096
 
