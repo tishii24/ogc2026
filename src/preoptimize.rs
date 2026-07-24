@@ -1037,9 +1037,7 @@ pub fn preoptimize(
         max_worker_count,
         seed,
     )?;
-    let annealing_params = annealing
-        .with_override(&params.annealing)
-        .make(problem, initial.annealing_score());
+    let annealing_params = annealing.make(problem, initial.annealing_score());
     let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
     let delegate = PreoptimizeAnnealingDelegate {
         problem,

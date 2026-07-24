@@ -1,15 +1,16 @@
 todo:
 - refactor
-- seedの選び方を増やす
+  - neighborの選択
 - reannealing (cos-schedule)
   - globalになったら温度をあげる
 - constraintをtardiness=0になったら取る
+  - constraint-time-ratio=0を試す
 - ランダム性を高める
   - 確率的に探索範囲を絞って多様化
     - 最初のブロックほどランダム性を高める
     - (bay,orientation,x,y)をたまにランダムにする
     - 元の状態には必ず戻れるようにする
-- param-configの整理
+- seedの選び方を増やす
 - 高速化
 - safety
 - チューニング

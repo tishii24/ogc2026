@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
-    params::{AnnealingParamsConfig, GlobalOptimizeParams, InsertParams},
+    params::{AnnealingParamsConfig, InsertParams},
     solver_util::sample_neighbor,
 };
 
@@ -50,7 +50,6 @@ impl<'a> GlobalAnnealing<'a> {
         initial: OptimizeState,
         deadline: f64,
         annealing: &AnnealingParamsConfig,
-        params: &GlobalOptimizeParams,
         neighbor_params: &NeighborParams,
         insert_params: &InsertParams,
         constrained: bool,
@@ -58,9 +57,7 @@ impl<'a> GlobalAnnealing<'a> {
         max_worker_count: usize,
     ) -> OptimizeState {
         let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
-        let annealing_params = annealing
-            .with_override(&params.annealing)
-            .make(self.problem, initial.annealing_score());
+        let annealing_params = annealing.make(self.problem, initial.annealing_score());
         let delegate = GlobalAnnealingDelegate {
             problem: self.problem,
             pre: self.pre,

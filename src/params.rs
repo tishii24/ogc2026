@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 
 use crate::{Problem, annealing::AnnealingParams, solver_util::NeighborKind};
 
@@ -11,9 +11,8 @@ pub struct SolverParamsFile {
     pub phases: PhaseParams,
     pub precompute: PrecomputeParams,
     pub insert: InsertParams,
-    pub annealing: AnnealingParamsConfig,
+    pub annealing: AnnealingConfigs,
     pub preoptimize: PreoptimizeSolverParams,
-    pub global_optimize: GlobalOptimizeParams,
     pub optimize_neighbor: OptimizeNeighborParams,
 }
 
@@ -23,9 +22,8 @@ pub struct SolverParams {
     pub phases: PhaseParams,
     pub precompute: PrecomputeParams,
     pub insert: InsertParams,
-    pub annealing: AnnealingParamsConfig,
+    pub annealing: AnnealingConfigs,
     pub preoptimize: PreoptimizeSolverParams,
-    pub global_optimize: GlobalOptimizeParams,
     pub global_neighbor: NeighborParams,
 }
 
@@ -52,7 +50,6 @@ impl SolverParamsFile {
             insert: self.insert,
             annealing: self.annealing,
             preoptimize: self.preoptimize,
-            global_optimize: self.global_optimize,
             global_neighbor,
         };
         Ok(params)
@@ -110,8 +107,6 @@ pub struct PreoptimizeSolverParams {
     pub initial_build: LimitedPhaseParams,
     pub neighbor_probabilities: PreoptimizeNeighborProbabilities,
     pub neighbor: PreoptimizeNeighborParams,
-    #[serde(default)]
-    pub annealing: AnnealingParamsOverride,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -137,13 +132,6 @@ pub struct PreoptimizeNeighborParams {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct GlobalOptimizeParams {
-    #[serde(default)]
-    pub annealing: AnnealingParamsOverride,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct WeightScaleConfig {
     pub w1_scale: f64,
     pub w3_scale: f64,
@@ -153,20 +141,6 @@ impl WeightScaleConfig {
     fn make(&self, problem: &Problem) -> f64 {
         (self.w1_scale * problem.weights.w1).min(self.w3_scale * problem.weights.w3)
     }
-
-    fn with_override(&self, value: &WeightScaleOverride) -> Self {
-        Self {
-            w1_scale: value.w1_scale.unwrap_or(self.w1_scale),
-            w3_scale: value.w3_scale.unwrap_or(self.w3_scale),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct WeightScaleOverride {
-    pub w1_scale: Option<f64>,
-    pub w3_scale: Option<f64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -210,43 +184,13 @@ impl AnnealingRegimeConfig {
             exchange_threshold: self.exchange_threshold.make(problem),
         }
     }
-
-    fn with_override(&self, value: &AnnealingRegimeOverride) -> Self {
-        Self {
-            temperature_w1_scale: value
-                .temperature_w1_scale
-                .unwrap_or(self.temperature_w1_scale),
-            temperature_w3_scale: value
-                .temperature_w3_scale
-                .unwrap_or(self.temperature_w3_scale),
-            temperature_initial_score_per_block_scale: value
-                .temperature_initial_score_per_block_scale
-                .unwrap_or(self.temperature_initial_score_per_block_scale),
-            exchange_threshold: self
-                .exchange_threshold
-                .with_override(&value.exchange_threshold),
-        }
-    }
 }
 
-fn deserialize_nullable_override<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Ok(Some(Option::<T>::deserialize(deserializer)?))
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct AnnealingRegimeOverride {
-    #[serde(deserialize_with = "deserialize_nullable_override")]
-    pub temperature_w1_scale: Option<Option<(f64, f64)>>,
-    #[serde(deserialize_with = "deserialize_nullable_override")]
-    pub temperature_w3_scale: Option<Option<(f64, f64)>>,
-    #[serde(deserialize_with = "deserialize_nullable_override")]
-    pub temperature_initial_score_per_block_scale: Option<Option<(f64, f64)>>,
-    pub exchange_threshold: WeightScaleOverride,
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnnealingConfigs {
+    pub preoptimize: AnnealingParamsConfig,
+    pub optimize: AnnealingParamsConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -269,30 +213,6 @@ impl AnnealingParamsConfig {
             tabu_capacity: self.tabu_capacity,
         }
     }
-
-    pub(crate) fn with_override(&self, value: &AnnealingParamsOverride) -> Self {
-        Self {
-            exchange_interval: value.exchange_interval.unwrap_or(self.exchange_interval),
-            positive_tardiness: self
-                .positive_tardiness
-                .with_override(&value.positive_tardiness),
-            zero_tardiness: self.zero_tardiness.with_override(&value.zero_tardiness),
-            worker_temperature_scale: value
-                .worker_temperature_scale
-                .unwrap_or(self.worker_temperature_scale),
-            tabu_capacity: value.tabu_capacity.unwrap_or(self.tabu_capacity),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct AnnealingParamsOverride {
-    pub exchange_interval: Option<usize>,
-    pub positive_tardiness: AnnealingRegimeOverride,
-    pub zero_tardiness: AnnealingRegimeOverride,
-    pub worker_temperature_scale: Option<f64>,
-    pub tabu_capacity: Option<usize>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
