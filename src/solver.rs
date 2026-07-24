@@ -46,10 +46,21 @@ pub(crate) struct OptimizeState {
 }
 
 #[derive(Clone, Copy)]
+enum RemoveSeedStrategy {
+    LocalProximity,
+}
+
+#[derive(Clone, Copy)]
 enum RemoveSeedMethod {
     Badness,
     Fluidity,
     Random,
+}
+
+#[derive(Clone, Copy)]
+struct RemoveSeed {
+    block_id: usize,
+    remove_count: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -834,37 +845,37 @@ fn remove_badness(problem: &Problem, pre: &Precompute, schedule: &[ScheduledBloc
     badness
 }
 
-fn choose_removed_blocks<R: Random>(
-    problem: &Problem,
-    pre: &Precompute,
-    schedule: &[ScheduledBlock],
-    k: usize,
+fn sample_remove_seed_strategy<R: Random>(
     rng: &mut R,
     params: &NeighborParams,
-) -> Vec<usize> {
-    let n = schedule.len();
-    if n == 0 || k == 0 {
-        return Vec::new();
+) -> RemoveSeedStrategy {
+    let weights = params.remove_seed_strategy_weights;
+    let strategies = [(RemoveSeedStrategy::LocalProximity, weights.local_proximity)];
+    if strategies.len() == 1 {
+        return strategies[0].0;
     }
 
-    let k = k.min(n);
-    let mut ids: Vec<usize> = schedule.iter().map(|s| s.block_id).collect();
-
-    let remove_x_distance_weight = rng.gen_rangef(0.0, params.remove_x_distance_weight_max);
-    let remove_y_distance_weight = rng.gen_rangef(0.0, params.remove_y_distance_weight_max);
-    let badness = remove_badness(problem, pre, schedule);
-
-    let mut by_block = vec![None; problem.blocks.len()];
-    for &s in schedule {
-        by_block[s.block_id] = Some(s);
+    let total = strategies.iter().map(|&(_, weight)| weight).sum::<f64>();
+    let mut value = rng.nextf() * total;
+    for (strategy, weight) in strategies {
+        if value < weight {
+            return strategy;
+        }
+        value -= weight;
     }
+    unreachable!()
+}
 
-    rng.shuffle(&mut ids);
-    ids.sort_by_key(|&block_id| Reverse(badness[block_id]));
-    let pool_len = (k * params.remove_pool_factor).min(ids.len()).max(k);
-    ids.truncate(pool_len);
-    let bad_pool = ids;
-
+fn choose_local_proximity_seeds<R: Random>(
+    problem: &Problem,
+    schedule: &[ScheduledBlock],
+    by_block: &[Option<ScheduledBlock>],
+    k: usize,
+    bad_pool: &[usize],
+    rng: &mut R,
+    params: &NeighborParams,
+) -> Vec<RemoveSeed> {
+    let pool_len = (k * params.remove_pool_factor).min(schedule.len()).max(k);
     let slack_weight = gen_rangef(rng, params.remove_fluidity_slack_weight_range);
     let pref_spread_weight = gen_rangef(rng, params.remove_fluidity_pref_spread_weight_range);
     let max_slack = schedule
@@ -923,22 +934,24 @@ fn choose_removed_blocks<R: Random>(
         })
         .collect();
 
-    let mut selected = Vec::with_capacity(k);
     let mut used = vec![false; problem.blocks.len()];
     let mut seeds = Vec::with_capacity(seed_count);
     let mut entry_bases = Vec::with_capacity(base_count);
 
     for seed_index in 0..base_count {
         let mut seed_pool: Vec<usize> = match seed_methods[seed_index] {
-            RemoveSeedMethod::Badness => bad_pool.clone(),
+            RemoveSeedMethod::Badness => bad_pool.to_vec(),
             RemoveSeedMethod::Fluidity => fluid_pool.clone(),
             RemoveSeedMethod::Random => schedule.iter().map(|s| s.block_id).collect(),
         };
         seed_pool.retain(|&block_id| !used[block_id]);
         rng.shuffle(&mut seed_pool);
         let seed_id = seed_pool[0];
-        push_removed_block(&mut selected, &mut used, seed_id, k);
-        seeds.push((seed_id, seed_sizes[seed_index]));
+        used[seed_id] = true;
+        seeds.push(RemoveSeed {
+            block_id: seed_id,
+            remove_count: seed_sizes[seed_index],
+        });
         entry_bases.push(seed_id);
     }
 
@@ -946,7 +959,7 @@ fn choose_removed_blocks<R: Random>(
         let base_id = entry_bases[rng.gen_range(0, entry_bases.len())];
         let base = by_block[base_id].unwrap();
         let mut seed_pool: Vec<usize> = match seed_methods[seed_index] {
-            RemoveSeedMethod::Badness => bad_pool.clone(),
+            RemoveSeedMethod::Badness => bad_pool.to_vec(),
             RemoveSeedMethod::Fluidity => fluid_pool.clone(),
             RemoveSeedMethod::Random => schedule.iter().map(|s| s.block_id).collect(),
         };
@@ -966,43 +979,113 @@ fn choose_removed_blocks<R: Random>(
         );
         rng.shuffle(&mut seed_pool);
         let seed_id = seed_pool[0];
-        push_removed_block(&mut selected, &mut used, seed_id, k);
-        seeds.push((seed_id, seed_sizes[seed_index]));
+        used[seed_id] = true;
+        seeds.push(RemoveSeed {
+            block_id: seed_id,
+            remove_count: seed_sizes[seed_index],
+        });
     }
 
-    for (seed_id, seed_size) in seeds {
-        let seed = by_block[seed_id].unwrap();
-        let (sx, sy) = scheduled_center(pre, seed);
-        let st = seed.entry_time as f64;
+    seeds
+}
+
+fn collect_removed_blocks<R: Random>(
+    problem: &Problem,
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    by_block: &[Option<ScheduledBlock>],
+    k: usize,
+    seeds: &[RemoveSeed],
+    bad_pool: &[usize],
+    remove_x_distance_weight: f64,
+    remove_y_distance_weight: f64,
+    rng: &mut R,
+) -> Vec<usize> {
+    let mut selected = Vec::with_capacity(k);
+    let mut used = vec![false; problem.blocks.len()];
+    for seed in seeds {
+        push_removed_block(&mut selected, &mut used, seed.block_id, k);
+    }
+
+    for seed in seeds {
+        let scheduled = by_block[seed.block_id].unwrap();
+        let (sx, sy) = scheduled_center(pre, scheduled);
+        let st = scheduled.entry_time as f64;
         let mut neighbors: Vec<(f64, usize)> = schedule
             .iter()
-            .filter(|s| s.bay_id == seed.bay_id && !used[s.block_id])
-            .map(|&s| {
-                let (x, y) = scheduled_center(pre, s);
+            .filter(|s| s.bay_id == scheduled.bay_id && !used[s.block_id])
+            .map(|&candidate| {
+                let (x, y) = scheduled_center(pre, candidate);
                 let dx = x - sx;
                 let dy = y - sy;
-                let dt = s.entry_time as f64 - st;
+                let dt = candidate.entry_time as f64 - st;
                 (
                     remove_x_distance_weight * dx * dx
                         + remove_y_distance_weight * dy * dy
                         + dt * dt,
-                    s.block_id,
+                    candidate.block_id,
                 )
             })
             .collect();
         neighbors.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        for (_, block_id) in neighbors.into_iter().take(seed_size - 1) {
+        for (_, block_id) in neighbors.into_iter().take(seed.remove_count - 1) {
             push_removed_block(&mut selected, &mut used, block_id, k);
         }
     }
 
-    let mut fill_pool = bad_pool;
+    let mut fill_pool = bad_pool.to_vec();
     rng.shuffle(&mut fill_pool);
     for block_id in fill_pool {
         push_removed_block(&mut selected, &mut used, block_id, k);
     }
-
     selected
+}
+
+fn choose_removed_blocks<R: Random>(
+    problem: &Problem,
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    k: usize,
+    rng: &mut R,
+    params: &NeighborParams,
+) -> Vec<usize> {
+    if schedule.is_empty() || k == 0 {
+        return Vec::new();
+    }
+
+    let k = k.min(schedule.len());
+    let remove_x_distance_weight = rng.gen_rangef(0.0, params.remove_x_distance_weight_max);
+    let remove_y_distance_weight = rng.gen_rangef(0.0, params.remove_y_distance_weight_max);
+    let badness = remove_badness(problem, pre, schedule);
+    let mut by_block = vec![None; problem.blocks.len()];
+    for &scheduled in schedule {
+        by_block[scheduled.block_id] = Some(scheduled);
+    }
+
+    let mut bad_pool: Vec<usize> = schedule.iter().map(|s| s.block_id).collect();
+    rng.shuffle(&mut bad_pool);
+    bad_pool.sort_by_key(|&block_id| Reverse(badness[block_id]));
+    let pool_len = (k * params.remove_pool_factor).min(schedule.len()).max(k);
+    bad_pool.truncate(pool_len);
+
+    let strategy = sample_remove_seed_strategy(rng, params);
+    let seeds = match strategy {
+        RemoveSeedStrategy::LocalProximity => {
+            choose_local_proximity_seeds(problem, schedule, &by_block, k, &bad_pool, rng, params)
+        }
+    };
+    collect_removed_blocks(
+        problem,
+        pre,
+        schedule,
+        &by_block,
+        k,
+        &seeds,
+        &bad_pool,
+        remove_x_distance_weight,
+        remove_y_distance_weight,
+        rng,
+    )
 }
 
 fn block_volume(problem: &Problem, block_areas: &[f64], block_id: usize) -> f64 {

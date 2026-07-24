@@ -76,6 +76,8 @@ optimize_neighbor:
     remove_seed_per_block: [1, 3]
     remove_entry_base_interval: 3
     remove_entry_seed_candidate_count: 10
+    remove_seed_strategy_weights:
+      local_proximity: 1.0
     remove_seed_method_weights:
       badness: 1.0
       fluidity: 1.0

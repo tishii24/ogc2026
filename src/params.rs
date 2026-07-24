@@ -204,6 +204,7 @@ pub struct NeighborParams {
     pub remove_seed_per_block: (usize, usize),
     pub remove_entry_base_interval: usize,
     pub remove_entry_seed_candidate_count: usize,
+    pub remove_seed_strategy_weights: RemoveSeedStrategyWeights,
     pub remove_seed_method_weights: RemoveSeedMethodWeights,
     pub remove_fluidity_slack_weight_range: (f64, f64),
     pub remove_fluidity_pref_spread_weight_range: (f64, f64),
@@ -245,6 +246,9 @@ impl NeighborParams {
             remove_entry_seed_candidate_count: value
                 .remove_entry_seed_candidate_count
                 .unwrap_or(self.remove_entry_seed_candidate_count),
+            remove_seed_strategy_weights: value
+                .remove_seed_strategy_weights
+                .unwrap_or(self.remove_seed_strategy_weights),
             remove_seed_method_weights: value
                 .remove_seed_method_weights
                 .unwrap_or(self.remove_seed_method_weights),
@@ -287,6 +291,12 @@ impl NeighborParams {
                 .unwrap_or(self.move_small_pool_size),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveSeedStrategyWeights {
+    pub local_proximity: f64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -341,6 +351,7 @@ pub struct NeighborParamsOverride {
     pub remove_seed_per_block: Option<(usize, usize)>,
     pub remove_entry_base_interval: Option<usize>,
     pub remove_entry_seed_candidate_count: Option<usize>,
+    pub remove_seed_strategy_weights: Option<RemoveSeedStrategyWeights>,
     pub remove_seed_method_weights: Option<RemoveSeedMethodWeights>,
     pub remove_fluidity_slack_weight_range: Option<(f64, f64)>,
     pub remove_fluidity_pref_spread_weight_range: Option<(f64, f64)>,
