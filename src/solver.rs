@@ -9,7 +9,7 @@ use crate::{
         score_schedule, score13_block,
     },
     util::{
-        rand::{RandPcg64Mcg, Random},
+        rand::{RandPcg64Mcg, Random, sample_weighted_index},
         time::Timer,
     },
     *,
@@ -922,7 +922,9 @@ fn choose_local_proximity_seeds<R: Random>(
         seed_size_sum += seed_size;
     }
     let seed_count = seed_sizes.len();
-    let base_count = (1 + (seed_count - 1) / params.remove_entry_base_interval).min(seed_count);
+    let entry_base_interval =
+        sample_weighted_index(rng, &params.remove_entry_base_interval_weights) + 1;
+    let base_count = (1 + (seed_count - 1) / entry_base_interval).min(seed_count);
     let method_weights = params.remove_seed_method_weights;
     let total_method_weight =
         method_weights.badness + method_weights.fluidity + method_weights.random;

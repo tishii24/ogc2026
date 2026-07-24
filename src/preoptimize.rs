@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use crate::{
     Bay, Orientation, Problem,
     annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
@@ -11,6 +13,7 @@ use crate::{
     },
 };
 use geo::Area;
+use rayon::prelude::*;
 
 #[derive(Clone, Copy, Debug)]
 struct OrientationArea {
@@ -277,41 +280,20 @@ fn build_occupancy(
     Ok(occupancy)
 }
 
-fn build_initial_state(
+fn try_build_initial_state(
     problem: &Problem,
-    context: &mut PreoptimizeContext<'_>,
-) -> Result<PreoptimizeAnnealingState, String> {
+    context: &PreoptimizeContext<'_>,
+    order: &[usize],
+) -> Option<PreoptimizeAnnealingState> {
     let time_count: usize = (context.pre.search_horizon - context.pre.min_time)
         .try_into()
-        .map_err(|_| "greedy time range is too large".to_string())?;
+        .ok()?;
     let mut used_area = vec![vec![0.0; time_count]; problem.bays.len()];
     let mut congestion = 0.0;
     let mut loads = vec![0.0; problem.bays.len()];
     let mut schedule = vec![None; problem.blocks.len()];
-    let mut order: Vec<usize> = (0..problem.blocks.len()).collect();
-    order.sort_by(|&a, &b| {
-        let block_a = &problem.blocks[a];
-        let block_b = &problem.blocks[b];
-        let slack_a = block_a.due_date - block_a.release_time - block_a.processing_time;
-        let slack_b = block_b.due_date - block_b.release_time - block_b.processing_time;
-        let area_a = context.occupancy[a]
-            .iter()
-            .flatten()
-            .copied()
-            .fold(f64::INFINITY, f64::min);
-        let area_b = context.occupancy[b]
-            .iter()
-            .flatten()
-            .copied()
-            .fold(f64::INFINITY, f64::min);
-        slack_a
-            .cmp(&slack_b)
-            .then(block_a.due_date.cmp(&block_b.due_date))
-            .then(area_b.total_cmp(&area_a))
-            .then(a.cmp(&b))
-    });
 
-    for block_id in order {
+    for &block_id in order {
         let block = &problem.blocks[block_id];
         let current_imbalance = normalized_imbalance(&loads, &context.pre.bay_load_scale);
         let mut best: Option<(f64, i64, usize)> = None;
@@ -359,8 +341,7 @@ fn build_initial_state(
             }
         }
 
-        let (_, entry_time, bay_id) =
-            best.ok_or_else(|| format!("failed to greedily schedule block {block_id}"))?;
+        let (_, entry_time, bay_id) = best?;
         let selected = PreoptimizedBlock { bay_id, entry_time };
         add_used_area(
             problem,
@@ -375,14 +356,96 @@ fn build_initial_state(
         schedule[block_id] = Some(selected);
     }
 
-    let schedule: Vec<_> = schedule
-        .into_iter()
-        .enumerate()
-        .map(|(block_id, selected)| {
-            selected.ok_or_else(|| format!("block {block_id} was not greedily scheduled"))
+    let schedule: Vec<_> = schedule.into_iter().collect::<Option<_>>()?;
+    let (objective, z1, z2, z3) = evaluate_schedule(
+        problem,
+        &context.pre.pref_penalty,
+        &context.pre.bay_load_scale,
+        &schedule,
+    );
+    Some(PreoptimizeAnnealingState {
+        schedule,
+        used_area,
+        loads,
+        z1,
+        z2,
+        z3,
+        official_objective: objective,
+        congestion,
+        objective: objective + problem.weights.w1 * context.params.congestion_weight * congestion,
+    })
+}
+
+fn build_initial_state(
+    problem: &Problem,
+    context: &mut PreoptimizeContext<'_>,
+    time_limit: f64,
+    timer: Timer,
+    max_worker_count: usize,
+    seed: u64,
+) -> Result<PreoptimizeAnnealingState, String> {
+    let deadline = timer.elapsed_seconds() + time_limit;
+    let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
+    let best = Mutex::new(None::<PreoptimizeAnnealingState>);
+    let worker_trials: Vec<_> = (0..worker_count)
+        .into_par_iter()
+        .map(|worker_id| {
+            let mut rng =
+                RandPcg64Mcg::new(seed.wrapping_add(1 << 20).wrapping_add(worker_id as u64));
+            let mut trials = 0usize;
+            let mut completed = 0usize;
+            while timer.elapsed_seconds() < deadline {
+                trials += 1;
+                let mut order: Vec<_> = (0..problem.blocks.len()).collect();
+                sort_default_reconstruct_order(
+                    problem,
+                    &context.block_areas,
+                    &mut order,
+                    &mut rng,
+                    context.reconstruct_order_params,
+                );
+                let Some(candidate) = try_build_initial_state(problem, context, &order) else {
+                    continue;
+                };
+                completed += 1;
+
+                let mut best = best.lock().unwrap();
+                if best
+                    .as_ref()
+                    .is_none_or(|best| candidate.objective < best.objective)
+                {
+                    log!(
+                        "[{:.4}] [preopt-build] best: worker={}, trial={}, score={:.3}, official={:.3}, tardiness={:.0}",
+                        timer.elapsed_seconds(),
+                        worker_id,
+                        trials,
+                        candidate.objective,
+                        candidate.official_objective,
+                        candidate.z1,
+                    );
+                    *best = Some(candidate);
+                }
+            }
+            (trials, completed)
         })
-        .collect::<Result<_, _>>()?;
-    let initial_max_exit = schedule
+        .collect();
+
+    for (worker_id, (trials, completed)) in worker_trials.into_iter().enumerate() {
+        log!(
+            "[{:.4}] [preopt-build worker={}] trials={}, completed={}",
+            timer.elapsed_seconds(),
+            worker_id,
+            trials,
+            completed,
+        );
+    }
+
+    let mut best = best
+        .into_inner()
+        .unwrap()
+        .ok_or_else(|| "failed to build preoptimize initial state".to_string())?;
+    let initial_max_exit = best
+        .schedule
         .iter()
         .enumerate()
         .map(|(block_id, selected)| selected.entry_time + problem.blocks[block_id].processing_time)
@@ -396,27 +459,17 @@ fn build_initial_state(
         .unwrap();
     context.max_time = initial_max_exit.max(max_due.min(context.pre.search_horizon));
     let time_count = (context.max_time - context.pre.min_time) as usize;
-    for row in &mut used_area {
+    for row in &mut best.used_area {
         row.truncate(time_count);
     }
-
-    let (objective, z1, z2, z3) = evaluate_schedule(
-        problem,
-        &context.pre.pref_penalty,
-        &context.pre.bay_load_scale,
-        &schedule,
+    log!(
+        "[{:.4}] [preopt-build] result: score={:.3}, official={:.3}, tardiness={:.0}",
+        timer.elapsed_seconds(),
+        best.objective,
+        best.official_objective,
+        best.z1,
     );
-    Ok(PreoptimizeAnnealingState {
-        schedule,
-        used_area,
-        loads,
-        z1,
-        z2,
-        z3,
-        official_objective: objective,
-        congestion,
-        objective: objective + problem.weights.w1 * context.params.congestion_weight * congestion,
-    })
+    Ok(best)
 }
 
 fn block_z1(problem: &Problem, block_id: usize, selected: PreoptimizedBlock) -> f64 {
@@ -973,11 +1026,20 @@ pub fn preoptimize(
         bay_capacities,
         max_time: pre.search_horizon,
     };
-    let initial = build_initial_state(problem, &mut context)?;
+    let timer = Timer::start(1.0);
+    let initial_build_time_limit =
+        (time_limit * params.initial_build.time_ratio).min(params.initial_build.max_seconds);
+    let initial = build_initial_state(
+        problem,
+        &mut context,
+        initial_build_time_limit,
+        timer,
+        max_worker_count,
+        seed,
+    )?;
     let annealing_params = annealing
         .with_override(&params.annealing)
         .make(problem, initial.annealing_score());
-    let timer = Timer::start(1.0);
     let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
     let delegate = PreoptimizeAnnealingDelegate {
         problem,

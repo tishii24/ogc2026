@@ -107,6 +107,7 @@ pub struct PreoptimizeSolverParams {
     pub bay_padding: f64,
     pub precedence_margin: i64,
     pub congestion_weight: f64,
+    pub initial_build: LimitedPhaseParams,
     pub neighbor_probabilities: PreoptimizeNeighborProbabilities,
     pub neighbor: PreoptimizeNeighborParams,
     #[serde(default)]
@@ -311,7 +312,7 @@ pub struct NeighborParams {
     pub remove_pool_factor: usize,
     pub remove_count_sample_power: f64,
     pub remove_seed_per_block: (usize, usize),
-    pub remove_entry_base_interval: usize,
+    pub remove_entry_base_interval_weights: Vec<f64>,
     pub remove_entry_seed_candidate_count: usize,
     pub remove_seed_strategy_weights: RemoveSeedStrategyWeights,
     pub remove_seed_method_weights: RemoveSeedMethodWeights,
@@ -349,9 +350,10 @@ impl NeighborParams {
             remove_seed_per_block: value
                 .remove_seed_per_block
                 .unwrap_or(self.remove_seed_per_block),
-            remove_entry_base_interval: value
-                .remove_entry_base_interval
-                .unwrap_or(self.remove_entry_base_interval),
+            remove_entry_base_interval_weights: value
+                .remove_entry_base_interval_weights
+                .clone()
+                .unwrap_or_else(|| self.remove_entry_base_interval_weights.clone()),
             remove_entry_seed_candidate_count: value
                 .remove_entry_seed_candidate_count
                 .unwrap_or(self.remove_entry_seed_candidate_count),
@@ -458,7 +460,7 @@ pub struct NeighborParamsOverride {
     pub remove_pool_factor: Option<usize>,
     pub remove_count_sample_power: Option<f64>,
     pub remove_seed_per_block: Option<(usize, usize)>,
-    pub remove_entry_base_interval: Option<usize>,
+    pub remove_entry_base_interval_weights: Option<Vec<f64>>,
     pub remove_entry_seed_candidate_count: Option<usize>,
     pub remove_seed_strategy_weights: Option<RemoveSeedStrategyWeights>,
     pub remove_seed_method_weights: Option<RemoveSeedMethodWeights>,

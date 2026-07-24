@@ -1,12 +1,9 @@
 todo:
 - refactor
-- 温度の調整
-  - reannealing (cos-schedule)
-    - globalになったら温度をあげる
-- preoptimzeの改善
-  - initial-stateの改善
-- constraintをtardiness=0になったら取る
 - seedの選び方を増やす
+- reannealing (cos-schedule)
+  - globalになったら温度をあげる
+- constraintをtardiness=0になったら取る
 - ランダム性を高める
   - 確率的に探索範囲を絞って多様化
     - 最初のブロックほどランダム性を高める
@@ -15,7 +12,8 @@ todo:
 - param-configの整理
 - 高速化
 - safety
-- 時間ごとのチューニング
+- チューニング
+  - 温度の調整
   - 時間に応じて近傍サイズを大きくする
 
 safety:

@@ -70,6 +70,18 @@ pub mod rand {
         }
     }
 
+    pub fn sample_weighted_index(rng: &mut impl Random, weights: &[f64]) -> usize {
+        let total = weights.iter().sum::<f64>();
+        let mut value = rng.nextf() * total;
+        for (index, &weight) in weights.iter().enumerate() {
+            if value < weight {
+                return index;
+            }
+            value -= weight;
+        }
+        0
+    }
+
     #[derive(Debug, Clone, Copy)]
     pub struct XorShift32 {
         state: u32,

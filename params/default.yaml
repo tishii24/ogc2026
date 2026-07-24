@@ -36,8 +36,8 @@ annealing:
       w3_scale: 50.0
   zero_tardiness:
     temperature_w1_scale: null
-    temperature_w3_scale: null
-    temperature_initial_score_per_block_scale: [10.0, 0.1]
+    temperature_w3_scale: [10.0, 1.0]
+    temperature_initial_score_per_block_scale: null
     exchange_threshold:
       w1_scale: 0.5
       w3_scale: 50.0
@@ -50,6 +50,9 @@ preoptimize:
   bay_padding: 0.0
   precedence_margin: 2
   congestion_weight: 0.001
+  initial_build:
+    time_ratio: 0.1
+    max_seconds: 1.0
   neighbor_probabilities:
     relocate: 0.8
     swap: 0.15
@@ -82,7 +85,7 @@ optimize_neighbor:
     remove_pool_factor: 4
     remove_count_sample_power: 2.0
     remove_seed_per_block: [1, 3]
-    remove_entry_base_interval: 3
+    remove_entry_base_interval_weights: [0.2, 0.0, 0.8]
     remove_entry_seed_candidate_count: 10
     remove_seed_strategy_weights:
       local_proximity: 1.0
