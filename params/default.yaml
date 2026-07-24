@@ -25,6 +25,25 @@ insert:
   y_sample_ratio_min: 1.0
   y_buffer: 10
 
+annealing:
+  exchange_interval: 2048
+  positive_tardiness:
+    temperature_w1_scale: [100000000, 100000000]
+    temperature_w3_scale: [100000000, 100000000]
+    temperature_absolute: [1000.0, 1.0]
+    exchange_threshold:
+      w1_scale: 0.5
+      w3_scale: 50.0
+  zero_tardiness:
+    temperature_w1_scale: [100000000, 100000000]
+    temperature_w3_scale: [10.0, 1.0]
+    temperature_absolute: [1000.0, 1.0]
+    exchange_threshold:
+      w1_scale: 0.5
+      w3_scale: 50.0
+  worker_temperature_scale: 0.0
+  tabu_capacity: 4096
+
 preoptimize:
   alpha: 0.8
   beta: 0.1
@@ -46,22 +65,10 @@ preoptimize:
     max_time_shift: 10
   annealing:
     exchange_interval: 1000000
-    positive_tardiness_temperature_w1_scale: [0.1, 0.01]
-    zero_tardiness_temperature_w3_scale: [10.0, 1.0]
-    exchange_threshold_w1_scale: 0.5
-    exchange_threshold_w3_scale: 50.0
     worker_temperature_scale: 0.0
-    tabu_capacity: 4096
 
 global_optimize:
-  annealing:
-    exchange_interval: 2048
-    positive_tardiness_temperature_w1_scale: [0.1, 0.01]
-    zero_tardiness_temperature_w3_scale: [10.0, 1.0]
-    exchange_threshold_w1_scale: 0.5
-    exchange_threshold_w3_scale: 50.0
-    worker_temperature_scale: 10.0
-    tabu_capacity: 4096
+  annealing: {}
 
 optimize_neighbor:
   default:

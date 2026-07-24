@@ -1,9 +1,12 @@
 use super::*;
 use crate::{
     annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
-    params::{GlobalOptimizeParams, InsertParams},
+    params::{AnnealingParamsConfig, GlobalOptimizeParams, InsertParams},
     solver_util::sample_neighbor,
 };
+
+#[cfg(feature = "trace-annealing")]
+use crate::tracing::{AnnealingTraceDiff, AnnealingTraceState};
 
 impl AnnealingState for OptimizeState {
     fn annealing_score(&self) -> f64 {
@@ -46,6 +49,7 @@ impl<'a> GlobalAnnealing<'a> {
         &self,
         initial: OptimizeState,
         deadline: f64,
+        annealing: &AnnealingParamsConfig,
         params: &GlobalOptimizeParams,
         neighbor_params: &NeighborParams,
         insert_params: &InsertParams,
@@ -67,7 +71,9 @@ impl<'a> GlobalAnnealing<'a> {
             deadline,
             worker_count,
             seed,
-            params.annealing.make(self.problem),
+            annealing
+                .with_override(&params.annealing)
+                .make(self.problem),
             delegate,
         )
         .run(self.timer)
@@ -98,6 +104,41 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
 
     fn neighbor_kinds(&self) -> &'static [&'static str] {
         NEIGHBOR_KINDS
+    }
+
+    #[cfg(feature = "trace-annealing")]
+    fn trace_state(&self, state: &Self::State) -> Option<AnnealingTraceState> {
+        Some(AnnealingTraceState {
+            score: state.score,
+            z1: state.z1,
+            state_hash: hash_schedule(&state.blocks),
+            bay_hash: hash_bay_assignment(&state.blocks),
+        })
+    }
+
+    #[cfg(feature = "trace-annealing")]
+    fn trace_diff(&self, before: &Self::State, after: &Self::State) -> AnnealingTraceDiff {
+        let before_by_id = scheduled_by_id(self.problem, &before.blocks);
+        let after_by_id = scheduled_by_id(self.problem, &after.blocks);
+        let mut diff = AnnealingTraceDiff::default();
+        for block_id in 0..self.problem.blocks.len() {
+            let (Some(before), Some(after)) = (before_by_id[block_id], after_by_id[block_id])
+            else {
+                continue;
+            };
+            let bay_changed = before.bay_id != after.bay_id;
+            let orientation_changed = before.orient_idx != after.orient_idx;
+            let position_changed = before.x != after.x || before.y != after.y;
+            let time_changed =
+                before.entry_time != after.entry_time || before.exit_time != after.exit_time;
+            diff.bay_changes += usize::from(bay_changed);
+            diff.orientation_changes += usize::from(orientation_changed);
+            diff.position_changes += usize::from(position_changed);
+            diff.time_changes += usize::from(time_changed);
+            diff.changed_blocks +=
+                usize::from(bay_changed || orientation_changed || position_changed || time_changed);
+        }
+        diff
     }
 
     fn is_finished(&self, _domain: usize, _state: &Self::State) -> bool {
@@ -174,6 +215,21 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
     fn finish(&self, mut states: Vec<Self::State>) -> Self::Output {
         states.pop().unwrap()
     }
+}
+
+#[cfg(feature = "trace-annealing")]
+fn hash_bay_assignment(schedule: &[ScheduledBlock]) -> u64 {
+    let mut assignments: Vec<_> = schedule
+        .iter()
+        .map(|block| (block.block_id, block.bay_id))
+        .collect();
+    assignments.sort_unstable();
+    let mut hash = mix_hash(1469598103934665603, assignments.len() as u64);
+    for (block_id, bay_id) in assignments {
+        hash = mix_hash(hash, block_id as u64);
+        hash = mix_hash(hash, bay_id as u64);
+    }
+    hash
 }
 
 fn hash_schedule(schedule: &[ScheduledBlock]) -> u64 {

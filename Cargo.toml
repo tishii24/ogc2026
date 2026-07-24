@@ -5,6 +5,7 @@ edition = "2024"
 
 [features]
 profile-insert = []
+trace-annealing = []
 
 [dependencies]
 geo = "0.30"

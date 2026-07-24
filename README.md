@@ -80,10 +80,15 @@ zipinfo "$VERSION.zip"
 ## 焼きなまし過程の可視化
 
 ```bash
-PROB=prob_38
-INPUT_JSON=train/$PROB.json
-OUT_DIR=log/vis/$PROB
-cargo run --release -- $INPUT_JSON 90 --params params/default.yaml --visualize $OUT_DIR
+PROB=prob_6
+OGC_ANNEALING_TRACE_DIR=log/trace
 
-python3 tools/anneal_visualizer.py $INPUT_JSON $OUT_DIR --worker-id 0
+cargo run --release \
+  --features trace-annealing \
+  --bin ogc2026 \
+  -- train/$PROB.json 60 --params params/default.yaml
+
+python tools/plot_annealing_trace.py \
+  log/trace \
+  --output log/trace.html
 ```

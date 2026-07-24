@@ -42,6 +42,7 @@ fn run() -> Result<(), String> {
         &problem,
         &pre,
         &params.preoptimize,
+        &params.annealing,
         &params.global_neighbor,
         args.time_limit,
         params.runtime.worker_count,

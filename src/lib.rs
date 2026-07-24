@@ -17,6 +17,8 @@ pub mod precompute;
 pub mod preoptimize;
 pub mod solver;
 pub mod solver_util;
+#[cfg(feature = "trace-annealing")]
+pub(crate) mod tracing;
 pub mod util;
 
 use std::collections::BTreeMap;

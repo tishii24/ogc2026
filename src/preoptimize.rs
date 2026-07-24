@@ -2,7 +2,7 @@ use crate::{
     Bay, Orientation, Problem,
     annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
     log,
-    params::{NeighborParams, PreoptimizeSolverParams},
+    params::{AnnealingParamsConfig, NeighborParams, PreoptimizeSolverParams},
     precompute::orientation_union,
     solver::{PreoptimizeState, PreoptimizedBlock, sort_default_reconstruct_order},
     util::{
@@ -940,6 +940,7 @@ pub fn preoptimize(
     problem: &Problem,
     pre: &PreoptimizePrecompute,
     params: &PreoptimizeSolverParams,
+    annealing: &AnnealingParamsConfig,
     reconstruct_order_params: &NeighborParams,
     time_limit: f64,
     max_worker_count: usize,
@@ -973,7 +974,7 @@ pub fn preoptimize(
         max_time: pre.search_horizon,
     };
     let initial = build_initial_state(problem, &mut context)?;
-    let annealing_params = params.annealing.make(problem);
+    let annealing_params = annealing.with_override(&params.annealing).make(problem);
     let timer = Timer::start(1.0);
     let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
     let delegate = PreoptimizeAnnealingDelegate {

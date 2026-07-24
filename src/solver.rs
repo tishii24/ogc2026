@@ -134,6 +134,7 @@ pub fn solve(
         problem,
         &preoptimize_pre,
         &params.preoptimize,
+        &params.annealing,
         &params.global_neighbor,
         preoptimize_time_limit,
         params.runtime.worker_count,
@@ -186,6 +187,7 @@ pub fn solve(
     let initial = global.run(
         initial,
         constrained_deadline,
+        &params.annealing,
         &params.global_optimize,
         &params.global_neighbor,
         &params.insert,
@@ -202,6 +204,7 @@ pub fn solve(
     let best = global.run(
         initial,
         deadline,
+        &params.annealing,
         &params.global_optimize,
         &params.global_neighbor,
         &params.insert,
