@@ -401,7 +401,8 @@ fn try_large_reconstruct<R: Random>(
     }
     let mut current_by_id = constraints.map(|_| scheduled_by_id(problem, &cur));
 
-    for block_id in order {
+    let total_insert_count = order.len();
+    for (insert_index, block_id) in order.into_iter().enumerate() {
         if fixed_score13 > accept_threshold + 1e-9 {
             return None;
         }
@@ -416,11 +417,12 @@ fn try_large_reconstruct<R: Random>(
         } else {
             (i64::MIN, i64::MAX)
         };
-        let k = schedule.len() - cur.len();
-        let y_sample_ratio = insert_params
-            .y_sample_ratio_base
-            .powi((k - 1) as i32)
-            .clamp(insert_params.y_sample_ratio_min, 1.0);
+        let random_strength = if total_insert_count <= 1 {
+            0.0
+        } else {
+            ((total_insert_count - insert_index - 1) as f64 / (total_insert_count - 1) as f64)
+                .powf(insert_params.reconstruct_random_progress_power)
+        };
         let scheduled = insert_greedy(
             problem,
             pre,
@@ -430,7 +432,7 @@ fn try_large_reconstruct<R: Random>(
             &cur,
             &loads,
             insert_params,
-            y_sample_ratio,
+            Some(random_strength),
             &pre.bay_order_by_pref[old.block_id],
             rng,
         )?;
@@ -788,7 +790,7 @@ fn try_move_neighbor<R: Random>(
         &base,
         &loads,
         insert_params,
-        1.0,
+        None,
         bay_order,
         rng,
     )?;
@@ -1336,7 +1338,7 @@ fn build_bay_schedule<R: Random>(
             &schedule,
             &loads,
             params,
-            1.0,
+            None,
             &bay_order,
             rng,
         )?;
