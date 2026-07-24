@@ -27,14 +27,14 @@ insert:
 
 annealing:
   preoptimize:
-    exchange_interval: 2000
+    exchange_interval: 1000000
     positive_tardiness:
       temperature_initial_score_per_block_scale: [1.0, 0.01]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
     zero_tardiness:
-      temperature_w3_scale: [100.0, 1.0]
+      temperature_w3_scale: [50.0, 1.0]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
@@ -43,12 +43,12 @@ annealing:
   optimize:
     exchange_interval: 2000
     positive_tardiness:
-      temperature_initial_score_per_block_scale: [0.1, 0.01]
+      temperature_w1_scale: [1.0, 0.1]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
     zero_tardiness:
-      temperature_w3_scale: [100.0, 1.0]
+      temperature_w3_scale: [50.0, 1.0]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
@@ -77,18 +77,6 @@ preoptimize:
     bad_block_select_probability: 0.75
     max_relocate_attempts: 8
     max_time_shift: 10
-  annealing:
-    positive_tardiness:
-      temperature_w1_scale: null
-      temperature_w3_scale: null
-      temperature_initial_score_per_block_scale: [1.0, 0.01]
-    zero_tardiness:
-      temperature_w1_scale: null
-      temperature_w3_scale: [100.0, 1.0]
-      temperature_initial_score_per_block_scale: null
-
-global_optimize:
-  annealing: {}
 
 optimize_neighbor:
   default:
