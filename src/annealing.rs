@@ -90,8 +90,12 @@ impl TemperatureSchedule {
     }
 }
 
+// fn temperature(range: (f64, f64), progress: f64) -> f64 {
+//     range.0 + (range.1 - range.0) * progress
+// }
+
 fn temperature(range: (f64, f64), progress: f64) -> f64 {
-    range.0 + (range.1 - range.0) * progress
+    range.0 * (range.1 / range.0).powf(progress)
 }
 
 pub(crate) struct AnnealingWorkerContext {

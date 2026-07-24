@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use crate::{Problem, annealing::AnnealingParams, solver_util::NeighborKind};
 
@@ -171,23 +171,41 @@ pub struct WeightScaleOverride {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnnealingRegimeConfig {
-    pub temperature_w1_scale: (f64, f64),
-    pub temperature_w3_scale: (f64, f64),
-    pub temperature_absolute: (f64, f64),
+    pub temperature_w1_scale: Option<(f64, f64)>,
+    pub temperature_w3_scale: Option<(f64, f64)>,
+    pub temperature_initial_score_per_block_scale: Option<(f64, f64)>,
     pub exchange_threshold: WeightScaleConfig,
 }
 
 impl AnnealingRegimeConfig {
-    fn make(&self, problem: &Problem) -> crate::annealing::AnnealingRegimeParams {
+    fn make(
+        &self,
+        problem: &Problem,
+        initial_score: f64,
+    ) -> crate::annealing::AnnealingRegimeParams {
+        let initial_score_per_block = initial_score / problem.blocks.len() as f64;
+        let candidates = [
+            self.temperature_w1_scale
+                .map(|scale| [scale.0 * problem.weights.w1, scale.1 * problem.weights.w1]),
+            self.temperature_w3_scale
+                .map(|scale| [scale.0 * problem.weights.w3, scale.1 * problem.weights.w3]),
+            self.temperature_initial_score_per_block_scale.map(|scale| {
+                [
+                    scale.0 * initial_score_per_block,
+                    scale.1 * initial_score_per_block,
+                ]
+            }),
+        ];
+        let temperature = [0, 1].map(|index| {
+            candidates
+                .iter()
+                .flatten()
+                .map(|range| range[index])
+                .reduce(f64::min)
+                .unwrap()
+        });
         crate::annealing::AnnealingRegimeParams {
-            temperature: (
-                (self.temperature_w1_scale.0 * problem.weights.w1)
-                    .min(self.temperature_w3_scale.0 * problem.weights.w3)
-                    .min(self.temperature_absolute.0),
-                (self.temperature_w1_scale.1 * problem.weights.w1)
-                    .min(self.temperature_w3_scale.1 * problem.weights.w3)
-                    .min(self.temperature_absolute.1),
-            ),
+            temperature: (temperature[0], temperature[1]),
             exchange_threshold: self.exchange_threshold.make(problem),
         }
     }
@@ -200,9 +218,9 @@ impl AnnealingRegimeConfig {
             temperature_w3_scale: value
                 .temperature_w3_scale
                 .unwrap_or(self.temperature_w3_scale),
-            temperature_absolute: value
-                .temperature_absolute
-                .unwrap_or(self.temperature_absolute),
+            temperature_initial_score_per_block_scale: value
+                .temperature_initial_score_per_block_scale
+                .unwrap_or(self.temperature_initial_score_per_block_scale),
             exchange_threshold: self
                 .exchange_threshold
                 .with_override(&value.exchange_threshold),
@@ -210,12 +228,23 @@ impl AnnealingRegimeConfig {
     }
 }
 
+fn deserialize_nullable_override<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Some(Option::<T>::deserialize(deserializer)?))
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AnnealingRegimeOverride {
-    pub temperature_w1_scale: Option<(f64, f64)>,
-    pub temperature_w3_scale: Option<(f64, f64)>,
-    pub temperature_absolute: Option<(f64, f64)>,
+    #[serde(deserialize_with = "deserialize_nullable_override")]
+    pub temperature_w1_scale: Option<Option<(f64, f64)>>,
+    #[serde(deserialize_with = "deserialize_nullable_override")]
+    pub temperature_w3_scale: Option<Option<(f64, f64)>>,
+    #[serde(deserialize_with = "deserialize_nullable_override")]
+    pub temperature_initial_score_per_block_scale: Option<Option<(f64, f64)>>,
     pub exchange_threshold: WeightScaleOverride,
 }
 
@@ -230,11 +259,11 @@ pub struct AnnealingParamsConfig {
 }
 
 impl AnnealingParamsConfig {
-    pub(crate) fn make(&self, problem: &Problem) -> AnnealingParams {
+    pub(crate) fn make(&self, problem: &Problem, initial_score: f64) -> AnnealingParams {
         AnnealingParams {
             exchange_interval: self.exchange_interval,
-            positive_tardiness: self.positive_tardiness.make(problem),
-            zero_tardiness: self.zero_tardiness.make(problem),
+            positive_tardiness: self.positive_tardiness.make(problem, initial_score),
+            zero_tardiness: self.zero_tardiness.make(problem, initial_score),
             worker_temperature_scale: self.worker_temperature_scale,
             tabu_capacity: self.tabu_capacity,
         }

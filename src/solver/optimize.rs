@@ -58,6 +58,9 @@ impl<'a> GlobalAnnealing<'a> {
         max_worker_count: usize,
     ) -> OptimizeState {
         let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
+        let annealing_params = annealing
+            .with_override(&params.annealing)
+            .make(self.problem, initial.annealing_score());
         let delegate = GlobalAnnealingDelegate {
             problem: self.problem,
             pre: self.pre,
@@ -67,16 +70,7 @@ impl<'a> GlobalAnnealing<'a> {
             params: neighbor_params,
             insert_params,
         };
-        Annealer::new(
-            deadline,
-            worker_count,
-            seed,
-            annealing
-                .with_override(&params.annealing)
-                .make(self.problem),
-            delegate,
-        )
-        .run(self.timer)
+        Annealer::new(deadline, worker_count, seed, annealing_params, delegate).run(self.timer)
     }
 }
 
