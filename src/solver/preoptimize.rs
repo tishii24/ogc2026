@@ -1,13 +1,12 @@
 use std::sync::Mutex;
 
 use crate::{
-    Bay, Orientation, Problem,
-    annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
-    log,
-    params::{AnnealingParamsConfig, NeighborParams, PreoptimizeSolverParams},
-    precompute::orientation_union,
+    Bay, Orientation, Problem, log,
     solver::{PreoptimizeState, PreoptimizedBlock, sort_default_reconstruct_order},
-    util::{
+    utils::annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
+    utils::params::{AnnealingParamsConfig, NeighborParams, PreoptimizeSolverParams},
+    utils::precompute::orientation_union,
+    utils::util::{
         rand::{RandPcg64Mcg, Random},
         time::Timer,
     },

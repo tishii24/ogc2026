@@ -1,4 +1,4 @@
-use crate::{collision::CollisionPrecompute, params::PrecomputeParams, *};
+use crate::{utils::collision::CollisionPrecompute, utils::params::PrecomputeParams, *};
 use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use std::cmp::Reverse;
 

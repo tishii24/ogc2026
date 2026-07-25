@@ -4,7 +4,7 @@ use std::io::{self, Read};
 use std::path::Path;
 use std::process;
 
-use ogc2026::{Problem, params::SolverParams, solver, util::time::Timer};
+use ogc2026::{Problem, solver, utils::params::SolverParams, utils::util::time::Timer};
 
 #[derive(Debug)]
 struct Args {

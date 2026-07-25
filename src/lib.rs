@@ -3,23 +3,14 @@ pub const ENABLE_LOG: bool = true;
 #[macro_export]
 macro_rules! log {
     ($($arg:tt)*) => {{
-        if $crate::ENABLE_LOG {
+        if const { $crate::ENABLE_LOG } {
             eprintln!($($arg)*);
         }
     }};
 }
 
-pub mod annealing;
-pub mod collision;
-pub mod insert;
-pub mod params;
-pub mod precompute;
-pub mod preoptimize;
 pub mod solver;
-pub mod solver_util;
-#[cfg(feature = "trace-annealing")]
-pub(crate) mod tracing;
-pub mod util;
+pub mod utils;
 
 use std::collections::BTreeMap;
 

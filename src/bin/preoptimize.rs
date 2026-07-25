@@ -7,8 +7,8 @@ use std::time::Instant;
 
 use ogc2026::{
     Problem, log,
-    params::SolverParams,
-    preoptimize::{PreoptimizePrecompute, preoptimize},
+    solver::preoptimize::{PreoptimizePrecompute, preoptimize},
+    utils::params::SolverParams,
 };
 
 const DEFAULT_TIMELIMIT_SECONDS: f64 = 60.0;

@@ -8,14 +8,14 @@ use rayon::prelude::*;
 
 use crate::{
     log,
-    util::{
+    utils::util::{
         rand::{RandPcg64Mcg, Random},
         time::Timer,
     },
 };
 
 #[cfg(feature = "trace-annealing")]
-use crate::tracing::{
+use crate::utils::tracing::{
     AnnealingTraceDiff, AnnealingTraceEvent, AnnealingTraceState, AnnealingTraceWriter,
 };
 

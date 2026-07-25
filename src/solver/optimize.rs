@@ -1,12 +1,12 @@
 use super::*;
 use crate::{
-    annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
-    params::{AnnealingParamsConfig, InsertParams},
-    solver_util::sample_neighbor,
+    solver::solver_util::sample_neighbor,
+    utils::annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
+    utils::params::{AnnealingParamsConfig, InsertParams},
 };
 
 #[cfg(feature = "trace-annealing")]
-use crate::tracing::{AnnealingTraceDiff, AnnealingTraceState};
+use crate::utils::tracing::{AnnealingTraceDiff, AnnealingTraceState};
 
 impl AnnealingState for OptimizeState {
     fn annealing_score(&self) -> f64 {

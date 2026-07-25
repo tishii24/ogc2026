@@ -2,7 +2,13 @@ use std::{fs, path::Path};
 
 use serde::Deserialize;
 
-use crate::{Problem, annealing::AnnealingParams, solver_util::NeighborKind};
+use crate::{
+    Problem,
+    solver::solver_util::NeighborKind,
+    utils::annealing::{
+        AnnealingParams, AnnealingRegimeParams, ReheatParams, TemperatureScheduleKind,
+    },
+};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -167,11 +173,7 @@ pub struct AnnealingRegimeConfig {
 }
 
 impl AnnealingRegimeConfig {
-    fn make(
-        &self,
-        problem: &Problem,
-        initial_score: f64,
-    ) -> crate::annealing::AnnealingRegimeParams {
+    fn make(&self, problem: &Problem, initial_score: f64) -> AnnealingRegimeParams {
         let initial_score_per_block = initial_score / problem.blocks.len() as f64;
         let candidates = [
             self.temperature_w1_scale
@@ -194,13 +196,11 @@ impl AnnealingRegimeConfig {
                 .unwrap()
         });
         let temperature_schedule = match self.schedule_type {
-            TemperatureScheduleConfig::Linear => crate::annealing::TemperatureScheduleKind::Linear,
-            TemperatureScheduleConfig::Cosine => crate::annealing::TemperatureScheduleKind::Cosine,
-            TemperatureScheduleConfig::Geometric => {
-                crate::annealing::TemperatureScheduleKind::Geometric
-            }
+            TemperatureScheduleConfig::Linear => TemperatureScheduleKind::Linear,
+            TemperatureScheduleConfig::Cosine => TemperatureScheduleKind::Cosine,
+            TemperatureScheduleConfig::Geometric => TemperatureScheduleKind::Geometric,
         };
-        crate::annealing::AnnealingRegimeParams {
+        AnnealingRegimeParams {
             temperature_schedule,
             temperature: (temperature[0], temperature[1]),
             reheat_local_best_score_per_block_scale: self.reheat_local_best_score_per_block_scale,
@@ -242,13 +242,10 @@ impl AnnealingParamsConfig {
             zero_tardiness: self.zero_tardiness.make(problem, initial_score),
             worker_temperature_scale: self.worker_temperature_scale,
             tabu_capacity: self.tabu_capacity,
-            reheat: self
-                .reheat
-                .as_ref()
-                .map(|reheat| crate::annealing::ReheatParams {
-                    stagnation_iterations: reheat.stagnation_iterations,
-                    duration_iterations: reheat.duration_iterations,
-                }),
+            reheat: self.reheat.as_ref().map(|reheat| ReheatParams {
+                stagnation_iterations: reheat.stagnation_iterations,
+                duration_iterations: reheat.duration_iterations,
+            }),
             block_count: problem.blocks.len(),
         }
     }
