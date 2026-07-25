@@ -1,10 +1,10 @@
 todo:
 - refactor
   - neighborの選択
-- reheat (cos-schedule)
-  - globalになったら温度をあげる
 - constraintをtardiness=0になったら取る
   - constraint-time-ratio=0を試す
+- reheat (cos-schedule)
+  - globalになったら温度をあげる
 - seedの選び方を増やす
 - 高速化
 - safety

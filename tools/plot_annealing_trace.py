@@ -21,7 +21,12 @@ COLORS = [
     "#4f46e5",
     "#be123c",
 ]
-SIGNIFICANT_EVENTS = {"exchange", "local_best", "shared_best"}
+SIGNIFICANT_EVENTS = {
+    "exchange",
+    "local_best",
+    "shared_best",
+    "temperature_reheat",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,10 +56,17 @@ def downsample(rows: list[dict[str, str]], limit: int = 4000) -> list[dict[str, 
     if len(rows) <= limit:
         return rows
     step = len(rows) / limit
-    selected = [rows[min(int(index * step), len(rows) - 1)] for index in range(limit)]
-    if selected[-1] is not rows[-1]:
-        selected[-1] = rows[-1]
-    return selected
+    indices = {
+        min(int(index * step), len(rows) - 1)
+        for index in range(limit)
+    }
+    indices.update(
+        index
+        for index, row in enumerate(rows)
+        if row["event"] in SIGNIFICANT_EVENTS
+    )
+    indices.add(len(rows) - 1)
+    return [rows[index] for index in sorted(indices)]
 
 
 def make_plot(
@@ -133,6 +145,7 @@ def make_plot(
                 continue
             tooltip = (
                 f'{name} event={row["event"]} t={x:.3f} iter={row["iteration"]} '
+                f'temperature={row["temperature"]} '
                 f'before={row["before_score"]} after={row["after_score"]} '
                 f'z1={row["after_z1"]} changed={row["changed_blocks"]} bay={row["bay_changes"]}'
             )
@@ -149,7 +162,15 @@ def make_plot(
 
 
 def render_summary(traces: dict[str, list[dict[str, str]]]) -> str:
-    headers = ["trace", "events", "accepted", "exchange", "local_best", "shared_best"]
+    headers = [
+        "trace",
+        "events",
+        "accepted",
+        "exchange",
+        "reheat",
+        "local_best",
+        "shared_best",
+    ]
     rows = []
     for name, events in traces.items():
         counts = Counter(row["event"] for row in events)
@@ -159,6 +180,7 @@ def render_summary(traces: dict[str, list[dict[str, str]]]) -> str:
                 str(len(events)),
                 str(counts["accepted"]),
                 str(counts["exchange"]),
+                str(counts["temperature_reheat"]),
                 str(counts["local_best"]),
                 str(counts["shared_best"]),
             ]
@@ -172,33 +194,35 @@ def render_summary(traces: dict[str, list[dict[str, str]]]) -> str:
 
 
 def render_html(traces: dict[str, list[dict[str, str]]]) -> str:
+    score_events = {
+        "start",
+        "accepted",
+        "exchange",
+        "finish",
+        "local_best",
+        "shared_best",
+        "temperature_reheat",
+    }
     score_plot = make_plot(
         traces,
         "Current score",
         lambda row: parse_float(row["after_score"]),
         "score",
-        {"start", "accepted", "exchange", "finish", "local_best", "shared_best"},
+        score_events,
     )
-    z1_plot = make_plot(
+    score_log_plot = make_plot(
         traces,
-        "Tardiness (log10(z1 + 1))",
-        lambda row: math.log10(float(row["after_z1"]) + 1.0),
-        "log10(z1 + 1)",
-        {"start", "accepted", "exchange", "finish"},
+        "Current score (log10(score + 1))",
+        lambda row: math.log10(float(row["after_score"]) + 1.0),
+        "log10(score + 1)",
+        score_events,
     )
-    changed_plot = make_plot(
+    temperature_plot = make_plot(
         traces,
-        "Changed blocks per accepted transition",
-        lambda row: parse_float(row["changed_blocks"]),
-        "changed blocks",
-        {"accepted"},
-    )
-    bay_plot = make_plot(
-        traces,
-        "Bay changes per accepted transition",
-        lambda row: parse_float(row["bay_changes"]),
-        "bay changes",
-        {"accepted"},
+        "Temperature",
+        lambda row: parse_float(row["temperature"]),
+        "temperature",
+        {"accepted", "local_best", "shared_best", "temperature_reheat"},
     )
     return f"""<!doctype html>
 <html lang="en">
@@ -224,9 +248,8 @@ th:first-child, td:first-child {{ text-align: left; }}
 <h1>Annealing trace</h1>
 {render_summary(traces)}
 {score_plot}
-{z1_plot}
-{changed_plot}
-{bay_plot}
+{score_log_plot}
+{temperature_plot}
 </body>
 </html>
 """
