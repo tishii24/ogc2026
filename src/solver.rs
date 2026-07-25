@@ -210,11 +210,6 @@ pub fn solve(
         params.runtime.solver_seed.wrapping_add(1 << 32),
         params.runtime.worker_count,
     );
-    #[cfg(feature = "profile-insert")]
-    {
-        crate::insert::print_insert_profile();
-        crate::collision::print_collision_profile();
-    }
     Ok(schedule_to_solution(&best.blocks))
 }
 

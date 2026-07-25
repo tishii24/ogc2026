@@ -146,9 +146,19 @@ impl WeightScaleConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemperatureScheduleConfig {
+    Linear,
+    Cosine,
+    Geometric,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnnealingRegimeConfig {
+    #[serde(rename = "type")]
+    pub schedule_type: TemperatureScheduleConfig,
     pub temperature_w1_scale: Option<(f64, f64)>,
     pub temperature_w3_scale: Option<(f64, f64)>,
     pub temperature_initial_score_per_block_scale: Option<(f64, f64)>,
@@ -183,7 +193,15 @@ impl AnnealingRegimeConfig {
                 .reduce(f64::min)
                 .unwrap()
         });
+        let temperature_schedule = match self.schedule_type {
+            TemperatureScheduleConfig::Linear => crate::annealing::TemperatureScheduleKind::Linear,
+            TemperatureScheduleConfig::Cosine => crate::annealing::TemperatureScheduleKind::Cosine,
+            TemperatureScheduleConfig::Geometric => {
+                crate::annealing::TemperatureScheduleKind::Geometric
+            }
+        };
         crate::annealing::AnnealingRegimeParams {
+            temperature_schedule,
             temperature: (temperature[0], temperature[1]),
             reheat_local_best_score_per_block_scale: self.reheat_local_best_score_per_block_scale,
             exchange_threshold: self.exchange_threshold.make(problem),

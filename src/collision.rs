@@ -1,39 +1,8 @@
 use crate::*;
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};
-#[cfg(feature = "profile-insert")]
-use std::{sync::atomic::AtomicU64, time::Instant};
 
 const AREA_EPS: f64 = 1e-3;
-
-#[cfg(feature = "profile-insert")]
-static CACHE_HITS: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "profile-insert")]
-static BUILD_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "profile-insert")]
-static PUBLISH_SUCCESSES: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "profile-insert")]
-static PUBLISH_CONFLICTS: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "profile-insert")]
-static GRID_BUILD_NANOS: AtomicU64 = AtomicU64::new(0);
-
-#[cfg(feature = "profile-insert")]
-pub(crate) fn print_collision_profile() {
-    let cache_hits = CACHE_HITS.load(Ordering::Relaxed);
-    let build_attempts = BUILD_ATTEMPTS.load(Ordering::Relaxed);
-    let publish_successes = PUBLISH_SUCCESSES.load(Ordering::Relaxed);
-    let publish_conflicts = PUBLISH_CONFLICTS.load(Ordering::Relaxed);
-    let build_seconds = GRID_BUILD_NANOS.load(Ordering::Relaxed) as f64 * 1e-9;
-    let average_ms = if build_attempts == 0 {
-        0.0
-    } else {
-        build_seconds * 1000.0 / build_attempts as f64
-    };
-    eprintln!(
-        "[collision-profile] cache_hits={} build_attempts={} publish_successes={} publish_conflicts={} grid_build={:.6}s avg_build={:.3}ms",
-        cache_hits, build_attempts, publish_successes, publish_conflicts, build_seconds, average_ms,
-    );
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BlockOrient {
@@ -171,21 +140,13 @@ impl CollisionPrecompute {
         let cell = &self.block_pairs[pair_idx].orient_pairs[key];
         let ptr = cell.ptr.load(Ordering::Acquire);
         if !ptr.is_null() {
-            #[cfg(feature = "profile-insert")]
-            CACHE_HITS.fetch_add(1, Ordering::Relaxed);
             return unsafe { &*ptr };
         }
 
-        #[cfg(feature = "profile-insert")]
-        BUILD_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
-        #[cfg(feature = "profile-insert")]
-        let build_start = Instant::now();
         let moving_geom = &self.geoms[moving.block_id][moving.orient_idx];
         let fixed_geom = &self.geoms[fixed.block_id][fixed.orient_idx];
         let (forward_crane, reverse_crane) =
             build_crane_grids_both_directions(moving_geom, fixed_geom);
-        #[cfg(feature = "profile-insert")]
-        GRID_BUILD_NANOS.fetch_add(build_start.elapsed().as_nanos() as u64, Ordering::Relaxed);
 
         let reverse_pair_idx = self.block_pair_index[fixed.block_id * self.n + moving.block_id]
             .expect("reverse collision block pair should be precomputed");
@@ -232,14 +193,8 @@ impl OrientPairCache {
             .ptr
             .compare_exchange(ptr::null_mut(), raw, Ordering::Release, Ordering::Acquire)
         {
-            Ok(_) => {
-                #[cfg(feature = "profile-insert")]
-                PUBLISH_SUCCESSES.fetch_add(1, Ordering::Relaxed);
-                raw
-            }
+            Ok(_) => raw,
             Err(existing) => {
-                #[cfg(feature = "profile-insert")]
-                PUBLISH_CONFLICTS.fetch_add(1, Ordering::Relaxed);
                 unsafe {
                     drop(Box::from_raw(raw));
                 }

@@ -1,8 +1,6 @@
 todo:
 - refactor
   - neighborの選択
-- constraintをtardiness=0になったら取る
-  - constraint-time-ratio=0を試す
 - 温度の調整
   - schedule: (cosine, linear)
 - seedの選び方を増やす

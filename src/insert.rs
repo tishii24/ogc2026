@@ -7,156 +7,7 @@ use crate::{
     util::rand::Random,
 };
 
-#[cfg(feature = "profile-insert")]
-use std::{
-    sync::{Mutex, OnceLock},
-    time::{Duration, Instant},
-};
-
 type Interval = (i64, i64);
-
-#[cfg(feature = "profile-insert")]
-#[derive(Default)]
-struct InsertProfile {
-    calls: u64,
-    total: Duration,
-    bay_setup: Duration,
-    pair_cache: Duration,
-    y_prepare: Duration,
-    event_build: Duration,
-    event_sort: Duration,
-    event_apply: Duration,
-    forbidden_build: Duration,
-    feasible_time: Duration,
-    candidate_eval: Duration,
-    bays: u64,
-    orientations: u64,
-    ys: u64,
-    x_positions: u64,
-    events: u64,
-    event_x_old_groups: u64,
-    active_old_visits: u64,
-    forbidden_intervals: u64,
-    feasible_iterations: u64,
-    feasible_interval_visits: u64,
-    candidates: u64,
-    min_entry_candidates: u64,
-    ys_reaching_min_entry: u64,
-    x_positions_after_min_entry: u64,
-    x_range_width_sum: u64,
-}
-
-#[cfg(feature = "profile-insert")]
-impl InsertProfile {
-    fn merge(&mut self, other: Self) {
-        self.calls += other.calls;
-        self.total += other.total;
-        self.bay_setup += other.bay_setup;
-        self.pair_cache += other.pair_cache;
-        self.y_prepare += other.y_prepare;
-        self.event_build += other.event_build;
-        self.event_sort += other.event_sort;
-        self.event_apply += other.event_apply;
-        self.forbidden_build += other.forbidden_build;
-        self.feasible_time += other.feasible_time;
-        self.candidate_eval += other.candidate_eval;
-        self.bays += other.bays;
-        self.orientations += other.orientations;
-        self.ys += other.ys;
-        self.x_positions += other.x_positions;
-        self.events += other.events;
-        self.event_x_old_groups += other.event_x_old_groups;
-        self.active_old_visits += other.active_old_visits;
-        self.forbidden_intervals += other.forbidden_intervals;
-        self.feasible_iterations += other.feasible_iterations;
-        self.feasible_interval_visits += other.feasible_interval_visits;
-        self.candidates += other.candidates;
-        self.min_entry_candidates += other.min_entry_candidates;
-        self.ys_reaching_min_entry += other.ys_reaching_min_entry;
-        self.x_positions_after_min_entry += other.x_positions_after_min_entry;
-        self.x_range_width_sum += other.x_range_width_sum;
-    }
-}
-
-#[cfg(feature = "profile-insert")]
-static INSERT_PROFILE: OnceLock<Mutex<InsertProfile>> = OnceLock::new();
-
-#[cfg(feature = "profile-insert")]
-fn finish_insert_profile(mut profile: InsertProfile, start: Instant) {
-    profile.total = start.elapsed();
-    INSERT_PROFILE
-        .get_or_init(|| Mutex::new(InsertProfile::default()))
-        .lock()
-        .unwrap()
-        .merge(profile);
-}
-
-#[cfg(feature = "profile-insert")]
-pub(crate) fn print_insert_profile() {
-    let Some(profile) = INSERT_PROFILE.get() else {
-        return;
-    };
-    let profile = profile.lock().unwrap();
-    if profile.calls == 0 {
-        return;
-    }
-
-    let total_seconds = profile.total.as_secs_f64();
-    eprintln!(
-        "[insert-profile] calls={} total={:.6}s avg={:.3}ms",
-        profile.calls,
-        total_seconds,
-        total_seconds * 1000.0 / profile.calls as f64,
-    );
-    let phases = [
-        ("bay_setup", profile.bay_setup),
-        ("pair_cache", profile.pair_cache),
-        ("y_prepare", profile.y_prepare),
-        ("event_build", profile.event_build),
-        ("event_sort", profile.event_sort),
-        ("event_apply", profile.event_apply),
-        ("forbidden", profile.forbidden_build),
-        ("feasible_time", profile.feasible_time),
-        ("candidate", profile.candidate_eval),
-    ];
-    let measured: Duration = phases.iter().map(|(_, duration)| *duration).sum();
-    for (name, duration) in phases {
-        let seconds = duration.as_secs_f64();
-        eprintln!(
-            "[insert-profile] {name:<14} {seconds:.6}s {:5.1}%",
-            seconds / total_seconds * 100.0,
-        );
-    }
-    let other = profile.total.saturating_sub(measured).as_secs_f64();
-    eprintln!(
-        "[insert-profile] {:<14} {:.6}s {:5.1}%",
-        "other",
-        other,
-        other / total_seconds * 100.0,
-    );
-    eprintln!(
-        "[insert-profile] counts bays={} orientations={} y={} x={} events={} event_x_old_groups={} active_old_visits={} forbidden_intervals={} feasible_iterations={} feasible_interval_visits={} candidates={} x_event_size={}",
-        profile.bays,
-        profile.orientations,
-        profile.ys,
-        profile.x_positions,
-        profile.events,
-        profile.event_x_old_groups,
-        profile.active_old_visits,
-        profile.forbidden_intervals,
-        profile.feasible_iterations,
-        profile.feasible_interval_visits,
-        profile.candidates,
-        std::mem::size_of::<XEvent>(),
-    );
-    eprintln!(
-        "[insert-profile] opportunities min_entry_candidates={} ys_reaching_min_entry={} x_positions_after_min_entry={} x_range_width_sum={}",
-        profile.min_entry_candidates,
-        profile.ys_reaching_min_entry,
-        profile.x_positions_after_min_entry,
-        profile.x_range_width_sum,
-    );
-}
 
 struct InsertCandidate {
     scheduled: ScheduledBlock,
@@ -277,26 +128,8 @@ impl ActiveIntervalSlots {
         }
     }
 
-    #[cfg(not(feature = "profile-insert"))]
     fn first_feasible_time(&self, intervals: &[Interval], min_t: i64, max_t: i64) -> Option<i64> {
         self.first_feasible_time_impl(intervals, min_t, max_t, || {})
-    }
-
-    #[cfg(feature = "profile-insert")]
-    fn first_feasible_time_profiled(
-        &self,
-        intervals: &[Interval],
-        min_t: i64,
-        max_t: i64,
-        iterations: &mut u64,
-        interval_visits: &mut u64,
-        forbidden_intervals: &mut u64,
-    ) -> Option<i64> {
-        *iterations += 1;
-        self.first_feasible_time_impl(intervals, min_t, max_t, || {
-            *interval_visits += 1;
-            *forbidden_intervals += 1;
-        })
     }
 
     fn first_feasible_time_impl(
@@ -358,8 +191,6 @@ pub(crate) struct PlacementXScanner<'a> {
     touched_old_ids: Vec<usize>,
     crane_pair_cache: Vec<Option<(&'a OrientPairCollision, &'a OrientPairCollision)>>,
     prepared_orient_idx: Option<usize>,
-    #[cfg(feature = "profile-insert")]
-    profile: InsertProfile,
 }
 
 impl<'a> PlacementXScanner<'a> {
@@ -410,8 +241,6 @@ impl<'a> PlacementXScanner<'a> {
             touched_old_ids: Vec::with_capacity(old_count),
             crane_pair_cache: Vec::with_capacity(old_count),
             prepared_orient_idx: None,
-            #[cfg(feature = "profile-insert")]
-            profile: InsertProfile::default(),
         })
     }
 
@@ -433,8 +262,6 @@ impl<'a> PlacementXScanner<'a> {
         }
 
         if self.prepared_orient_idx != Some(orient_idx) {
-            #[cfg(feature = "profile-insert")]
-            let pair_cache_start = Instant::now();
             let new_orient = BlockOrient {
                 block_id: self.block_id,
                 orient_idx,
@@ -459,23 +286,7 @@ impl<'a> PlacementXScanner<'a> {
                         }),
                 );
             self.prepared_orient_idx = Some(orient_idx);
-            #[cfg(feature = "profile-insert")]
-            {
-                self.profile.pair_cache += pair_cache_start.elapsed();
-            }
         }
-
-        #[cfg(feature = "profile-insert")]
-        {
-            self.profile.ys += 1;
-            self.profile.x_range_width_sum += (range.max_x - range.min_x + 1) as u64;
-        }
-        #[cfg(feature = "profile-insert")]
-        let mut y_x_positions = 0u64;
-        #[cfg(feature = "profile-insert")]
-        let mut first_min_entry_position = None;
-        #[cfg(feature = "profile-insert")]
-        let event_build_start = Instant::now();
 
         self.events.clear();
         self.states.fill(HitState::default());
@@ -510,13 +321,6 @@ impl<'a> PlacementXScanner<'a> {
                 );
             }
         }
-        #[cfg(feature = "profile-insert")]
-        {
-            self.profile.event_build += event_build_start.elapsed();
-            self.profile.events += self.events.len() as u64;
-        }
-        #[cfg(feature = "profile-insert")]
-        let event_sort_start = Instant::now();
         counting_sort_x_events(
             &mut self.events,
             &mut self.event_sort_scratch,
@@ -524,23 +328,12 @@ impl<'a> PlacementXScanner<'a> {
             range.min_x,
             range.max_x,
         );
-        #[cfg(feature = "profile-insert")]
-        {
-            self.profile.event_sort += event_sort_start.elapsed();
-        }
 
         let mut valid_y = false;
         let mut event_pos = 0;
         let mut x_offset = 0u32;
         let mut x = range.min_x;
         loop {
-            #[cfg(feature = "profile-insert")]
-            {
-                self.profile.x_positions += 1;
-                y_x_positions += 1;
-            }
-            #[cfg(feature = "profile-insert")]
-            let event_apply_start = Instant::now();
             self.event_group_generation += 1;
             self.touched_old_ids.clear();
             while event_pos < self.events.len() && self.events[event_pos].x_offset == x_offset {
@@ -553,10 +346,6 @@ impl<'a> PlacementXScanner<'a> {
                         self.forbidden_slots.states[old_idx][hit_state_index(self.states[old_idx])],
                         false,
                     );
-                    #[cfg(feature = "profile-insert")]
-                    {
-                        self.profile.event_x_old_groups += 1;
-                    }
                 }
                 apply_x_event(event, &mut self.states);
                 event_pos += 1;
@@ -567,45 +356,13 @@ impl<'a> PlacementXScanner<'a> {
                     true,
                 );
             }
-            #[cfg(feature = "profile-insert")]
-            {
-                self.profile.event_apply += event_apply_start.elapsed();
-            }
-
-            #[cfg(feature = "profile-insert")]
-            let feasible_start = Instant::now();
-            #[cfg(feature = "profile-insert")]
-            let entry_time = self.active_slots.first_feasible_time_profiled(
-                &self.forbidden_slots.intervals,
-                self.min_t,
-                self.max_t,
-                &mut self.profile.feasible_iterations,
-                &mut self.profile.feasible_interval_visits,
-                &mut self.profile.forbidden_intervals,
-            );
-            #[cfg(not(feature = "profile-insert"))]
             let entry_time = self.active_slots.first_feasible_time(
                 &self.forbidden_slots.intervals,
                 self.min_t,
                 self.max_t,
             );
-            #[cfg(feature = "profile-insert")]
-            {
-                self.profile.feasible_time += feasible_start.elapsed();
-            }
 
             if let Some(entry_time) = entry_time {
-                #[cfg(feature = "profile-insert")]
-                {
-                    self.profile.candidates += 1;
-                    if entry_time == self.min_t {
-                        self.profile.min_entry_candidates += 1;
-                        if first_min_entry_position.is_none() {
-                            first_min_entry_position = Some(y_x_positions);
-                            self.profile.ys_reaching_min_entry += 1;
-                        }
-                    }
-                }
                 let scheduled = ScheduledBlock {
                     block_id: self.block_id,
                     bay_id: self.bay_id,
@@ -615,13 +372,7 @@ impl<'a> PlacementXScanner<'a> {
                     entry_time,
                     exit_time: entry_time + self.process_t,
                 };
-                #[cfg(feature = "profile-insert")]
-                let candidate_start = Instant::now();
                 valid_y |= on_candidate(scheduled);
-                #[cfg(feature = "profile-insert")]
-                {
-                    self.profile.candidate_eval += candidate_start.elapsed();
-                }
             }
 
             if event_pos >= self.events.len() {
@@ -634,10 +385,6 @@ impl<'a> PlacementXScanner<'a> {
             }
         }
 
-        #[cfg(feature = "profile-insert")]
-        if let Some(position) = first_min_entry_position {
-            self.profile.x_positions_after_min_entry += y_x_positions - position;
-        }
         valid_y
     }
 }
@@ -686,22 +433,12 @@ pub(crate) fn insert_greedy<R: Random>(
             .is_lt()
     }
 
-    #[cfg(feature = "profile-insert")]
-    let profile_start = Instant::now();
-    #[cfg(feature = "profile-insert")]
-    let mut profile = InsertProfile {
-        calls: 1,
-        ..InsertProfile::default()
-    };
-
     let block_id = original.block_id;
     let block = &problem.blocks[block_id];
     let process_t = block.processing_time;
     let min_t = block.release_time.max(min_entry_time);
     let max_t = max_entry_time;
     if min_t > max_t {
-        #[cfg(feature = "profile-insert")]
-        finish_insert_profile(profile, profile_start);
         return None;
     }
 
@@ -731,12 +468,6 @@ pub(crate) fn insert_greedy<R: Random>(
         }) {
             continue;
         }
-        #[cfg(feature = "profile-insert")]
-        {
-            profile.bays += 1;
-        }
-        #[cfg(feature = "profile-insert")]
-        let bay_setup_start = Instant::now();
 
         let mut next_loads = loads.to_vec();
         next_loads[bay_id] += block.workload as f64;
@@ -753,19 +484,11 @@ pub(crate) fn insert_greedy<R: Random>(
             .as_ref()
             .is_some_and(|best| lower_score_delta > best.score_delta)
         {
-            #[cfg(feature = "profile-insert")]
-            {
-                profile.bay_setup += bay_setup_start.elapsed();
-            }
             continue;
         }
 
         let mut scanner =
             PlacementXScanner::new(problem, pre, schedule, block_id, bay_id, min_t, max_t)?;
-        #[cfg(feature = "profile-insert")]
-        {
-            profile.bay_setup += bay_setup_start.elapsed();
-        }
 
         for &orient_idx in &pre.orientation_order_by_bbox[block_id] {
             if reconstruct_random_strength.is_some_and(|strength| {
@@ -778,14 +501,8 @@ pub(crate) fn insert_greedy<R: Random>(
             let Some(range) = pre.collision.fit_range(bay_id, block_id, orient_idx) else {
                 continue;
             };
-            #[cfg(feature = "profile-insert")]
-            {
-                profile.orientations += 1;
-            }
             let bounds = pre.orientation_bbox_bounds[block_id][orient_idx];
 
-            #[cfg(feature = "profile-insert")]
-            let y_prepare_start = Instant::now();
             let mut ys: Vec<i64> = (range.min_y..=range.max_y).collect();
             rng.shuffle(&mut ys);
             if let Some(strength) = reconstruct_random_strength {
@@ -798,10 +515,6 @@ pub(crate) fn insert_greedy<R: Random>(
                 if skip_probability > 0.0 {
                     ys.retain(|&y| Some(y) == original_y || rng.nextf() >= skip_probability);
                 }
-            }
-            #[cfg(feature = "profile-insert")]
-            {
-                profile.y_prepare += y_prepare_start.elapsed();
             }
             let mut remaining_y_buffer = None;
 
@@ -836,13 +549,9 @@ pub(crate) fn insert_greedy<R: Random>(
                 }
             }
         }
-        #[cfg(feature = "profile-insert")]
-        profile.merge(scanner.profile);
     }
 
     let result = best.map(|candidate| candidate.scheduled);
-    #[cfg(feature = "profile-insert")]
-    finish_insert_profile(profile, profile_start);
     result
 }
 

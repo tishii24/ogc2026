@@ -90,17 +90,22 @@ impl TemperatureSchedule {
     }
 }
 
-// fn temperature(range: (f64, f64), progress: f64) -> f64 {
-//     range.0 + (range.1 - range.0) * progress
-// }
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum TemperatureScheduleKind {
+    Linear,
+    Cosine,
+    Geometric,
+}
 
-// fn temperature(range: (f64, f64), progress: f64) -> f64 {
-//     let ratio = 0.5 * (1.0 + (std::f64::consts::PI * progress).cos());
-//     range.1 + (range.0 - range.1) * ratio
-// }
-
-fn temperature(range: (f64, f64), progress: f64) -> f64 {
-    range.0 * (range.1 / range.0).powf(progress)
+fn temperature(schedule: TemperatureScheduleKind, range: (f64, f64), progress: f64) -> f64 {
+    match schedule {
+        TemperatureScheduleKind::Linear => range.0 + (range.1 - range.0) * progress,
+        TemperatureScheduleKind::Cosine => {
+            let ratio = 0.5 * (1.0 + (std::f64::consts::PI * progress).cos());
+            range.1 + (range.0 - range.1) * ratio
+        }
+        TemperatureScheduleKind::Geometric => range.0 * (range.1 / range.0).powf(progress),
+    }
 }
 
 pub(crate) struct AnnealingWorkerContext {
@@ -155,6 +160,7 @@ pub(crate) fn worker_temperature_scale(worker_id: usize, worker_count: usize, sc
 }
 
 pub(crate) struct AnnealingRegimeParams {
+    pub(crate) temperature_schedule: TemperatureScheduleKind,
     pub(crate) temperature: (f64, f64),
     pub(crate) reheat_local_best_score_per_block_scale: Option<f64>,
     pub(crate) exchange_threshold: f64,
@@ -508,11 +514,18 @@ impl<D: AnnealingDelegate> Annealer<D> {
                                 self.delegate.trace_state(_after),
                             )
                         {
-                            let temperature_range = if _before.has_tardiness() {
-                                positive_tardiness_temperature
-                            } else {
-                                zero_tardiness_temperature
-                            };
+                            let (temperature_schedule, temperature_range) =
+                                if _before.has_tardiness() {
+                                    (
+                                        self.params.positive_tardiness.temperature_schedule,
+                                        positive_tardiness_temperature,
+                                    )
+                                } else {
+                                    (
+                                        self.params.zero_tardiness.temperature_schedule,
+                                        zero_tardiness_temperature,
+                                    )
+                                };
                             writer.write(
                                 timer.elapsed_seconds(),
                                 context.iterations(),
@@ -520,7 +533,11 @@ impl<D: AnnealingDelegate> Annealer<D> {
                                 AnnealingTraceEvent {
                                     event: "exchange",
                                     neighbor: None,
-                                    temperature: Some(temperature(temperature_range, progress)),
+                                    temperature: Some(temperature(
+                                        temperature_schedule,
+                                        temperature_range,
+                                        progress,
+                                    )),
                                     accept_threshold: None,
                                     before,
                                     after,
@@ -548,7 +565,8 @@ impl<D: AnnealingDelegate> Annealer<D> {
             } else {
                 (&self.params.zero_tardiness, zero_tardiness_temperature)
             };
-            let base_temperature = temperature(temperature_range, progress);
+            let base_temperature =
+                temperature(regime.temperature_schedule, temperature_range, progress);
             if let Some(reheat_params) = self.params.reheat
                 && local.reheat.is_none()
                 && context.iterations() - local.last_progress_iteration
