@@ -1,7 +1,11 @@
 todo:
-- refactor
-  - neighborの選択
 - obj2を軽視する
+- dyをnon-positiveに限定する
+- swapを入れる
+- reconstructの配置をgreedyにやらずに全探索する
+- kick
+- hashを荒くする
+- reheat
 - 温度の調整
   - schedule: (cosine, linear)
 - seedの選び方を増やす
@@ -20,22 +24,12 @@ safety:
 - panicを排除する
 
 precompute:
-- 高速化
 - 2つのブロックの有望な隣接位置を計算する
-  - 時刻が似ている者同士 & max-prefが一致しているブロック同士を合わせる
-  - 辺の角度を合わせる
   - 凸包を作って、面積が大きくならない組み合わせを求める
 
 solver:
 - preoptimizeの改善
 - 限界高速化
-- 調整
-  - dyをnon-positiveに限定する
-- reconstructの改善
-  - obj2を軽視する
-- 強い最適化
-  - packing-scoreの計算（bboxの重なりなど）
-  - 重なっている面積が少なくなる方に動かす
 
 other:
 - データ拡張
@@ -45,5 +39,3 @@ pending:
 - 同時刻の操作順を考慮する
   - block-id順で出す、とすれば半分くらいは考慮できる
 - 取り出す時刻を変えてABBA <->　ABABを入れ替える
-- kick
-- hashを荒くする
