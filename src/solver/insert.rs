@@ -1,10 +1,10 @@
 use crate::{
     Problem, ScheduledBlock,
-    solver::solver_util::normalized_imbalance,
+    solver::base::normalized_imbalance,
+    utils::base::rand::Random,
     utils::collision::{BlockOrient, OrientPairCollision},
     utils::params::InsertParams,
     utils::precompute::Precompute,
-    utils::util::rand::Random,
 };
 
 type Interval = (i64, i64);

@@ -8,7 +8,7 @@ use rayon::prelude::*;
 
 use crate::{
     log,
-    utils::util::{
+    utils::base::{
         rand::{RandPcg64Mcg, Random},
         time::Timer,
     },

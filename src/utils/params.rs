@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::{
     Problem,
-    solver::solver_util::NeighborKind,
+    solver::base::NeighborKind,
     utils::annealing::{
         AnnealingParams, AnnealingRegimeParams, ReheatParams, TemperatureScheduleKind,
     },

@@ -4,12 +4,12 @@ use crate::{
     Bay, Orientation, Problem, log,
     solver::{PreoptimizeState, PreoptimizedBlock, sort_default_reconstruct_order},
     utils::annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
-    utils::params::{AnnealingParamsConfig, NeighborParams, PreoptimizeSolverParams},
-    utils::precompute::orientation_union,
-    utils::util::{
+    utils::base::{
         rand::{RandPcg64Mcg, Random},
         time::Timer,
     },
+    utils::params::{AnnealingParamsConfig, NeighborParams, PreoptimizeSolverParams},
+    utils::precompute::orientation_union,
 };
 use geo::Area;
 use rayon::prelude::*;

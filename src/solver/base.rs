@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    Operation, Problem, ScheduledBlock, Solution, utils::precompute::Precompute,
-    utils::util::rand::Random,
+    Operation, Problem, ScheduledBlock, Solution, utils::base::rand::Random,
+    utils::precompute::Precompute,
 };
 
 #[derive(Clone, Copy, Debug)]

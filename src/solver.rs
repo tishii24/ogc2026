@@ -1,11 +1,11 @@
 use crate::{
     log,
-    utils::params::{InsertParams, NeighborParams, SolverParams},
-    utils::precompute::Precompute,
-    utils::util::{
+    utils::base::{
         rand::{RandPcg64Mcg, Random, sample_weighted_index},
         time::Timer,
     },
+    utils::params::{InsertParams, NeighborParams, SolverParams},
+    utils::precompute::Precompute,
     *,
 };
 use rayon::prelude::*;
@@ -15,18 +15,18 @@ use std::{
     sync::Mutex,
 };
 
+pub mod base;
 pub mod insert;
 pub(crate) mod optimize;
 pub mod preoptimize;
-pub mod solver_util;
 
-pub(crate) use insert::{PlacementXScanner, insert_greedy};
-pub(crate) use optimize::GlobalAnnealing;
-pub(crate) use preoptimize::{PreoptimizePrecompute, preoptimize};
-pub(crate) use solver_util::{
+pub(crate) use base::{
     NeighborKind, block_pref_spread, gen_rangef, schedule_tardiness, schedule_to_solution,
     score_schedule, score13_block,
 };
+pub(crate) use insert::{PlacementXScanner, insert_greedy};
+pub(crate) use optimize::GlobalAnnealing;
+pub(crate) use preoptimize::{PreoptimizePrecompute, preoptimize};
 
 const NEIGHBOR_KINDS: &[&str] = &["Large", "Shift", "Move", "Rotate", "Swap"];
 

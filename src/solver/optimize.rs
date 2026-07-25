@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    solver::solver_util::sample_neighbor,
+    solver::base::sample_neighbor,
     utils::annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
     utils::params::{AnnealingParamsConfig, InsertParams},
 };
