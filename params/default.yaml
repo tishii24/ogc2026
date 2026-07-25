@@ -23,10 +23,10 @@ precompute:
 insert:
   y_buffer: 10
   reconstruct_random_progress_power: 1.0
-  reconstruct_bay_skip_probability: 1.0
-  reconstruct_orientation_skip_probability: 1.0
-  reconstruct_y_skip_probability: 1.0
-  reconstruct_bbox_anchor_probability: 1.0
+  reconstruct_bay_skip_probability: 0.0
+  reconstruct_orientation_skip_probability: 0.0
+  reconstruct_y_skip_probability: 0.0
+  reconstruct_bbox_anchor_probability: 0.0
 
 annealing:
   preoptimize:

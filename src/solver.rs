@@ -873,7 +873,7 @@ fn sample_remove_seed_strategy<R: Random>(
         }
         value -= weight;
     }
-    unreachable!()
+    strategies[0].0
 }
 
 fn choose_local_proximity_seeds<R: Random>(

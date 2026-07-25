@@ -291,9 +291,9 @@ fn try_build_initial_state(
     let time_count: usize = (context.pre.search_horizon - context.pre.min_time)
         .try_into()
         .ok()?;
-    let mut used_area = vec![vec![0.0; time_count]; problem.bays.len()];
+    let mut used_area: Vec<Vec<f64>> = vec![vec![0.0; time_count]; problem.bays.len()];
     let mut congestion = 0.0;
-    let mut loads = vec![0.0; problem.bays.len()];
+    let mut loads: Vec<f64> = vec![0.0; problem.bays.len()];
     let mut schedule = vec![None; problem.blocks.len()];
 
     for &block_id in order {
@@ -925,7 +925,7 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
     type Output = PreoptimizeState;
 
     fn initial_states(&self) -> Vec<Self::State> {
-        vec![self.initial.clone()]
+        return vec![self.initial.clone()];
     }
 
     fn name(&self) -> &'static str {
