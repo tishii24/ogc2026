@@ -126,11 +126,3 @@ pub(crate) fn sample_neighbor<R: Random>(
 pub(crate) fn gen_rangef(rng: &mut impl Random, r: (f64, f64)) -> f64 {
     rng.gen_rangef(r.0, r.1)
 }
-
-/// TODO: precomputeに持っていく
-pub(crate) fn block_pref_spread(problem: &Problem, block_id: usize) -> i64 {
-    let prefs = &problem.blocks[block_id].bay_preferences;
-    let min_pref = prefs.iter().copied().min().unwrap_or(0);
-    let max_pref = prefs.iter().copied().max().unwrap_or(min_pref);
-    max_pref - min_pref
-}

@@ -21,8 +21,8 @@ pub(crate) mod optimize;
 pub mod preoptimize;
 
 pub(crate) use base::{
-    NeighborKind, block_pref_spread, gen_rangef, schedule_tardiness, schedule_to_solution,
-    score_schedule, score13_block,
+    NeighborKind, gen_rangef, schedule_tardiness, schedule_to_solution, score_schedule,
+    score13_block,
 };
 pub(crate) use insert::{PlacementXScanner, insert_greedy};
 pub(crate) use optimize::GlobalAnnealing;
@@ -377,7 +377,14 @@ fn try_large_reconstruct<R: Random>(
     let order = if let Some(constraints) = constraints {
         build_topological_order(problem, pre, &removed_ids, constraints, weights, rng)
     } else {
-        sort_block_order(problem, &pre.block_area, &mut removed_ids, weights, rng);
+        sort_block_order(
+            problem,
+            &pre.block_area,
+            &pre.pref_spread,
+            &mut removed_ids,
+            weights,
+            rng,
+        );
         removed_ids.clone()
     };
 
@@ -871,6 +878,7 @@ fn sample_remove_seed_strategy<R: Random>(
 
 fn choose_local_proximity_seeds<R: Random>(
     problem: &Problem,
+    pre: &Precompute,
     schedule: &[ScheduledBlock],
     by_block: &[Option<ScheduledBlock>],
     k: usize,
@@ -891,14 +899,14 @@ fn choose_local_proximity_seeds<R: Random>(
         .max(1.0);
     let max_pref_spread = schedule
         .iter()
-        .map(|scheduled| block_pref_spread(problem, scheduled.block_id) as f64)
+        .map(|scheduled| pre.pref_spread[scheduled.block_id] as f64)
         .fold(0.0, f64::max)
         .max(1.0);
     let mut fluidity = vec![0.0; problem.blocks.len()];
     for scheduled in schedule {
         let block = &problem.blocks[scheduled.block_id];
         let slack = (block.due_date - block.release_time - block.processing_time).max(0) as f64;
-        let pref_spread = block_pref_spread(problem, scheduled.block_id) as f64;
+        let pref_spread = pre.pref_spread[scheduled.block_id] as f64;
         fluidity[scheduled.block_id] = slack_weight * slack / max_slack
             + pref_spread_weight * (1.0 - pref_spread / max_pref_spread);
     }
@@ -1075,9 +1083,9 @@ fn choose_removed_blocks<R: Random>(
 
     let strategy = sample_remove_seed_strategy(rng, params);
     let seeds = match strategy {
-        RemoveSeedStrategy::LocalProximity => {
-            choose_local_proximity_seeds(problem, schedule, &by_block, k, &bad_pool, rng, params)
-        }
+        RemoveSeedStrategy::LocalProximity => choose_local_proximity_seeds(
+            problem, pre, schedule, &by_block, k, &bad_pool, rng, params,
+        ),
     };
     collect_removed_blocks(
         problem,
@@ -1105,6 +1113,7 @@ fn block_limit_time(problem: &Problem, block_id: usize) -> i64 {
 fn build_block_order_context(
     problem: &Problem,
     block_areas: &[f64],
+    pref_spread: &[i64],
     order: &[usize],
 ) -> BlockOrderContext {
     let max_workload = order
@@ -1119,7 +1128,7 @@ fn build_block_order_context(
         .max(1.0);
     let max_pref_spread = order
         .iter()
-        .map(|&block_id| block_pref_spread(problem, block_id) as f64)
+        .map(|&block_id| pref_spread[block_id] as f64)
         .fold(0.0, f64::max)
         .max(1.0);
     let min_limit_time = order
@@ -1145,6 +1154,7 @@ fn build_block_order_context(
 fn block_order_score(
     problem: &Problem,
     block_areas: &[f64],
+    pref_spread: &[i64],
     ctx: &BlockOrderContext,
     weights: BlockOrderWeights,
     block_id: usize,
@@ -1152,7 +1162,7 @@ fn block_order_score(
     let block = &problem.blocks[block_id];
     let workload_norm = block.workload as f64 / ctx.max_workload;
     let volume_norm = block_volume(problem, block_areas, block_id) / ctx.max_volume;
-    let pref_spread_norm = block_pref_spread(problem, block_id) as f64 / ctx.max_pref_spread;
+    let pref_spread_norm = pref_spread[block_id] as f64 / ctx.max_pref_spread;
     let limit_time_urgency =
         (ctx.max_limit_time - block_limit_time(problem, block_id)) as f64 / ctx.limit_time_span;
 
@@ -1165,18 +1175,21 @@ fn block_order_score(
 fn sort_block_order<R: Random>(
     problem: &Problem,
     block_areas: &[f64],
+    pref_spread: &[i64],
     order: &mut [usize],
     weights: BlockOrderWeights,
     rng: &mut R,
 ) {
-    let ctx = build_block_order_context(problem, block_areas, order);
+    let ctx = build_block_order_context(problem, block_areas, pref_spread, order);
     let mut random_scores = vec![0.0; problem.blocks.len()];
     for &block_id in order.iter() {
         random_scores[block_id] = rng.gen_rangef(0., weights.random);
     }
     order.sort_by(|&a, &b| {
-        let score_a = block_order_score(problem, block_areas, &ctx, weights, a) + random_scores[a];
-        let score_b = block_order_score(problem, block_areas, &ctx, weights, b) + random_scores[b];
+        let score_a = block_order_score(problem, block_areas, pref_spread, &ctx, weights, a)
+            + random_scores[a];
+        let score_b = block_order_score(problem, block_areas, pref_spread, &ctx, weights, b)
+            + random_scores[b];
         score_b
             .total_cmp(&score_a)
             .then(block_limit_time(problem, a).cmp(&block_limit_time(problem, b)))
@@ -1188,7 +1201,7 @@ fn sort_block_order<R: Random>(
                 )),
             )
             .then(problem.blocks[b].workload.cmp(&problem.blocks[a].workload))
-            .then(block_pref_spread(problem, b).cmp(&block_pref_spread(problem, a)))
+            .then(pref_spread[b].cmp(&pref_spread[a]))
             .then(a.cmp(&b))
     });
 }
@@ -1196,12 +1209,13 @@ fn sort_block_order<R: Random>(
 pub(crate) fn sort_default_reconstruct_order<R: Random>(
     problem: &Problem,
     block_areas: &[f64],
+    pref_spread: &[i64],
     order: &mut [usize],
     rng: &mut R,
     params: &NeighborParams,
 ) {
     let weights = sample_reconstruct_order_weights(rng, params);
-    sort_block_order(problem, block_areas, order, weights, rng);
+    sort_block_order(problem, block_areas, pref_spread, order, weights, rng);
 }
 
 fn build_precedence_constraints(
@@ -1259,7 +1273,14 @@ fn build_topological_order<R: Random>(
     rng: &mut R,
 ) -> Vec<usize> {
     let mut priority_order = bay_block_ids.to_vec();
-    sort_block_order(problem, &pre.block_area, &mut priority_order, weights, rng);
+    sort_block_order(
+        problem,
+        &pre.block_area,
+        &pre.pref_spread,
+        &mut priority_order,
+        weights,
+        rng,
+    );
     let mut priority_rank = vec![usize::MAX; problem.blocks.len()];
     for (rank, &block_id) in priority_order.iter().enumerate() {
         priority_rank[block_id] = rank;

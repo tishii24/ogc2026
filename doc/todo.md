@@ -1,6 +1,7 @@
 todo:
 - refactor
   - neighborの選択
+- obj2を軽視する
 - 温度の調整
   - schedule: (cosine, linear)
 - seedの選び方を増やす
@@ -11,12 +12,12 @@ todo:
   - 時間に応じて近傍サイズを大きくする
 
 safety:
-- 最後にpy側にいくつかの解を返して、スコアが良い順にcheck-feasibilityをする
-  - feasibleなものが見つかったら返す
-  - todo: check-feasibilityの無駄なところを落として高速化
-- AIチェック
+- 定期的にglobal-bestをstdoutに吐いておく
+- py側
+  - stdoutで受け取った解をscore順に並べて、check-feasibilityをして、feasibleだったら返す
+    - todo: check-feasibilityの無駄なところを落として高速化
+  - rustのpanicをcatchして、時間が余っていたらretryする
 - panicを排除する
-  - fallback
 
 precompute:
 - 高速化

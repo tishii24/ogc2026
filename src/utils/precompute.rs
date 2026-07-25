@@ -14,6 +14,7 @@ pub(crate) struct Precompute {
     pub(crate) collision: CollisionPrecompute,
     pub(crate) bay_load_scale: Vec<f64>,
     pub(crate) pref_penalty: Vec<Vec<i64>>,
+    pub(crate) pref_spread: Vec<i64>,
     pub(crate) bay_order_by_pref: Vec<Vec<usize>>,
     pub(crate) orientation_order_by_bbox: Vec<Vec<usize>>,
     pub(crate) orientation_bbox_center: Vec<Vec<(f64, f64)>>,
@@ -21,6 +22,23 @@ pub(crate) struct Precompute {
     pub(crate) orientation_neighbors: Vec<Vec<Vec<(usize, i64, i64)>>>,
     pub(crate) other_block_neighbors: Vec<Vec<Vec<OtherBlockNeighbor>>>,
     pub(crate) block_area: Vec<f64>,
+}
+
+pub(crate) fn build_pref_spread(problem: &Problem) -> Vec<i64> {
+    problem
+        .blocks
+        .iter()
+        .map(|block| {
+            let min_pref = block.bay_preferences.iter().copied().min().unwrap_or(0);
+            let max_pref = block
+                .bay_preferences
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or(min_pref);
+            max_pref - min_pref
+        })
+        .collect()
 }
 
 fn orientation_bbox_bounds(orientation: &Orientation) -> Boundsf {
@@ -291,6 +309,7 @@ impl Precompute {
                     .collect()
             })
             .collect();
+        let pref_spread = build_pref_spread(problem);
 
         let bay_order_by_pref = problem
             .blocks
@@ -356,6 +375,7 @@ impl Precompute {
             collision,
             bay_load_scale,
             pref_penalty,
+            pref_spread,
             bay_order_by_pref,
             orientation_order_by_bbox,
             orientation_bbox_center,

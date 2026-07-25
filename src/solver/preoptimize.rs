@@ -9,7 +9,7 @@ use crate::{
         time::Timer,
     },
     utils::params::{AnnealingParamsConfig, NeighborParams, PreoptimizeSolverParams},
-    utils::precompute::orientation_union,
+    utils::precompute::{build_pref_spread, orientation_union},
 };
 use geo::Area;
 use rayon::prelude::*;
@@ -30,6 +30,7 @@ pub struct PreoptimizePrecompute {
     orientation_areas: Vec<Vec<OrientationArea>>,
     bay_load_scale: Vec<f64>,
     pref_penalty: Vec<Vec<i64>>,
+    pref_spread: Vec<i64>,
     min_time: i64,
     search_horizon: i64,
 }
@@ -84,12 +85,14 @@ impl PreoptimizePrecompute {
                     .collect()
             })
             .collect();
+        let pref_spread = build_pref_spread(problem);
 
         if problem.blocks.is_empty() {
             return Ok(Self {
                 orientation_areas,
                 bay_load_scale,
                 pref_penalty,
+                pref_spread,
                 min_time: 0,
                 search_horizon: 0,
             });
@@ -119,6 +122,7 @@ impl PreoptimizePrecompute {
             orientation_areas,
             bay_load_scale,
             pref_penalty,
+            pref_spread,
             min_time,
             search_horizon,
         })
@@ -399,6 +403,7 @@ fn build_initial_state(
                 sort_default_reconstruct_order(
                     problem,
                     &context.block_areas,
+                    &context.pre.pref_spread,
                     &mut order,
                     &mut rng,
                     context.reconstruct_order_params,
@@ -853,6 +858,7 @@ fn try_large_reconstruct(
     sort_default_reconstruct_order(
         problem,
         &context.block_areas,
+        &context.pre.pref_spread,
         &mut removed_ids,
         rng,
         context.reconstruct_order_params,
