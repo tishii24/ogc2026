@@ -23,10 +23,10 @@ precompute:
 insert:
   y_buffer: 10
   reconstruct_random_progress_power: 1.0
-  reconstruct_bay_skip_probability: 0.2
-  reconstruct_orientation_skip_probability: 0.2
-  reconstruct_y_skip_probability: 0.3
-  reconstruct_bbox_anchor_probability: 0.2
+  reconstruct_bay_skip_probability: 0.5
+  reconstruct_orientation_skip_probability: 0.5
+  reconstruct_y_skip_probability: 0.5
+  reconstruct_bbox_anchor_probability: 0.5
 
 annealing:
   preoptimize:
@@ -37,7 +37,7 @@ annealing:
         w1_scale: 0.5
         w3_scale: 50.0
     zero_tardiness:
-      temperature_w3_scale: [50.0, 1.0]
+      temperature_w3_scale: [10.0, 1.0]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
@@ -46,12 +46,12 @@ annealing:
   optimize:
     exchange_interval: 2000
     positive_tardiness:
-      temperature_w1_scale: [1.0, 0.1]
+      temperature_initial_score_per_block_scale: [1.0, 0.01]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
     zero_tardiness:
-      temperature_w3_scale: [50.0, 1.0]
+      temperature_w3_scale: [10.0, 1.0]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0

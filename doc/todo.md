@@ -1,17 +1,10 @@
 todo:
 - refactor
   - neighborの選択
-- reannealing (cos-schedule)
+- reheat (cos-schedule)
   - globalになったら温度をあげる
 - constraintをtardiness=0になったら取る
   - constraint-time-ratio=0を試す
-- ランダム性を高める
-  - 確率的に探索範囲を絞って多様化
-    - (bay,orientation,y,bbox-anchor)をたまにランダムにする
-      - bbox-anchor: 今は(bbox-right, bbox-top)だが、これの別の組合せ（2x2種類）をたまに採用する
-    - bay, orientation, yを一定の確率で飛ばすようにする
-    - 最初のブロックほどランダム性を高める
-    - ただし、元の状態には必ず戻れるようにする
 - seedの選び方を増やす
 - 高速化
 - safety
