@@ -86,7 +86,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
     type Output = OptimizeState;
 
     fn initial_states(&self) -> Vec<Self::State> {
-        vec![self.initial.clone()]
+        return vec![self.initial.clone()];
     }
 
     fn name(&self) -> &'static str {
