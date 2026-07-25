@@ -3,8 +3,8 @@ todo:
   - neighborの選択
 - constraintをtardiness=0になったら取る
   - constraint-time-ratio=0を試す
-- reheat (cos-schedule)
-  - globalになったら温度をあげる
+- 温度の調整
+  - schedule: (cosine, linear)
 - seedの選び方を増やす
 - 高速化
 - safety
@@ -18,10 +18,7 @@ safety:
   - todo: check-feasibilityの無駄なところを落として高速化
 - AIチェック
 - panicを排除する
-  - 空のblockがある場合（2点しかない場合）
   - fallback
-  - 固定長配列をやめる
-- tardiness>0に絶対になるケースがあるか調べる
 
 precompute:
 - 高速化

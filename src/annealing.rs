@@ -94,6 +94,11 @@ impl TemperatureSchedule {
 //     range.0 + (range.1 - range.0) * progress
 // }
 
+// fn temperature(range: (f64, f64), progress: f64) -> f64 {
+//     let ratio = 0.5 * (1.0 + (std::f64::consts::PI * progress).cos());
+//     range.1 + (range.0 - range.1) * ratio
+// }
+
 fn temperature(range: (f64, f64), progress: f64) -> f64 {
     range.0 * (range.1 / range.0).powf(progress)
 }
