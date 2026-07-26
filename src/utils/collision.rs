@@ -1,4 +1,5 @@
 use crate::*;
+use geo::{Area, BooleanOps, Coord, LineString, Polygon, Translate};
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
@@ -22,7 +23,12 @@ struct ConvexScratch {
 
 #[derive(Clone, Debug)]
 struct PolyLayer {
+    block_id: usize,
+    orient_idx: usize,
+    layer_idx: usize,
     parts: Vec<ConvexPart>,
+    polygon: Polygon<f64>,
+    has_area: bool,
     bbox: Boundsf,
 }
 
@@ -112,11 +118,18 @@ impl CollisionPrecompute {
             return None;
         }
 
-        let pair_idx = self.block_pair_index[moving.block_id * self.n + fixed.block_id]
-            .expect("collision block pair should be precomputed");
-        let pair = &self.block_pairs[pair_idx];
-        let key = moving.orient_idx * pair.fixed_orients + fixed.orient_idx;
-        Some(self.get_or_build_orient_pair(moving, fixed, pair_idx, key))
+        let pair_slot = moving
+            .block_id
+            .checked_mul(self.n)?
+            .checked_add(fixed.block_id)?;
+        let pair_idx = *self.block_pair_index.get(pair_slot)?.as_ref()?;
+        let pair = self.block_pairs.get(pair_idx)?;
+        let key = moving
+            .orient_idx
+            .checked_mul(pair.fixed_orients)?
+            .checked_add(fixed.orient_idx)?;
+        pair.orient_pairs.get(key)?;
+        self.get_or_build_orient_pair(moving, fixed, pair_idx, key)
     }
 
     #[inline]
@@ -136,23 +149,29 @@ impl CollisionPrecompute {
         fixed: BlockOrient,
         pair_idx: usize,
         key: usize,
-    ) -> &OrientPairCollision {
-        let cell = &self.block_pairs[pair_idx].orient_pairs[key];
+    ) -> Option<&OrientPairCollision> {
+        let cell = self.block_pairs.get(pair_idx)?.orient_pairs.get(key)?;
         let ptr = cell.ptr.load(Ordering::Acquire);
         if !ptr.is_null() {
-            return unsafe { &*ptr };
+            return Some(unsafe { &*ptr });
         }
 
-        let moving_geom = &self.geoms[moving.block_id][moving.orient_idx];
-        let fixed_geom = &self.geoms[fixed.block_id][fixed.orient_idx];
+        let moving_geom = self.geoms.get(moving.block_id)?.get(moving.orient_idx)?;
+        let fixed_geom = self.geoms.get(fixed.block_id)?.get(fixed.orient_idx)?;
+        let reverse_pair_slot = fixed
+            .block_id
+            .checked_mul(self.n)?
+            .checked_add(moving.block_id)?;
+        let reverse_pair_idx = *self.block_pair_index.get(reverse_pair_slot)?.as_ref()?;
+        let reverse_pair = self.block_pairs.get(reverse_pair_idx)?;
+        let reverse_key = fixed
+            .orient_idx
+            .checked_mul(reverse_pair.fixed_orients)?
+            .checked_add(moving.orient_idx)?;
+        let reverse_cell = reverse_pair.orient_pairs.get(reverse_key)?;
+
         let (forward_crane, reverse_crane) =
             build_crane_grids_both_directions(moving_geom, fixed_geom);
-
-        let reverse_pair_idx = self.block_pair_index[fixed.block_id * self.n + moving.block_id]
-            .expect("reverse collision block pair should be precomputed");
-        let reverse_pair = &self.block_pairs[reverse_pair_idx];
-        let reverse_key = fixed.orient_idx * reverse_pair.fixed_orients + moving.orient_idx;
-        let reverse_cell = &reverse_pair.orient_pairs[reverse_key];
 
         let reverse = OrientPairCollision {
             crane: reverse_crane,
@@ -163,7 +182,7 @@ impl CollisionPrecompute {
             crane: forward_crane,
         };
         let ptr = cell.publish(forward);
-        unsafe { &*ptr }
+        Some(unsafe { &*ptr })
     }
 
     pub(crate) fn fit_range(
@@ -286,12 +305,12 @@ impl CollisionGridBuilder {
             row.sort_unstable();
             let row_start = intervals.len();
             for &(lo, hi) in row.iter() {
-                if intervals.len() > row_start {
-                    let last = intervals.last_mut().unwrap();
-                    if lo <= last.1 + 1 {
-                        last.1 = last.1.max(hi);
-                        continue;
-                    }
+                if intervals.len() > row_start
+                    && let Some(last) = intervals.last_mut()
+                    && lo <= last.1 + 1
+                {
+                    last.1 = last.1.max(hi);
+                    continue;
                 }
                 intervals.push((lo, hi));
             }
@@ -315,7 +334,17 @@ fn build_all_geoms(problem: &Problem) -> Vec<Vec<ShapeGeom>> {
     problem
         .blocks
         .iter()
-        .map(|block| block.shape.iter().map(build_shape_geom).collect())
+        .enumerate()
+        .map(|(block_id, block)| {
+            block
+                .shape
+                .iter()
+                .enumerate()
+                .map(|(orient_idx, orientation)| {
+                    build_shape_geom(block_id, orient_idx, orientation)
+                })
+                .collect()
+        })
         .collect()
 }
 
@@ -340,25 +369,48 @@ fn build_all_fit_ranges(
         .collect()
 }
 
-fn build_shape_geom(orientation: &Orientation) -> ShapeGeom {
+fn layer_polygon(layer: &[[f64; 2]]) -> Polygon<f64> {
+    let mut coords: Vec<_> = layer.iter().map(|&[x, y]| Coord { x, y }).collect();
+    if coords.first() != coords.last()
+        && let Some(&first) = coords.first()
+    {
+        coords.push(first);
+    }
+    Polygon::new(LineString::new(coords), vec![])
+}
+
+fn build_shape_geom(block_id: usize, orient_idx: usize, orientation: &Orientation) -> ShapeGeom {
     let mut layers = Vec::new();
     let mut all_bbox: Option<Boundsf> = None;
 
-    for layer in &orientation.layers {
+    for (layer_idx, layer) in orientation.layers.iter().enumerate() {
         let points: Vec<Pointf> = layer.iter().map(|&[x, y]| Pointf { x, y }).collect();
         let parts = build_convex_parts(&points);
-        assert!(
-            !parts.is_empty(),
-            "failed to build convex parts for layer with {} vertices, points={:?}",
-            points.len(),
-            points
-        );
+        let has_area = points.len() >= 3 && signed_area(&points).abs() > AREA_EPS;
+        if parts.is_empty() {
+            let method = if has_area {
+                "geo-intersection"
+            } else {
+                "empty-area"
+            };
+            eprintln!(
+                "[collision-fallback] block={block_id} orient={orient_idx} layer={layer_idx} reason=convex-decomposition-failed method={method}"
+            );
+        }
         let bbox = bbox_of_points(layer);
         all_bbox = Some(match all_bbox {
             Some(b) => merge_bbox(b, bbox),
             None => bbox,
         });
-        layers.push(PolyLayer { parts, bbox });
+        layers.push(PolyLayer {
+            block_id,
+            orient_idx,
+            layer_idx,
+            parts,
+            polygon: layer_polygon(layer),
+            has_area,
+            bbox,
+        });
     }
 
     let bbox = all_bbox.unwrap_or(Boundsf {
@@ -371,14 +423,22 @@ fn build_shape_geom(orientation: &Orientation) -> ShapeGeom {
 }
 
 fn build_convex_parts(points: &[Pointf]) -> Vec<ConvexPart> {
+    if points.len() < 3 || signed_area(points).abs() <= AREA_EPS || !is_simple_polygon(points) {
+        return Vec::new();
+    }
     if is_convex_polygon(points) {
-        return vec![make_convex_part(points)];
+        return make_convex_part(points).into_iter().collect();
     }
 
-    triangulate_polygon(points)
-        .into_iter()
-        .map(|tri| make_convex_part(&tri))
-        .collect()
+    let triangles = triangulate_polygon(points);
+    if triangles.len() != points.len() - 2 {
+        return Vec::new();
+    }
+    triangles
+        .iter()
+        .map(|tri| make_convex_part(tri))
+        .collect::<Option<Vec<_>>>()
+        .unwrap_or_default()
 }
 
 fn is_convex_polygon(points: &[Pointf]) -> bool {
@@ -498,6 +558,23 @@ fn diagonal_clear(points: &[Pointf], idx: &[usize], a_idx: usize, b_idx: usize) 
     true
 }
 
+fn is_simple_polygon(points: &[Pointf]) -> bool {
+    let n = points.len();
+    for i in 0..n {
+        let next_i = (i + 1) % n;
+        for j in i + 1..n {
+            let next_j = (j + 1) % n;
+            if i == j || next_i == j || next_j == i {
+                continue;
+            }
+            if segments_intersect(points[i], points[next_i], points[j], points[next_j]) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 fn segments_intersect(a: Pointf, b: Pointf, c: Pointf, d: Pointf) -> bool {
     let ab_c = cross(a, b, c);
     let ab_d = cross(a, b, d);
@@ -528,15 +605,17 @@ fn point_on_segment(p: Pointf, a: Pointf, b: Pointf) -> bool {
         && p.y <= a.y.max(b.y) + AREA_EPS
 }
 
-fn make_convex_part(points: &[Pointf]) -> ConvexPart {
-    assert!(points.len() >= 3);
+fn make_convex_part(points: &[Pointf]) -> Option<ConvexPart> {
+    if points.len() < 3 || signed_area(points).abs() <= AREA_EPS {
+        return None;
+    }
     let points = if signed_area(points) >= 0.0 {
         points.to_vec()
     } else {
         points.iter().rev().copied().collect()
     };
 
-    ConvexPart { points }
+    Some(ConvexPart { points })
 }
 
 fn signed_area(points: &[Pointf]) -> f64 {
@@ -636,8 +715,57 @@ fn build_crane_grids_both_directions(
     (ab_builder.finish(), ba_builder.finish())
 }
 
+fn pointf_polygon(points: &[Pointf]) -> Polygon<f64> {
+    let mut coords: Vec<_> = points.iter().map(|p| Coord { x: p.x, y: p.y }).collect();
+    if coords.first() != coords.last()
+        && let Some(&first) = coords.first()
+    {
+        coords.push(first);
+    }
+    Polygon::new(LineString::new(coords), vec![])
+}
+
+fn bbox_of_pointfs(points: &[Pointf]) -> Boundsf {
+    let mut bbox = Boundsf {
+        min_x: f64::INFINITY,
+        min_y: f64::INFINITY,
+        max_x: f64::NEG_INFINITY,
+        max_y: f64::NEG_INFINITY,
+    };
+    for point in points {
+        bbox.min_x = bbox.min_x.min(point.x);
+        bbox.min_y = bbox.min_y.min(point.y);
+        bbox.max_x = bbox.max_x.max(point.x);
+        bbox.max_y = bbox.max_y.max(point.y);
+    }
+    bbox
+}
+
+fn rasterize_geo_pair(
+    builder: &mut CollisionGridBuilder,
+    moving: &Polygon<f64>,
+    fixed: &Polygon<f64>,
+    range: DeltaRange,
+) {
+    for dy in range.min_dy..=range.max_dy {
+        for dx in range.min_dx..=range.max_dx {
+            let shifted_fixed = fixed.translate(dx as f64, dy as f64);
+            if moving.intersection(&shifted_fixed).unsigned_area() > AREA_EPS {
+                builder.add_x_interval(dy, dx, dx);
+            }
+        }
+    }
+}
+
 fn build_layer_pair_grid(a: &PolyLayer, b: &PolyLayer) -> CollisionGrid {
-    let mut builder = CollisionGridBuilder::new(delta_range(a.bbox, b.bbox));
+    let range = delta_range(a.bbox, b.bbox);
+    let mut builder = CollisionGridBuilder::new(range);
+    if a.parts.is_empty() || b.parts.is_empty() {
+        if a.has_area && b.has_area {
+            rasterize_geo_pair(&mut builder, &a.polygon, &b.polygon, range);
+        }
+        return builder.finish();
+    }
     let mut scratch = ConvexScratch {
         neg_b: Vec::new(),
         hull: Vec::new(),
@@ -645,7 +773,7 @@ fn build_layer_pair_grid(a: &PolyLayer, b: &PolyLayer) -> CollisionGrid {
 
     for pa in &a.parts {
         for pb in &b.parts {
-            rasterize_convex_pair(&mut builder, pa, pb, &mut scratch);
+            rasterize_convex_pair(&mut builder, pa, pb, &mut scratch, a, b);
         }
     }
 
@@ -657,9 +785,26 @@ fn rasterize_convex_pair(
     a: &ConvexPart,
     b: &ConvexPart,
     scratch: &mut ConvexScratch,
+    a_layer: &PolyLayer,
+    b_layer: &PolyLayer,
 ) {
     let hull = minkowski_difference_hull(a, b, scratch);
-    assert!(hull.len() >= 3, "failed to build Minkowski difference hull");
+    if hull.len() < 3 || signed_area(hull).abs() <= AREA_EPS {
+        eprintln!(
+            "[collision-fallback] moving=({},{},{}) fixed=({},{},{}) reason=degenerate-minkowski-hull method=geo-intersection",
+            a_layer.block_id,
+            a_layer.orient_idx,
+            a_layer.layer_idx,
+            b_layer.block_id,
+            b_layer.orient_idx,
+            b_layer.layer_idx,
+        );
+        let a_polygon = pointf_polygon(&a.points);
+        let b_polygon = pointf_polygon(&b.points);
+        let range = delta_range(bbox_of_pointfs(&a.points), bbox_of_pointfs(&b.points));
+        rasterize_geo_pair(builder, &a_polygon, &b_polygon, range);
+        return;
+    }
 
     let mut min_y = f64::INFINITY;
     let mut max_y = f64::NEG_INFINITY;

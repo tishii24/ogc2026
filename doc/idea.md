@@ -8,3 +8,4 @@ large-reconstructのinsertを探索する
   - ビームサーチ or 局所探索
   - 残っているblockに対してinsertできることは保証されているので、removeしたブロックの状態に対して干渉しないことを確かめれば良い
   - removeしたブロックの位置を一部確定して、scheduleにinsertすることを試す
+  - 差分ビムサができそう

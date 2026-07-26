@@ -1,9 +1,9 @@
 ### 1. 優先度が高い箇所
 
-| 箇所 | 発生条件 | 修正案 |
-|---|---|---|
-| `src/collision.rs:395` `build_shape_geom()` | layerが3点未満、面積0、自己交差などで凸分割に失敗 | `assert!`を削除し、`build_shape_geom() -> Result<_, String>`にする。block/orientation/layer番号付きでエラーを返す |
-| `src/collision.rs:580`, `src/collision.rs:710` | 退化polygonやMinkowski hullが3点未満 | 同様にcollision precompute全体をfallibleにし、`Precompute::build() -> Result`として`solver::solve()`まで伝播 |
+| 箇所 | 発生条件 | 
+|---|---|
+| `src/collision.rs:395` `build_shape_geom()` | layerが3点未満、面積0、自己交差などで凸分割に失敗 |
+| `src/collision.rs:580`, `src/collision.rs:710` | 退化polygonやMinkowski hullが3点未満 |
 
 ### 2. 中～低優先度の箇所
 
