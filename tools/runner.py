@@ -74,12 +74,6 @@ def parse_args() -> argparse.Namespace:
         default=60.0,
         help="Timelimit passed to algorithm(). default: 60",
     )
-    parser.add_argument(
-        "--local",
-        action="store_true",
-        help="Enable local Rust logs and panic on collision fallback.",
-    )
-
     return parser.parse_args()
 
 
@@ -398,10 +392,6 @@ def print_row(index: int, total: int, row: dict[str, Any]) -> None:
 def main() -> int:
     args = parse_args()
     root = repo_root()
-    if args.local:
-        os.environ["OGC_LOCAL"] = "1"
-    else:
-        os.environ.pop("OGC_LOCAL", None)
 
     try:
         validate_version(args.version)

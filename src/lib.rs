@@ -1,12 +1,8 @@
-use std::sync::OnceLock;
+pub const LOCAL: bool = cfg!(feature = "local");
 
 #[inline]
-pub fn local_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var("OGC_LOCAL")
-            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-    })
+pub const fn local_enabled() -> bool {
+    LOCAL
 }
 
 #[macro_export]

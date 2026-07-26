@@ -34,6 +34,11 @@ def parse_args() -> argparse.Namespace:
         default="local",
         help="Build target platform. default: local",
     )
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Build with local Rust logs and panic on collision fallback.",
+    )
     return parser.parse_args()
 
 
@@ -48,7 +53,7 @@ def validate_version(version: str) -> None:
         )
 
 
-def build_solver(root: Path, platform: str) -> Path:
+def build_solver(root: Path, platform: str, local: bool) -> Path:
     if platform == "local":
         command = ["cargo", "build", "--release"]
         binary = root / "target" / "release" / binary_name()
@@ -57,6 +62,9 @@ def build_solver(root: Path, platform: str) -> Path:
         binary = root / "target" / "release" / binary_name()
     else:
         raise ValueError(f"unsupported platform: {platform}")
+
+    if local:
+        command.extend(["--features", "local"])
 
     print("$ " + " ".join(command), file=sys.stderr)
     completed = subprocess.run(command, cwd=root)
@@ -76,13 +84,15 @@ def binary_name() -> str:
     return "ogc2026"
 
 
-def compose(root: Path, version: str, platform: str, params_path: Path) -> Path:
+def compose(
+    root: Path, version: str, platform: str, params_path: Path, local: bool
+) -> Path:
     validate_version(version)
     params_path = params_path.resolve()
     if not params_path.is_file():
         raise FileNotFoundError(f"params file not found: {params_path}")
 
-    source_binary = build_solver(root, platform)
+    source_binary = build_solver(root, platform, local)
     output_dir = root / "solutions" / version
 
     if output_dir.exists():
@@ -105,7 +115,9 @@ def main() -> int:
     root = repo_root()
 
     try:
-        output_dir = compose(root, args.version, args.platform, Path(args.params))
+        output_dir = compose(
+            root, args.version, args.platform, Path(args.params), args.local
+        )
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
