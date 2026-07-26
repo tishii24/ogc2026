@@ -118,18 +118,11 @@ impl CollisionPrecompute {
             return None;
         }
 
-        let pair_slot = moving
-            .block_id
-            .checked_mul(self.n)?
-            .checked_add(fixed.block_id)?;
-        let pair_idx = *self.block_pair_index.get(pair_slot)?.as_ref()?;
-        let pair = self.block_pairs.get(pair_idx)?;
-        let key = moving
-            .orient_idx
-            .checked_mul(pair.fixed_orients)?
-            .checked_add(fixed.orient_idx)?;
-        pair.orient_pairs.get(key)?;
-        self.get_or_build_orient_pair(moving, fixed, pair_idx, key)
+        let pair_idx = self.block_pair_index[moving.block_id * self.n + fixed.block_id]
+            .expect("collision block pair should be precomputed");
+        let pair = &self.block_pairs[pair_idx];
+        let key = moving.orient_idx * pair.fixed_orients + fixed.orient_idx;
+        Some(self.get_or_build_orient_pair(moving, fixed, pair_idx, key))
     }
 
     #[inline]
@@ -149,29 +142,23 @@ impl CollisionPrecompute {
         fixed: BlockOrient,
         pair_idx: usize,
         key: usize,
-    ) -> Option<&OrientPairCollision> {
-        let cell = self.block_pairs.get(pair_idx)?.orient_pairs.get(key)?;
+    ) -> &OrientPairCollision {
+        let cell = &self.block_pairs[pair_idx].orient_pairs[key];
         let ptr = cell.ptr.load(Ordering::Acquire);
         if !ptr.is_null() {
-            return Some(unsafe { &*ptr });
+            return unsafe { &*ptr };
         }
 
-        let moving_geom = self.geoms.get(moving.block_id)?.get(moving.orient_idx)?;
-        let fixed_geom = self.geoms.get(fixed.block_id)?.get(fixed.orient_idx)?;
-        let reverse_pair_slot = fixed
-            .block_id
-            .checked_mul(self.n)?
-            .checked_add(moving.block_id)?;
-        let reverse_pair_idx = *self.block_pair_index.get(reverse_pair_slot)?.as_ref()?;
-        let reverse_pair = self.block_pairs.get(reverse_pair_idx)?;
-        let reverse_key = fixed
-            .orient_idx
-            .checked_mul(reverse_pair.fixed_orients)?
-            .checked_add(moving.orient_idx)?;
-        let reverse_cell = reverse_pair.orient_pairs.get(reverse_key)?;
-
+        let moving_geom = &self.geoms[moving.block_id][moving.orient_idx];
+        let fixed_geom = &self.geoms[fixed.block_id][fixed.orient_idx];
         let (forward_crane, reverse_crane) =
             build_crane_grids_both_directions(moving_geom, fixed_geom);
+
+        let reverse_pair_idx = self.block_pair_index[fixed.block_id * self.n + moving.block_id]
+            .expect("reverse collision block pair should be precomputed");
+        let reverse_pair = &self.block_pairs[reverse_pair_idx];
+        let reverse_key = fixed.orient_idx * reverse_pair.fixed_orients + moving.orient_idx;
+        let reverse_cell = &reverse_pair.orient_pairs[reverse_key];
 
         let reverse = OrientPairCollision {
             crane: reverse_crane,
@@ -182,7 +169,7 @@ impl CollisionPrecompute {
             crane: forward_crane,
         };
         let ptr = cell.publish(forward);
-        Some(unsafe { &*ptr })
+        unsafe { &*ptr }
     }
 
     pub(crate) fn fit_range(
@@ -305,12 +292,12 @@ impl CollisionGridBuilder {
             row.sort_unstable();
             let row_start = intervals.len();
             for &(lo, hi) in row.iter() {
-                if intervals.len() > row_start
-                    && let Some(last) = intervals.last_mut()
-                    && lo <= last.1 + 1
-                {
-                    last.1 = last.1.max(hi);
-                    continue;
+                if intervals.len() > row_start {
+                    let last = intervals.last_mut().unwrap();
+                    if lo <= last.1 + 1 {
+                        last.1 = last.1.max(hi);
+                        continue;
+                    }
                 }
                 intervals.push((lo, hi));
             }
