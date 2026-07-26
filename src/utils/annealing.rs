@@ -567,12 +567,15 @@ impl<D: AnnealingDelegate> Annealer<D> {
             };
             let base_temperature =
                 temperature(regime.temperature_schedule, temperature_range, progress);
-            if let Some(reheat_params) = self.params.reheat
+            let reheat_scale = regime.reheat_local_best_score_per_block_scale;
+            if reheat_scale.is_none() {
+                local.reheat = None;
+            }
+            if let (Some(reheat_params), Some(reheat_scale)) = (self.params.reheat, reheat_scale)
                 && local.reheat.is_none()
                 && context.iterations() - local.last_progress_iteration
                     >= reheat_params.stagnation_iterations
             {
-                let reheat_scale = regime.reheat_local_best_score_per_block_scale.unwrap();
                 let peak_temperature = (local.local_best_score / self.params.block_count as f64
                     * reheat_scale
                     * scale)

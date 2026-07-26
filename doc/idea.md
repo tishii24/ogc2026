@@ -7,7 +7,4 @@ large-reconstructのinsertを探索する
 4. (bay-id,x,y,entry-t)の組合せを探索する
   - ビームサーチ or 局所探索
   - 残っているblockに対してinsertできることは保証されているので、removeしたブロックの状態に対して干渉しないことを確かめれば良い
-  - 場合によっては、全て配置してからinsert-greedyをした方が良いかも
-  - 計算量が良くなりそう
-  - 残っているblockの方が10倍程度多い
-  - scheduleを二つに分ける、みたいな実装で十分？
+  - removeしたブロックの位置を一部確定して、scheduleにinsertすることを試す

@@ -1,0 +1,101 @@
+name: reconstruct-order-7h
+version: "073"
+base_params: params/default.yaml
+suite: suites/full-hard.json
+timelimit: 60
+jobs: 1
+
+steps:
+  - name: reconstruct-order-weights
+    mode: combinations
+    parameters:
+      # 現在値
+      - optimize_neighbor.default.reconstruct_workload_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_volume_weight_range: [-0.2, 1.0]
+        optimize_neighbor.default.reconstruct_pref_spread_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_limit_time_urgency_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_order_random_weight_range: [0.0, 0.5]
+
+      # 全特徴量を正方向だけで使う
+      - optimize_neighbor.default.reconstruct_workload_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_volume_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_pref_spread_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_limit_time_urgency_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_order_random_weight_range: [0.0, 0.5]
+
+      # 特徴量の符号も試行ごとに変える
+      - optimize_neighbor.default.reconstruct_workload_weight_range: [-1.0, 1.0]
+        optimize_neighbor.default.reconstruct_volume_weight_range: [-1.0, 1.0]
+        optimize_neighbor.default.reconstruct_pref_spread_weight_range: [-1.0, 1.0]
+        optimize_neighbor.default.reconstruct_limit_time_urgency_weight_range: [-1.0, 1.0]
+        optimize_neighbor.default.reconstruct_order_random_weight_range: [0.0, 0.5]
+
+      # 難しいブロックを優先する
+      - optimize_neighbor.default.reconstruct_workload_weight_range: [0.5, 1.5]
+        optimize_neighbor.default.reconstruct_volume_weight_range: [0.5, 1.5]
+        optimize_neighbor.default.reconstruct_pref_spread_weight_range: [0.5, 1.5]
+        optimize_neighbor.default.reconstruct_limit_time_urgency_weight_range: [0.5, 1.5]
+        optimize_neighbor.default.reconstruct_order_random_weight_range: [0.0, 0.2]
+
+      # workloadを強く優先する
+      - optimize_neighbor.default.reconstruct_workload_weight_range: [0.5, 2.0]
+        optimize_neighbor.default.reconstruct_volume_weight_range: [0.0, 0.5]
+        optimize_neighbor.default.reconstruct_pref_spread_weight_range: [0.0, 0.5]
+        optimize_neighbor.default.reconstruct_limit_time_urgency_weight_range: [0.0, 0.5]
+        optimize_neighbor.default.reconstruct_order_random_weight_range: [0.0, 0.3]
+
+      # volumeを強く優先する
+      - optimize_neighbor.default.reconstruct_workload_weight_range: [0.0, 0.5]
+        optimize_neighbor.default.reconstruct_volume_weight_range: [0.5, 2.0]
+        optimize_neighbor.default.reconstruct_pref_spread_weight_range: [0.0, 0.5]
+        optimize_neighbor.default.reconstruct_limit_time_urgency_weight_range: [0.0, 0.5]
+        optimize_neighbor.default.reconstruct_order_random_weight_range: [0.0, 0.3]
+
+      # preference spreadを強く優先する
+      - optimize_neighbor.default.reconstruct_workload_weight_range: [0.0, 0.5]
+        optimize_neighbor.default.reconstruct_volume_weight_range: [0.0, 0.5]
+        optimize_neighbor.default.reconstruct_pref_spread_weight_range: [0.5, 2.0]
+        optimize_neighbor.default.reconstruct_limit_time_urgency_weight_range: [0.0, 0.5]
+        optimize_neighbor.default.reconstruct_order_random_weight_range: [0.0, 0.3]
+
+      # limit timeの厳しいブロックを強く優先する
+      - optimize_neighbor.default.reconstruct_workload_weight_range: [0.0, 0.5]
+        optimize_neighbor.default.reconstruct_volume_weight_range: [0.0, 0.5]
+        optimize_neighbor.default.reconstruct_pref_spread_weight_range: [0.0, 0.5]
+        optimize_neighbor.default.reconstruct_limit_time_urgency_weight_range: [0.5, 2.0]
+        optimize_neighbor.default.reconstruct_order_random_weight_range: [0.0, 0.3]
+
+      # 小さいvolumeを先に入れる
+      - optimize_neighbor.default.reconstruct_workload_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_volume_weight_range: [-1.0, 0.0]
+        optimize_neighbor.default.reconstruct_pref_spread_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_limit_time_urgency_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_order_random_weight_range: [0.0, 0.3]
+
+      # preferenceの自由度が高いブロックを先に入れる
+      - optimize_neighbor.default.reconstruct_workload_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_volume_weight_range: [-0.2, 1.0]
+        optimize_neighbor.default.reconstruct_pref_spread_weight_range: [-1.0, 0.0]
+        optimize_neighbor.default.reconstruct_limit_time_urgency_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_order_random_weight_range: [0.0, 0.3]
+
+      # 特徴量だけで決定する
+      - optimize_neighbor.default.reconstruct_workload_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_volume_weight_range: [-0.2, 1.0]
+        optimize_neighbor.default.reconstruct_pref_spread_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_limit_time_urgency_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_order_random_weight_range: [0.0, 0.0]
+
+      # random性を強める
+      - optimize_neighbor.default.reconstruct_workload_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_volume_weight_range: [-0.2, 1.0]
+        optimize_neighbor.default.reconstruct_pref_spread_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_limit_time_urgency_weight_range: [0.0, 1.0]
+        optimize_neighbor.default.reconstruct_order_random_weight_range: [0.0, 1.5]
+
+      # 広い範囲から多様なorderを生成する
+      - optimize_neighbor.default.reconstruct_workload_weight_range: [-0.5, 1.5]
+        optimize_neighbor.default.reconstruct_volume_weight_range: [-1.0, 1.5]
+        optimize_neighbor.default.reconstruct_pref_spread_weight_range: [-0.5, 1.5]
+        optimize_neighbor.default.reconstruct_limit_time_urgency_weight_range: [0.0, 1.5]
+        optimize_neighbor.default.reconstruct_order_random_weight_range: [0.0, 1.0]
