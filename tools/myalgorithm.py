@@ -14,6 +14,7 @@ from typing import Any
 
 from shapely.geometry import Polygon
 
+VALIDATION_RESERVE_SECONDS = 2.0
 RETURN_BUFFER_SECONDS = 0.5
 
 
@@ -260,7 +261,10 @@ def _load_candidates(output: str) -> list[dict[str, Any]]:
 def algorithm(prob_info, timelimit=60):
     started = time.perf_counter()
     deadline = started + float(timelimit)
-    solver_timelimit = max(0.1, float(timelimit) - RETURN_BUFFER_SECONDS)
+    solver_timelimit = max(
+        0.1,
+        float(timelimit) - VALIDATION_RESERVE_SECONDS - RETURN_BUFFER_SECONDS,
+    )
 
     os.environ.setdefault("RAYON_NUM_THREADS", "4")
     os.environ.setdefault("OMP_NUM_THREADS", "4")

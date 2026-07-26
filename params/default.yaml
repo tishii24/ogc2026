@@ -2,7 +2,7 @@ runtime:
   worker_count: 4
   solver_seed: 1
   preoptimize_seed: 2
-  local_search_time_buffer_seconds: 3.0
+  local_search_time_buffer_seconds: 0.5
   solution_emit_interval_seconds: 5.0
 
 phases:
