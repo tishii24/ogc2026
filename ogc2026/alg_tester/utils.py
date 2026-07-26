@@ -1,3 +1,4 @@
+# ruff: noqa
 # type: ignore
 """
 utils.py -- Bay/Block geometry and feasibility checking utilities

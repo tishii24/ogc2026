@@ -1,9 +1,10 @@
 use crate::*;
-use geo::{Area, BooleanOps, Coord, LineString, Polygon, Translate};
+use geo::{Coord, Distance, Euclidean, Intersects, LineString, Polygon, Translate};
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
-const AREA_EPS: f64 = 1e-3;
+const GEOMETRY_EPS: f64 = 1e-9;
+const COLLISION_MARGIN: f64 = 1e-3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BlockOrient {
@@ -26,7 +27,7 @@ struct PolyLayer {
     block_id: usize,
     orient_idx: usize,
     layer_idx: usize,
-    parts: Vec<ConvexPart>,
+    parts: Option<Vec<ConvexPart>>,
     polygon: Polygon<f64>,
     has_area: bool,
     bbox: Boundsf,
@@ -373,8 +374,8 @@ fn build_shape_geom(block_id: usize, orient_idx: usize, orientation: &Orientatio
     for (layer_idx, layer) in orientation.layers.iter().enumerate() {
         let points: Vec<Pointf> = layer.iter().map(|&[x, y]| Pointf { x, y }).collect();
         let parts = build_convex_parts(&points);
-        let has_area = points.len() >= 3 && signed_area(&points).abs() > AREA_EPS;
-        if parts.is_empty() {
+        let has_area = points.len() >= 3 && signed_area(&points).abs() > GEOMETRY_EPS;
+        if parts.is_none() {
             let method = if has_area {
                 "geo-intersection"
             } else {
@@ -409,23 +410,30 @@ fn build_shape_geom(block_id: usize, orient_idx: usize, orientation: &Orientatio
     ShapeGeom { layers, bbox }
 }
 
-fn build_convex_parts(points: &[Pointf]) -> Vec<ConvexPart> {
-    if points.len() < 3 || signed_area(points).abs() <= AREA_EPS || !is_simple_polygon(points) {
-        return Vec::new();
+fn build_convex_parts(points: &[Pointf]) -> Option<Vec<ConvexPart>> {
+    let polygon_area = signed_area(points).abs();
+    if points.len() < 3 || polygon_area <= GEOMETRY_EPS || !is_simple_polygon(points) {
+        return None;
     }
     if is_convex_polygon(points) {
-        return make_convex_part(points).into_iter().collect();
+        return Some(vec![make_convex_part(points)?]);
     }
 
-    let triangles = triangulate_polygon(points);
-    if triangles.len() != points.len() - 2 {
-        return Vec::new();
+    let triangles = triangulate_polygon(points)?;
+    let covered_area: f64 = triangles
+        .iter()
+        .map(|triangle| signed_area(triangle).abs())
+        .sum();
+    let tolerance =
+        f64::EPSILON * polygon_area.max(covered_area).max(1.0) * points.len() as f64 * 64.0;
+    if (polygon_area - covered_area).abs() > tolerance {
+        return None;
     }
+
     triangles
         .iter()
-        .map(|tri| make_convex_part(tri))
-        .collect::<Option<Vec<_>>>()
-        .unwrap_or_default()
+        .map(|triangle| make_convex_part(triangle))
+        .collect()
 }
 
 fn is_convex_polygon(points: &[Pointf]) -> bool {
@@ -433,7 +441,7 @@ fn is_convex_polygon(points: &[Pointf]) -> bool {
         return false;
     }
     let area = signed_area(points);
-    if area.abs() <= AREA_EPS {
+    if area.abs() <= GEOMETRY_EPS {
         return false;
     }
     let sign = if area > 0.0 { 1.0 } else { -1.0 };
@@ -444,7 +452,7 @@ fn is_convex_polygon(points: &[Pointf]) -> bool {
                 points[(i + 1) % points.len()],
                 points[(i + 2) % points.len()],
             )
-            < -AREA_EPS
+            < -GEOMETRY_EPS
         {
             return false;
         }
@@ -452,9 +460,9 @@ fn is_convex_polygon(points: &[Pointf]) -> bool {
     true
 }
 
-fn triangulate_polygon(points: &[Pointf]) -> Vec<[Pointf; 3]> {
-    if points.len() < 3 || signed_area(points).abs() <= AREA_EPS {
-        return Vec::new();
+fn triangulate_polygon(points: &[Pointf]) -> Option<Vec<[Pointf; 3]>> {
+    if points.len() < 3 || signed_area(points).abs() <= GEOMETRY_EPS {
+        return None;
     }
 
     let mut idx: Vec<usize> = (0..points.len()).collect();
@@ -464,8 +472,8 @@ fn triangulate_polygon(points: &[Pointf]) -> Vec<[Pointf; 3]> {
 
     let mut triangles = Vec::with_capacity(points.len() - 2);
     while idx.len() > 3 {
-        if polygon_area_abs_by_indices(points, &idx) <= AREA_EPS {
-            return triangles;
+        if polygon_area_abs_by_indices(points, &idx) <= GEOMETRY_EPS {
+            return Some(triangles);
         }
 
         let m = idx.len();
@@ -477,7 +485,7 @@ fn triangulate_polygon(points: &[Pointf]) -> Vec<[Pointf; 3]> {
             let i2 = idx[(pos + 1) % m];
             let tri = [points[i0], points[i1], points[i2]];
 
-            if cross(tri[0], tri[1], tri[2]) <= AREA_EPS {
+            if cross(tri[0], tri[1], tri[2]) <= GEOMETRY_EPS {
                 continue;
             }
 
@@ -500,23 +508,23 @@ fn triangulate_polygon(points: &[Pointf]) -> Vec<[Pointf; 3]> {
         }
 
         let Some(pos) = ear_pos else {
-            if polygon_area_abs_by_indices(points, &idx) <= AREA_EPS {
-                return triangles;
+            if polygon_area_abs_by_indices(points, &idx) <= GEOMETRY_EPS {
+                return Some(triangles);
             }
-            return Vec::new();
+            return None;
         };
         idx.remove(pos);
     }
 
     let tri = [points[idx[0]], points[idx[1]], points[idx[2]]];
-    if cross(tri[0], tri[1], tri[2]) <= AREA_EPS {
-        if polygon_area_abs_by_indices(points, &idx) <= AREA_EPS {
-            return triangles;
+    if cross(tri[0], tri[1], tri[2]) <= GEOMETRY_EPS {
+        if polygon_area_abs_by_indices(points, &idx) <= GEOMETRY_EPS {
+            return Some(triangles);
         }
-        return Vec::new();
+        return None;
     }
     triangles.push(tri);
-    triangles
+    Some(triangles)
 }
 
 fn polygon_area_abs_by_indices(points: &[Pointf], idx: &[usize]) -> f64 {
@@ -568,32 +576,33 @@ fn segments_intersect(a: Pointf, b: Pointf, c: Pointf, d: Pointf) -> bool {
     let cd_a = cross(c, d, a);
     let cd_b = cross(c, d, b);
 
-    if ab_c.abs() <= AREA_EPS && point_on_segment(c, a, b) {
+    if ab_c.abs() <= GEOMETRY_EPS && point_on_segment(c, a, b) {
         return true;
     }
-    if ab_d.abs() <= AREA_EPS && point_on_segment(d, a, b) {
+    if ab_d.abs() <= GEOMETRY_EPS && point_on_segment(d, a, b) {
         return true;
     }
-    if cd_a.abs() <= AREA_EPS && point_on_segment(a, c, d) {
+    if cd_a.abs() <= GEOMETRY_EPS && point_on_segment(a, c, d) {
         return true;
     }
-    if cd_b.abs() <= AREA_EPS && point_on_segment(b, c, d) {
+    if cd_b.abs() <= GEOMETRY_EPS && point_on_segment(b, c, d) {
         return true;
     }
 
-    ((ab_c > AREA_EPS && ab_d < -AREA_EPS) || (ab_c < -AREA_EPS && ab_d > AREA_EPS))
-        && ((cd_a > AREA_EPS && cd_b < -AREA_EPS) || (cd_a < -AREA_EPS && cd_b > AREA_EPS))
+    ((ab_c > GEOMETRY_EPS && ab_d < -GEOMETRY_EPS) || (ab_c < -GEOMETRY_EPS && ab_d > GEOMETRY_EPS))
+        && ((cd_a > GEOMETRY_EPS && cd_b < -GEOMETRY_EPS)
+            || (cd_a < -GEOMETRY_EPS && cd_b > GEOMETRY_EPS))
 }
 
 fn point_on_segment(p: Pointf, a: Pointf, b: Pointf) -> bool {
-    a.x.min(b.x) - AREA_EPS <= p.x
-        && p.x <= a.x.max(b.x) + AREA_EPS
-        && a.y.min(b.y) - AREA_EPS <= p.y
-        && p.y <= a.y.max(b.y) + AREA_EPS
+    a.x.min(b.x) - GEOMETRY_EPS <= p.x
+        && p.x <= a.x.max(b.x) + GEOMETRY_EPS
+        && a.y.min(b.y) - GEOMETRY_EPS <= p.y
+        && p.y <= a.y.max(b.y) + GEOMETRY_EPS
 }
 
 fn make_convex_part(points: &[Pointf]) -> Option<ConvexPart> {
-    if points.len() < 3 || signed_area(points).abs() <= AREA_EPS {
+    if points.len() < 3 || signed_area(points).abs() <= GEOMETRY_EPS {
         return None;
     }
     let points = if signed_area(points) >= 0.0 {
@@ -620,9 +629,9 @@ fn cross(a: Pointf, b: Pointf, c: Pointf) -> f64 {
 }
 
 fn point_in_triangle_strict(p: Pointf, t: [Pointf; 3]) -> bool {
-    cross(t[0], t[1], p) > AREA_EPS
-        && cross(t[1], t[2], p) > AREA_EPS
-        && cross(t[2], t[0], p) > AREA_EPS
+    cross(t[0], t[1], p) > GEOMETRY_EPS
+        && cross(t[1], t[2], p) > GEOMETRY_EPS
+        && cross(t[2], t[0], p) > GEOMETRY_EPS
 }
 
 fn bbox_of_points(points: &[[f64; 2]]) -> Boundsf {
@@ -737,7 +746,9 @@ fn rasterize_geo_pair(
     for dy in range.min_dy..=range.max_dy {
         for dx in range.min_dx..=range.max_dx {
             let shifted_fixed = fixed.translate(dx as f64, dy as f64);
-            if moving.intersection(&shifted_fixed).unsigned_area() > AREA_EPS {
+            if moving.intersects(&shifted_fixed)
+                || Euclidean.distance(moving, &shifted_fixed) <= COLLISION_MARGIN
+            {
                 builder.add_x_interval(dy, dx, dx);
             }
         }
@@ -747,19 +758,19 @@ fn rasterize_geo_pair(
 fn build_layer_pair_grid(a: &PolyLayer, b: &PolyLayer) -> CollisionGrid {
     let range = delta_range(a.bbox, b.bbox);
     let mut builder = CollisionGridBuilder::new(range);
-    if a.parts.is_empty() || b.parts.is_empty() {
+    let (Some(a_parts), Some(b_parts)) = (&a.parts, &b.parts) else {
         if a.has_area && b.has_area {
             rasterize_geo_pair(&mut builder, &a.polygon, &b.polygon, range);
         }
         return builder.finish();
-    }
+    };
     let mut scratch = ConvexScratch {
         neg_b: Vec::new(),
         hull: Vec::new(),
     };
 
-    for pa in &a.parts {
-        for pb in &b.parts {
+    for pa in a_parts {
+        for pb in b_parts {
             rasterize_convex_pair(&mut builder, pa, pb, &mut scratch, a, b);
         }
     }
@@ -776,7 +787,7 @@ fn rasterize_convex_pair(
     b_layer: &PolyLayer,
 ) {
     let hull = minkowski_difference_hull(a, b, scratch);
-    if hull.len() < 3 || signed_area(hull).abs() <= AREA_EPS {
+    if hull.len() < 3 || signed_area(hull).abs() <= GEOMETRY_EPS {
         eprintln!(
             "[collision-fallback] moving=({},{},{}) fixed=({},{},{}) reason=degenerate-minkowski-hull method=geo-intersection",
             a_layer.block_id,
@@ -799,8 +810,8 @@ fn rasterize_convex_pair(
         min_y = min_y.min(p.y);
         max_y = max_y.max(p.y);
     }
-    let min_dy = (min_y - AREA_EPS).ceil() as i64;
-    let max_dy = (max_y + AREA_EPS).floor() as i64;
+    let min_dy = (min_y - COLLISION_MARGIN).ceil() as i64;
+    let max_dy = (max_y + COLLISION_MARGIN).floor() as i64;
     let min_dy = min_dy.max(builder.delta.min_dy);
     let max_dy = max_dy.min(builder.delta.max_dy);
 
@@ -905,17 +916,17 @@ fn horizontal_slice_conservative(poly: &[Pointf], dy: i64) -> Option<(i64, i64)>
         let ey = q.y - p.y;
         let rhs = ex * (y - p.y);
 
-        if ey > AREA_EPS {
+        if ey > GEOMETRY_EPS {
             high = high.min(p.x + rhs / ey);
-        } else if ey < -AREA_EPS {
+        } else if ey < -GEOMETRY_EPS {
             low = low.max(p.x + rhs / ey);
-        } else if ex * (y - p.y) < -AREA_EPS {
+        } else if ex * (y - p.y) < -COLLISION_MARGIN {
             return None;
         }
     }
 
-    let min_dx = (low - AREA_EPS).ceil() as i64;
-    let max_dx = (high + AREA_EPS).floor() as i64;
+    let min_dx = (low - COLLISION_MARGIN).ceil() as i64;
+    let max_dx = (high + COLLISION_MARGIN).floor() as i64;
     if min_dx <= max_dx {
         Some((min_dx, max_dx))
     } else {
