@@ -112,11 +112,11 @@ optimize_neighbor:
     remove_fluidity_pref_spread_weight_range: [0.5, 2.0]
     remove_x_distance_weight_max: 3.0
     remove_y_distance_weight_max: 3.0
-    reconstruct_workload_weight_range: [0.0, 1.0]
-    reconstruct_volume_weight_range: [-0.2, 1.0]
-    reconstruct_pref_spread_weight_range: [0.0, 1.0]
-    reconstruct_limit_time_urgency_weight_range: [0.0, 1.0]
-    reconstruct_order_random_weight_range: [0.0, 0.5]
+    reconstruct_workload_weight_range: [0.0, 0.5]
+    reconstruct_volume_weight_range: [0.5, 2.0]
+    reconstruct_pref_spread_weight_range: [0.0, 0.5]
+    reconstruct_limit_time_urgency_weight_range: [0.5, 2.0]
+    reconstruct_order_random_weight_range: [0.0, 0.3]
     shift_dy_range: [-5, 0]
     rotate_dy_range: [-2, 2]
     swap_neighbor_top_k: 32
