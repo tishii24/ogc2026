@@ -3,7 +3,8 @@ runtime:
   solver_seed: 1
   preoptimize_seed: 2
   solve_time_buffer_seconds: 1.5
-  solution_emit_interval_seconds: 10.0
+  solution_emit_min_interval_seconds: 10.0
+  solution_emit_max_count: 10
 
 phases:
   initial_preoptimize:

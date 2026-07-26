@@ -109,7 +109,7 @@ impl CandidateEmitter {
             *last_emitted = elapsed;
         }
         log!(
-            "[{:.4}] [candidate-emit] score={:.3}, force={}, status={}, bytes={}, serialize={:.4}s, write={:.4}s, total={:.4}s",
+            "[{:.4}] [candidate-emit] score={:.3}, force={}, status={}, bytes={}, serialize={:.6}s, write={:.6}s, total={:.6}s",
             timer.elapsed_seconds(),
             state.score,
             force,
@@ -186,7 +186,6 @@ pub fn solve(
     params: &SolverParams,
 ) -> Result<Solution, String> {
     let deadline = timelimit - params.runtime.solve_time_buffer_seconds;
-    let candidate_emitter = CandidateEmitter::new(params.runtime.solution_emit_interval_seconds);
 
     log!("[{:.4}] building precompute...", timer.elapsed_seconds());
     let pre = Precompute::build(problem, &params.precompute);
@@ -246,6 +245,21 @@ pub fn solve(
         timer.elapsed_seconds(),
         initial.score
     );
+
+    let global_start = timer.elapsed_seconds();
+    let global_annealing_time = (deadline - global_start).max(0.0);
+    let interval_seconds = params
+        .runtime
+        .solution_emit_min_interval_seconds
+        .max(global_annealing_time / params.runtime.solution_emit_max_count as f64);
+    log!(
+        "[{:.4}] [candidate-emit] interval={:.3}s, global_time={:.3}s, max_count={}",
+        timer.elapsed_seconds(),
+        interval_seconds,
+        global_annealing_time,
+        params.runtime.solution_emit_max_count,
+    );
+    let candidate_emitter = CandidateEmitter::new(interval_seconds);
     candidate_emitter.emit(&initial, timer, true);
 
     let global = GlobalAnnealing::new(
@@ -256,7 +270,6 @@ pub fn solve(
         timer,
         &candidate_emitter,
     );
-    let global_start = timer.elapsed_seconds();
     let constrained_time_limit = phase_time_limit(
         (deadline - global_start).max(0.0),
         params.phases.global_constrained.time_ratio,

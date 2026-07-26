@@ -69,7 +69,8 @@ pub struct RuntimeParams {
     pub solver_seed: u64,
     pub preoptimize_seed: u64,
     pub solve_time_buffer_seconds: f64,
-    pub solution_emit_interval_seconds: f64,
+    pub solution_emit_min_interval_seconds: f64,
+    pub solution_emit_max_count: usize,
 }
 
 #[derive(Clone, Debug, Deserialize)]

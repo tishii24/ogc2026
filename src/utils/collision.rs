@@ -4,7 +4,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 const GEOMETRY_EPS: f64 = 1e-9;
-const COLLISION_MARGIN: f64 = 1e-3;
+const COLLISION_MARGIN: f64 = 1e-6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BlockOrient {
@@ -384,7 +384,7 @@ fn build_shape_geom(block_id: usize, orient_idx: usize, orientation: &Orientatio
             eprintln!(
                 "[collision-fallback] block={block_id} orient={orient_idx} layer={layer_idx} reason=convex-decomposition-failed method={method}"
             );
-            if DEBUG {
+            if PANIC_AT_FALLBACK {
                 panic!("fallback has occured at collision!");
             }
         }
@@ -415,7 +415,7 @@ fn build_shape_geom(block_id: usize, orient_idx: usize, orientation: &Orientatio
 
 fn build_convex_parts(points: &[Pointf]) -> Option<Vec<ConvexPart>> {
     let polygon_area = signed_area(points).abs();
-    if points.len() < 3 || polygon_area <= GEOMETRY_EPS || !is_simple_polygon(points) {
+    if points.len() < 3 || polygon_area <= GEOMETRY_EPS {
         return None;
     }
     if is_convex_polygon(points) {
@@ -427,9 +427,7 @@ fn build_convex_parts(points: &[Pointf]) -> Option<Vec<ConvexPart>> {
         .iter()
         .map(|triangle| signed_area(triangle).abs())
         .sum();
-    let tolerance =
-        f64::EPSILON * polygon_area.max(covered_area).max(1.0) * points.len() as f64 * 64.0;
-    if (polygon_area - covered_area).abs() > tolerance {
+    if (polygon_area - covered_area).abs() > GEOMETRY_EPS {
         return None;
     }
 
@@ -551,23 +549,6 @@ fn diagonal_clear(points: &[Pointf], idx: &[usize], a_idx: usize, b_idx: usize) 
         }
         if segments_intersect(a, b, points[c_idx], points[d_idx]) {
             return false;
-        }
-    }
-    true
-}
-
-fn is_simple_polygon(points: &[Pointf]) -> bool {
-    let n = points.len();
-    for i in 0..n {
-        let next_i = (i + 1) % n;
-        for j in i + 1..n {
-            let next_j = (j + 1) % n;
-            if i == j || next_i == j || next_j == i {
-                continue;
-            }
-            if segments_intersect(points[i], points[next_i], points[j], points[next_j]) {
-                return false;
-            }
         }
     }
     true
@@ -800,7 +781,7 @@ fn rasterize_convex_pair(
             b_layer.orient_idx,
             b_layer.layer_idx,
         );
-        if DEBUG {
+        if PANIC_AT_FALLBACK {
             panic!("fallback has occured at collision!");
         }
         let a_polygon = pointf_polygon(&a.points);

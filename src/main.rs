@@ -20,7 +20,7 @@ fn main() {
         eprintln!("error: {err}");
         process::exit(1);
     }
-    eprintln!("[{:.4}] end.", timer.elapsed_seconds());
+    eprintln!("[{:.4}] [main] end.", timer.elapsed_seconds());
     process::exit(0);
 }
 
