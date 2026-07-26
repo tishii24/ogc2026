@@ -1,11 +1,18 @@
-const DEBUG: bool = true;
-pub const ENABLE_LOG: bool = DEBUG;
-pub const PANIC_AT_FALLBACK: bool = DEBUG;
+use std::sync::OnceLock;
+
+#[inline]
+pub fn local_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("OGC_LOCAL")
+            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    })
+}
 
 #[macro_export]
 macro_rules! log {
     ($($arg:tt)*) => {{
-        if const { $crate::ENABLE_LOG } {
+        if $crate::local_enabled() {
             eprintln!($($arg)*);
         }
     }};

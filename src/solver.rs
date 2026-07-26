@@ -12,7 +12,6 @@ use rayon::prelude::*;
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashSet},
-    eprintln,
     io::{self, Write},
     sync::Mutex,
 };

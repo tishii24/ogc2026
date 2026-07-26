@@ -28,8 +28,7 @@ struct PolyLayer {
     orient_idx: usize,
     layer_idx: usize,
     parts: Option<Vec<ConvexPart>>,
-    polygon: Polygon<f64>,
-    has_area: bool,
+    polygon: Option<Polygon<f64>>,
     bbox: Boundsf,
 }
 
@@ -357,14 +356,25 @@ fn build_all_fit_ranges(
         .collect()
 }
 
-fn layer_polygon(layer: &[[f64; 2]]) -> Polygon<f64> {
-    let mut coords: Vec<_> = layer.iter().map(|&[x, y]| Coord { x, y }).collect();
-    if coords.first() != coords.last()
-        && let Some(&first) = coords.first()
-    {
-        coords.push(first);
+fn normalize_polygon_points(layer: &[[f64; 2]]) -> Vec<Pointf> {
+    let mut points = Vec::with_capacity(layer.len());
+    for &[x, y] in layer {
+        if points
+            .last()
+            .is_none_or(|point: &Pointf| point.x != x || point.y != y)
+        {
+            points.push(Pointf { x, y });
+        }
     }
-    Polygon::new(LineString::new(coords), vec![])
+
+    if points.len() >= 2 {
+        let first = points[0];
+        let last = points[points.len() - 1];
+        if first.x == last.x && first.y == last.y {
+            points.pop();
+        }
+    }
+    points
 }
 
 fn build_shape_geom(block_id: usize, orient_idx: usize, orientation: &Orientation) -> ShapeGeom {
@@ -372,20 +382,22 @@ fn build_shape_geom(block_id: usize, orient_idx: usize, orientation: &Orientatio
     let mut all_bbox: Option<Boundsf> = None;
 
     for (layer_idx, layer) in orientation.layers.iter().enumerate() {
-        let points: Vec<Pointf> = layer.iter().map(|&[x, y]| Pointf { x, y }).collect();
+        let points = normalize_polygon_points(layer);
         let parts = build_convex_parts(&points);
-        let has_area = points.len() >= 3 && signed_area(&points).abs() > GEOMETRY_EPS;
+        let polygon = (points.len() >= 3).then(|| pointf_polygon(&points));
+        // Fallback occurs when the normalized layer is degenerate, ear clipping cannot
+        // complete, a generated triangle is degenerate, or triangle coverage is incomplete.
         if parts.is_none() {
-            let method = if has_area {
+            let method = if polygon.is_some() {
                 "geo-intersection"
             } else {
                 "empty-area"
             };
-            eprintln!(
+            log!(
                 "[collision-fallback] block={block_id} orient={orient_idx} layer={layer_idx} reason=convex-decomposition-failed method={method}"
             );
-            if PANIC_AT_FALLBACK {
-                panic!("fallback has occured at collision!");
+            if local_enabled() {
+                panic!("fallback has occurred at collision");
             }
         }
         let bbox = bbox_of_points(layer);
@@ -398,8 +410,7 @@ fn build_shape_geom(block_id: usize, orient_idx: usize, orientation: &Orientatio
             orient_idx,
             layer_idx,
             parts,
-            polygon: layer_polygon(layer),
-            has_area,
+            polygon,
             bbox,
         });
     }
@@ -743,8 +754,8 @@ fn build_layer_pair_grid(a: &PolyLayer, b: &PolyLayer) -> CollisionGrid {
     let range = delta_range(a.bbox, b.bbox);
     let mut builder = CollisionGridBuilder::new(range);
     let (Some(a_parts), Some(b_parts)) = (&a.parts, &b.parts) else {
-        if a.has_area && b.has_area {
-            rasterize_geo_pair(&mut builder, &a.polygon, &b.polygon, range);
+        if let (Some(a_polygon), Some(b_polygon)) = (&a.polygon, &b.polygon) {
+            rasterize_geo_pair(&mut builder, a_polygon, b_polygon, range);
         }
         return builder.finish();
     };
@@ -772,7 +783,9 @@ fn rasterize_convex_pair(
 ) {
     let hull = minkowski_difference_hull(a, b, scratch);
     if hull.len() < 3 || signed_area(hull).abs() <= GEOMETRY_EPS {
-        eprintln!(
+        // Convex decomposition succeeded, but collinear or numerically degenerate
+        // parts can still produce a Minkowski hull without an interior.
+        log!(
             "[collision-fallback] moving=({},{},{}) fixed=({},{},{}) reason=degenerate-minkowski-hull method=geo-intersection",
             a_layer.block_id,
             a_layer.orient_idx,
@@ -781,8 +794,8 @@ fn rasterize_convex_pair(
             b_layer.orient_idx,
             b_layer.layer_idx,
         );
-        if PANIC_AT_FALLBACK {
-            panic!("fallback has occured at collision!");
+        if local_enabled() {
+            panic!("fallback has occurred at collision");
         }
         let a_polygon = pointf_polygon(&a.points);
         let b_polygon = pointf_polygon(&b.points);
