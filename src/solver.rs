@@ -369,7 +369,7 @@ fn try_large_reconstruct<R: Random>(
 ) -> Option<Vec<ScheduledBlock>> {
     let k = sample_removed_count(rng, params).min(problem.blocks.len());
 
-    let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng, params);
+    let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng, params)?;
     if removed_ids.is_empty() {
         return None;
     }
@@ -885,7 +885,7 @@ fn choose_local_proximity_seeds<R: Random>(
     bad_pool: &[usize],
     rng: &mut R,
     params: &NeighborParams,
-) -> Vec<RemoveSeed> {
+) -> Option<Vec<RemoveSeed>> {
     let pool_len = (k * params.remove_pool_factor).min(schedule.len()).max(k);
     let slack_weight = gen_rangef(rng, params.remove_fluidity_slack_weight_range);
     let pref_spread_weight = gen_rangef(rng, params.remove_fluidity_pref_spread_weight_range);
@@ -959,7 +959,7 @@ fn choose_local_proximity_seeds<R: Random>(
         };
         seed_pool.retain(|&block_id| !used[block_id]);
         rng.shuffle(&mut seed_pool);
-        let seed_id = seed_pool[0];
+        let seed_id = *seed_pool.get(0)?;
         used[seed_id] = true;
         seeds.push(RemoveSeed {
             block_id: seed_id,
@@ -991,7 +991,7 @@ fn choose_local_proximity_seeds<R: Random>(
                 .min(seed_pool.len()),
         );
         rng.shuffle(&mut seed_pool);
-        let seed_id = seed_pool[0];
+        let seed_id = *seed_pool.get(0)?;
         used[seed_id] = true;
         seeds.push(RemoveSeed {
             block_id: seed_id,
@@ -999,7 +999,7 @@ fn choose_local_proximity_seeds<R: Random>(
         });
     }
 
-    seeds
+    Some(seeds)
 }
 
 fn collect_removed_blocks<R: Random>(
@@ -1061,9 +1061,9 @@ fn choose_removed_blocks<R: Random>(
     k: usize,
     rng: &mut R,
     params: &NeighborParams,
-) -> Vec<usize> {
+) -> Option<Vec<usize>> {
     if schedule.is_empty() || k == 0 {
-        return Vec::new();
+        return None;
     }
 
     let k = k.min(schedule.len());
@@ -1085,9 +1085,9 @@ fn choose_removed_blocks<R: Random>(
     let seeds = match strategy {
         RemoveSeedStrategy::LocalProximity => choose_local_proximity_seeds(
             problem, pre, schedule, &by_block, k, &bad_pool, rng, params,
-        ),
+        )?,
     };
-    collect_removed_blocks(
+    let blocks = collect_removed_blocks(
         problem,
         pre,
         schedule,
@@ -1098,7 +1098,8 @@ fn choose_removed_blocks<R: Random>(
         remove_x_distance_weight,
         remove_y_distance_weight,
         rng,
-    )
+    );
+    Some(blocks)
 }
 
 fn block_volume(problem: &Problem, block_areas: &[f64], block_id: usize) -> f64 {
