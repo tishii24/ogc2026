@@ -12,6 +12,7 @@ use rayon::prelude::*;
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashSet},
+    eprintln,
     io::{self, Write},
     sync::Mutex,
 };
@@ -76,18 +77,48 @@ impl CandidateEmitter {
             return;
         }
 
+        let emit_started = timer.elapsed_seconds();
+        let serialize_started = timer.elapsed_seconds();
         let candidate = SolutionCandidate {
             score: state.score,
             solution: schedule_to_solution(&state.blocks),
         };
-        let Ok(output) = serde_json::to_string(&candidate) else {
-            return;
+        let output = match serde_json::to_string(&candidate) {
+            Ok(output) => output,
+            Err(err) => {
+                log!(
+                    "[{:.4}] [candidate-emit] score={:.3}, force={}, status=serialize-failed, error={}, total={:.4}s",
+                    timer.elapsed_seconds(),
+                    state.score,
+                    force,
+                    err,
+                    timer.elapsed_seconds() - emit_started,
+                );
+                return;
+            }
         };
+        let serialize_seconds = timer.elapsed_seconds() - serialize_started;
+
+        let write_started = timer.elapsed_seconds();
         let stdout = io::stdout();
         let mut stdout = stdout.lock();
-        if writeln!(stdout, "{output}").is_ok() && stdout.flush().is_ok() {
+        let succeeded = writeln!(stdout, "{output}").is_ok() && stdout.flush().is_ok();
+        let write_seconds = timer.elapsed_seconds() - write_started;
+        let total_seconds = timer.elapsed_seconds() - emit_started;
+        if succeeded {
             *last_emitted = elapsed;
         }
+        log!(
+            "[{:.4}] [candidate-emit] score={:.3}, force={}, status={}, bytes={}, serialize={:.4}s, write={:.4}s, total={:.4}s",
+            timer.elapsed_seconds(),
+            state.score,
+            force,
+            if succeeded { "ok" } else { "write-failed" },
+            output.len(),
+            serialize_seconds,
+            write_seconds,
+            total_seconds,
+        );
     }
 }
 
@@ -154,7 +185,7 @@ pub fn solve(
     timer: Timer,
     params: &SolverParams,
 ) -> Result<Solution, String> {
-    let deadline = timelimit - params.runtime.local_search_time_buffer_seconds;
+    let deadline = timelimit - params.runtime.solve_time_buffer_seconds;
     let candidate_emitter = CandidateEmitter::new(params.runtime.solution_emit_interval_seconds);
 
     log!("[{:.4}] building precompute...", timer.elapsed_seconds());

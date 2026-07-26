@@ -1,4 +1,5 @@
 use std::env;
+use std::eprintln;
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
@@ -19,6 +20,7 @@ fn main() {
         eprintln!("error: {err}");
         process::exit(1);
     }
+    eprintln!("[{:.4}] end.", timer.elapsed_seconds());
     process::exit(0);
 }
 

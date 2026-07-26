@@ -14,12 +14,19 @@ from typing import Any
 
 from shapely.geometry import Polygon
 
-VALIDATION_RESERVE_SECONDS = 2.0
+VALIDATION_RESERVE_SECONDS = 1.0
 RETURN_BUFFER_SECONDS = 0.5
 
 
 class FeasibilityTimeout(Exception):
     pass
+
+
+def _log(started: float, message: str) -> None:
+    print(
+        f"[{time.perf_counter() - started:.4f}] [myalgorithm] {message}",
+        file=sys.stderr,
+    )
 
 
 def _check_time(stop_time: float) -> None:
@@ -237,9 +244,10 @@ def _params_path() -> pathlib.Path:
     return pathlib.Path(__file__).resolve().parent / "params.yaml"
 
 
-def _load_candidates(output: str) -> list[dict[str, Any]]:
+def _load_candidates(output: str) -> tuple[list[dict[str, Any]], int]:
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
+    received_count = 0
     for line in output.splitlines():
         try:
             candidate = json.loads(line)
@@ -250,12 +258,19 @@ def _load_candidates(output: str) -> list[dict[str, Any]]:
             key = json.dumps(solution, sort_keys=True, separators=(",", ":"))
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             continue
+        received_count += 1
         if key in seen:
             continue
         seen.add(key)
-        candidates.append({"score": score, "solution": solution})
+        candidates.append(
+            {
+                "score": score,
+                "solution": solution,
+                "source_index": received_count,
+            }
+        )
     candidates.sort(key=lambda candidate: candidate["score"])
-    return candidates
+    return candidates, received_count
 
 
 def algorithm(prob_info, timelimit=60):
@@ -280,6 +295,7 @@ def algorithm(prob_info, timelimit=60):
     except OSError:
         pass
 
+    _log(started, f"solver start: timelimit={solver_timelimit:.3f}s")
     process = subprocess.Popen(
         [
             str(solver),
@@ -301,31 +317,93 @@ def algorithm(prob_info, timelimit=60):
             timeout=max(0.1, deadline - time.perf_counter() - RETURN_BUFFER_SECONDS),
         )
     except subprocess.TimeoutExpired:
+        _log(started, "solver timeout: killing process")
         process.kill()
         output, _ = process.communicate()
 
-    if process.returncode != 0:
-        print(f"solver exited with code {process.returncode}", file=sys.stderr)
+    _log(started, f"solver finished: code={process.returncode}")
 
-    candidates = _load_candidates(output)
+    candidates, received_count = _load_candidates(output)
+    _log(
+        started,
+        f"candidates: received={received_count}, unique={len(candidates)}",
+    )
     if not candidates:
         raise RuntimeError(f"solver produced no solution candidates (code={process.returncode})")
-    fallback = candidates[0]["solution"]
+    for rank, candidate in enumerate(candidates, start=1):
+        _log(
+            started,
+            f"candidate: rank={rank}/{len(candidates)}, "
+            f"source_index={candidate['source_index']}/{received_count}, "
+            f"score={candidate['score']:.3f}",
+        )
+
+    fallback = candidates[0]
     stop_time = deadline - RETURN_BUFFER_SECONDS
 
     try:
-        for candidate in candidates:
+        for rank, candidate in enumerate(candidates, start=1):
             if time.perf_counter() >= stop_time:
-                return fallback
+                _log(
+                    started,
+                    f"return: rank=1/{len(candidates)}, "
+                    f"source_index={fallback['source_index']}/{received_count}, "
+                    f"score={fallback['score']:.3f}, reason=deadline",
+                )
+                return fallback["solution"]
+            validation_started = time.perf_counter()
+            _log(
+                started,
+                f"validation start: rank={rank}/{len(candidates)}, "
+                f"source_index={candidate['source_index']}/{received_count}, "
+                f"score={candidate['score']:.3f}",
+            )
             feasible = check_feasibility_fast(
                 prob_info, candidate["solution"], stop_time
             )
+            duration = time.perf_counter() - validation_started
             if feasible is None:
-                return fallback
+                _log(
+                    started,
+                    f"validation result: rank={rank}/{len(candidates)}, "
+                    f"score={candidate['score']:.3f}, feasible=timeout, "
+                    f"duration={duration:.4f}s",
+                )
+                _log(
+                    started,
+                    f"return: rank=1/{len(candidates)}, "
+                    f"source_index={fallback['source_index']}/{received_count}, "
+                    f"score={fallback['score']:.3f}, reason=validation-timeout",
+                )
+                return fallback["solution"]
+            _log(
+                started,
+                f"validation result: rank={rank}/{len(candidates)}, "
+                f"score={candidate['score']:.3f}, feasible={str(feasible).lower()}, "
+                f"duration={duration:.4f}s",
+            )
             if feasible:
+                _log(
+                    started,
+                    f"return: rank={rank}/{len(candidates)}, "
+                    f"source_index={candidate['source_index']}/{received_count}, "
+                    f"score={candidate['score']:.3f}, reason=feasible",
+                )
                 return candidate["solution"]
     except Exception as exc:
-        print(f"candidate validation failed: {exc}", file=sys.stderr)
-        return fallback
+        _log(started, f"candidate validation failed: {exc}")
+        _log(
+            started,
+            f"return: rank=1/{len(candidates)}, "
+            f"source_index={fallback['source_index']}/{received_count}, "
+            f"score={fallback['score']:.3f}, reason=validation-error",
+        )
+        return fallback["solution"]
 
-    return fallback
+    _log(
+        started,
+        f"return: rank=1/{len(candidates)}, "
+        f"source_index={fallback['source_index']}/{received_count}, "
+        f"score={fallback['score']:.3f}, reason=all-infeasible",
+    )
+    return fallback["solution"]
