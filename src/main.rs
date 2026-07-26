@@ -43,10 +43,7 @@ fn run(timer: Timer) -> Result<(), String> {
     let problem: Problem = serde_json::from_str(&input)
         .map_err(|err| format!("failed to parse problem json: {err}"))?;
 
-    let solution = solver::solve(&problem, args.timelimit, timer, &params)?;
-    let output = serde_json::to_string(&solution)
-        .map_err(|err| format!("failed to serialize solution json: {err}"))?;
-    println!("{output}");
+    solver::solve(&problem, args.timelimit, timer, &params)?;
     Ok(())
 }
 

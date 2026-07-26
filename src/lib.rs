@@ -1,9 +1,9 @@
-pub const ENABLE_LOG: bool = true;
+pub const DEBUG: bool = true;
 
 #[macro_export]
 macro_rules! log {
     ($($arg:tt)*) => {{
-        if const { $crate::ENABLE_LOG } {
+        if const { $crate::DEBUG } {
             eprintln!($($arg)*);
         }
     }};

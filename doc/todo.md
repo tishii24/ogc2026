@@ -1,4 +1,5 @@
 todo:
+- logをDEBUGにして、fallbackは失敗扱いにする
 - reconstructの配置をgreedyにやらずに全探索する
 - swapを入れる
 - 温度の調整

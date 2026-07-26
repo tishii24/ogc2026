@@ -37,7 +37,7 @@ python tools/composer.py $VERSION --params $PARAMS
 python tools/runner.py $VERSION --case train/prob_1.json --timelimit $TIMELIMIT
 
 # suite の実行（別のパラメータを使う場合）
-python tools/runner.py $VERSION --suite suites/half.json --timelimit $TIMELIMIT --jobs 4 --params $PARAMS
+python tools/runner.py $VERSION --suite suites/half.json --timelimit $TIMELIMIT --params $PARAMS
 
 # ビジュアライザの作成
 python tools/visualizer.py log/$VERSION/$TIMELIMIT

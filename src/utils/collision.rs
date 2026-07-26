@@ -384,6 +384,9 @@ fn build_shape_geom(block_id: usize, orient_idx: usize, orientation: &Orientatio
             eprintln!(
                 "[collision-fallback] block={block_id} orient={orient_idx} layer={layer_idx} reason=convex-decomposition-failed method={method}"
             );
+            if DEBUG {
+                panic!("fallback has occured at collision!");
+            }
         }
         let bbox = bbox_of_points(layer);
         all_bbox = Some(match all_bbox {
@@ -797,6 +800,9 @@ fn rasterize_convex_pair(
             b_layer.orient_idx,
             b_layer.layer_idx,
         );
+        if DEBUG {
+            panic!("fallback has occured at collision!");
+        }
         let a_polygon = pointf_polygon(&a.points);
         let b_polygon = pointf_polygon(&b.points);
         let range = delta_range(bbox_of_pointfs(&a.points), bbox_of_pointfs(&b.points));

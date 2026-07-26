@@ -12,6 +12,7 @@ use rayon::prelude::*;
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashSet},
+    io::{self, Write},
     sync::Mutex,
 };
 
@@ -47,6 +48,47 @@ pub(crate) struct OptimizeState {
     pub(crate) score: f64,
     pub(crate) z1: i64,
     pub(crate) blocks: Vec<ScheduledBlock>,
+}
+
+#[derive(serde::Serialize)]
+struct SolutionCandidate {
+    score: f64,
+    solution: Solution,
+}
+
+pub(crate) struct CandidateEmitter {
+    interval_seconds: f64,
+    last_emitted: Mutex<f64>,
+}
+
+impl CandidateEmitter {
+    fn new(interval_seconds: f64) -> Self {
+        Self {
+            interval_seconds,
+            last_emitted: Mutex::new(f64::NEG_INFINITY),
+        }
+    }
+
+    pub(crate) fn emit(&self, state: &OptimizeState, timer: Timer, force: bool) {
+        let elapsed = timer.elapsed_seconds();
+        let mut last_emitted = self.last_emitted.lock().unwrap();
+        if !force && elapsed - *last_emitted < self.interval_seconds {
+            return;
+        }
+
+        let candidate = SolutionCandidate {
+            score: state.score,
+            solution: schedule_to_solution(&state.blocks),
+        };
+        let Ok(output) = serde_json::to_string(&candidate) else {
+            return;
+        };
+        let stdout = io::stdout();
+        let mut stdout = stdout.lock();
+        if writeln!(stdout, "{output}").is_ok() && stdout.flush().is_ok() {
+            *last_emitted = elapsed;
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -113,6 +155,7 @@ pub fn solve(
     params: &SolverParams,
 ) -> Result<Solution, String> {
     let deadline = timelimit - params.runtime.local_search_time_buffer_seconds;
+    let candidate_emitter = CandidateEmitter::new(params.runtime.solution_emit_interval_seconds);
 
     log!("[{:.4}] building precompute...", timer.elapsed_seconds());
     let pre = Precompute::build(problem, &params.precompute);
@@ -172,6 +215,7 @@ pub fn solve(
         timer.elapsed_seconds(),
         initial.score
     );
+    candidate_emitter.emit(&initial, timer, true);
 
     let global = GlobalAnnealing::new(
         problem,
@@ -179,6 +223,7 @@ pub fn solve(
         &initial_abstract,
         params.preoptimize.precedence_margin,
         timer,
+        &candidate_emitter,
     );
     let global_start = timer.elapsed_seconds();
     let constrained_time_limit = phase_time_limit(
@@ -202,6 +247,7 @@ pub fn solve(
         timer.elapsed_seconds(),
         initial.score
     );
+    candidate_emitter.emit(&initial, timer, true);
 
     let best = global.run(
         initial,
@@ -213,6 +259,7 @@ pub fn solve(
         params.runtime.solver_seed.wrapping_add(1 << 32),
         params.runtime.worker_count,
     );
+    candidate_emitter.emit(&best, timer, true);
     Ok(schedule_to_solution(&best.blocks))
 }
 

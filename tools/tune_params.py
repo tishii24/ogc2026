@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa
 """Tune solver parameters step by step using runner.py and stats.py."""
 
 from __future__ import annotations
@@ -122,7 +123,6 @@ def run_candidate(
     params_path: Path,
     suite: Path,
     timelimit: float,
-    jobs: int,
 ) -> None:
     command = [
         sys.executable,
@@ -132,8 +132,6 @@ def run_candidate(
         str(suite),
         "--timelimit",
         str(timelimit),
-        "--jobs",
-        str(jobs),
     ]
     compose_solution(root, candidate_version, params_path)
     try:
@@ -185,7 +183,6 @@ def main() -> int:
     base_params_path = resolve_path(root, str(config["base_params"]))
     suite = resolve_path(root, str(config["suite"]))
     timelimit = float(config["timelimit"])
-    jobs = int(config.get("jobs", 1))
     steps = config["steps"]
 
     with base_params_path.open(encoding="utf-8") as f:
@@ -203,7 +200,6 @@ def main() -> int:
         "base_params": str(base_params_path),
         "suite": str(suite),
         "timelimit": timelimit,
-        "jobs": jobs,
         "steps": [],
     }
 
@@ -240,7 +236,6 @@ def main() -> int:
                 params_path,
                 suite,
                 timelimit,
-                jobs,
             )
             versions.append(candidate_version)
             candidates.append(

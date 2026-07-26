@@ -55,6 +55,10 @@ impl<S: AnnealingState> SharedBest<S> {
         Some(best.revision)
     }
 
+    pub(crate) fn get(&self) -> S {
+        self.inner.lock().unwrap().state.clone()
+    }
+
     pub(crate) fn get_if_better(
         &self,
         current_score: f64,
@@ -284,6 +288,8 @@ pub(crate) trait AnnealingDelegate: Sync {
     ) -> AnnealingAttempt<Self::State>;
 
     fn is_finished(&self, domain: usize, state: &Self::State) -> bool;
+
+    fn on_shared_best(&self, _domain: usize, _state: &Self::State, _timer: Timer) {}
 
     fn finish(&self, states: Vec<Self::State>) -> Self::Output;
 }
@@ -733,6 +739,8 @@ impl<D: AnnealingDelegate> Annealer<D> {
                     );
                 }
                 if let Some(_revision) = shared[domain].update(&local.current) {
+                    self.delegate
+                        .on_shared_best(domain, &shared[domain].get(), timer);
                     log!(
                         "[{:.4}] [{}] shared best: worker={}, domain={}, iter={:8}, score={:.3}",
                         timer.elapsed_seconds(),

@@ -27,6 +27,7 @@ pub(crate) struct GlobalAnnealing<'a> {
     pre: &'a Precompute,
     constraints: PrecedenceConstraints,
     timer: Timer,
+    candidate_emitter: &'a CandidateEmitter,
 }
 
 impl<'a> GlobalAnnealing<'a> {
@@ -36,12 +37,14 @@ impl<'a> GlobalAnnealing<'a> {
         abstract_state: &PreoptimizeState,
         precedence_margin: i64,
         timer: Timer,
+        candidate_emitter: &'a CandidateEmitter,
     ) -> Self {
         Self {
             problem,
             pre,
             constraints: build_precedence_constraints(problem, abstract_state, precedence_margin),
             timer,
+            candidate_emitter,
         }
     }
 
@@ -66,6 +69,8 @@ impl<'a> GlobalAnnealing<'a> {
             initial,
             params: neighbor_params,
             insert_params,
+            timer: self.timer,
+            candidate_emitter: self.candidate_emitter,
         };
         Annealer::new(deadline, worker_count, seed, annealing_params, delegate).run(self.timer)
     }
@@ -79,6 +84,8 @@ struct GlobalAnnealingDelegate<'a> {
     initial: OptimizeState,
     params: &'a NeighborParams,
     insert_params: &'a InsertParams,
+    timer: Timer,
+    candidate_emitter: &'a CandidateEmitter,
 }
 
 impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
@@ -134,6 +141,10 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
 
     fn is_finished(&self, _domain: usize, _state: &Self::State) -> bool {
         false
+    }
+
+    fn on_shared_best(&self, _domain: usize, state: &Self::State, _timer: Timer) {
+        self.candidate_emitter.emit(state, self.timer, false);
     }
 
     fn propose(
