@@ -93,10 +93,15 @@ optimize_neighbor:
   default:
     probabilities:
       large_reconstruct: 0.2
+      beam_large_reconstruct: 0.2
       shift: 3.0
       move: 0.1
       rotate: 0.5
       swap: 3.0
+    beam_large_reconstruct:
+      beam_width: 16
+      candidate_count: 16
+      placement_group_limit: 2
     min_removed_blocks: 7
     max_removed_blocks: 13
     remove_pool_factor: 4

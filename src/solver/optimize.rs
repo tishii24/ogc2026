@@ -169,6 +169,15 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 params,
                 self.insert_params,
             ),
+            NeighborKind::BeamLargeReconstruct => try_beam_large_reconstruct(
+                self.problem,
+                self.pre,
+                constraints,
+                &current.blocks,
+                rng,
+                accept_threshold,
+                params,
+            ),
             NeighborKind::Shift => try_shift_neighbor(
                 self.problem,
                 self.pre,

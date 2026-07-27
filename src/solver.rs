@@ -17,6 +17,7 @@ use std::{
 };
 
 pub mod base;
+mod beam_reconstruct;
 pub mod insert;
 pub(crate) mod optimize;
 pub mod preoptimize;
@@ -25,11 +26,12 @@ pub(crate) use base::{
     NeighborKind, gen_rangef, schedule_tardiness, schedule_to_solution, score_schedule,
     score13_block,
 };
+use beam_reconstruct::try_beam_large_reconstruct;
 pub(crate) use insert::{PlacementXScanner, insert_greedy};
 pub(crate) use optimize::GlobalAnnealing;
 pub(crate) use preoptimize::{PreoptimizePrecompute, preoptimize};
 
-const NEIGHBOR_KINDS: &[&str] = &["Large", "Shift", "Move", "Rotate", "Swap"];
+const NEIGHBOR_KINDS: &[&str] = &["Large", "BeamLarge", "Shift", "Move", "Rotate", "Swap"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct PreoptimizedBlock {

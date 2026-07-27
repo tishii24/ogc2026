@@ -8,6 +8,7 @@ use crate::{
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum NeighborKind {
     LargeReconstruct,
+    BeamLargeReconstruct,
     Shift,
     Move,
     Rotate,
@@ -18,10 +19,11 @@ impl NeighborKind {
     pub(crate) fn index(&self) -> usize {
         match self {
             NeighborKind::LargeReconstruct => 0,
-            NeighborKind::Shift => 1,
-            NeighborKind::Move => 2,
-            NeighborKind::Rotate => 3,
-            NeighborKind::Swap => 4,
+            NeighborKind::BeamLargeReconstruct => 1,
+            NeighborKind::Shift => 2,
+            NeighborKind::Move => 3,
+            NeighborKind::Rotate => 4,
+            NeighborKind::Swap => 5,
         }
     }
 }

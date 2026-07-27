@@ -265,6 +265,7 @@ pub struct OptimizeNeighborParams {
 #[serde(deny_unknown_fields)]
 pub struct NeighborParams {
     pub probabilities: NeighborProbabilities,
+    pub beam_large_reconstruct: BeamLargeReconstructParams,
     pub min_removed_blocks: usize,
     pub max_removed_blocks: usize,
     pub remove_pool_factor: usize,
@@ -292,13 +293,16 @@ pub struct NeighborParams {
 }
 
 impl NeighborParams {
-    pub(crate) fn probabilities(&self) -> [(NeighborKind, f64); 5] {
+    pub(crate) fn probabilities(&self) -> [(NeighborKind, f64); 6] {
         self.probabilities.weighted()
     }
 
     fn with_override(&self, value: &NeighborParamsOverride) -> Self {
         Self {
             probabilities: self.probabilities.with_override(&value.probabilities),
+            beam_large_reconstruct: self
+                .beam_large_reconstruct
+                .with_override(&value.beam_large_reconstruct),
             min_removed_blocks: value.min_removed_blocks.unwrap_or(self.min_removed_blocks),
             max_removed_blocks: value.max_removed_blocks.unwrap_or(self.max_removed_blocks),
             remove_pool_factor: value.remove_pool_factor.unwrap_or(self.remove_pool_factor),
@@ -380,6 +384,7 @@ pub struct RemoveSeedMethodWeights {
 #[serde(deny_unknown_fields)]
 pub struct NeighborProbabilities {
     pub large_reconstruct: f64,
+    pub beam_large_reconstruct: f64,
     pub shift: f64,
     #[serde(rename = "move")]
     pub move_block: f64,
@@ -388,9 +393,13 @@ pub struct NeighborProbabilities {
 }
 
 impl NeighborProbabilities {
-    fn weighted(&self) -> [(NeighborKind, f64); 5] {
+    fn weighted(&self) -> [(NeighborKind, f64); 6] {
         [
             (NeighborKind::LargeReconstruct, self.large_reconstruct),
+            (
+                NeighborKind::BeamLargeReconstruct,
+                self.beam_large_reconstruct,
+            ),
             (NeighborKind::Shift, self.shift),
             (NeighborKind::Move, self.move_block),
             (NeighborKind::Rotate, self.rotate),
@@ -401,6 +410,9 @@ impl NeighborProbabilities {
     fn with_override(&self, value: &NeighborProbabilitiesOverride) -> Self {
         Self {
             large_reconstruct: value.large_reconstruct.unwrap_or(self.large_reconstruct),
+            beam_large_reconstruct: value
+                .beam_large_reconstruct
+                .unwrap_or(self.beam_large_reconstruct),
             shift: value.shift.unwrap_or(self.shift),
             move_block: value.move_block.unwrap_or(self.move_block),
             rotate: value.rotate.unwrap_or(self.rotate),
@@ -409,10 +421,39 @@ impl NeighborProbabilities {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeamLargeReconstructParams {
+    pub beam_width: usize,
+    pub candidate_count: usize,
+    pub placement_group_limit: usize,
+}
+
+impl BeamLargeReconstructParams {
+    fn with_override(&self, value: &BeamLargeReconstructParamsOverride) -> Self {
+        Self {
+            beam_width: value.beam_width.unwrap_or(self.beam_width),
+            candidate_count: value.candidate_count.unwrap_or(self.candidate_count),
+            placement_group_limit: value
+                .placement_group_limit
+                .unwrap_or(self.placement_group_limit),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BeamLargeReconstructParamsOverride {
+    pub beam_width: Option<usize>,
+    pub candidate_count: Option<usize>,
+    pub placement_group_limit: Option<usize>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct NeighborParamsOverride {
     pub probabilities: NeighborProbabilitiesOverride,
+    pub beam_large_reconstruct: BeamLargeReconstructParamsOverride,
     pub min_removed_blocks: Option<usize>,
     pub max_removed_blocks: Option<usize>,
     pub remove_pool_factor: Option<usize>,
@@ -443,6 +484,7 @@ pub struct NeighborParamsOverride {
 #[serde(default, deny_unknown_fields)]
 pub struct NeighborProbabilitiesOverride {
     pub large_reconstruct: Option<f64>,
+    pub beam_large_reconstruct: Option<f64>,
     pub shift: Option<f64>,
     #[serde(rename = "move")]
     pub move_block: Option<f64>,

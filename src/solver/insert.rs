@@ -7,7 +7,13 @@ use crate::{
     utils::precompute::Precompute,
 };
 
-type Interval = (i64, i64);
+pub(crate) type Interval = (i64, i64);
+
+#[derive(Clone, Copy)]
+pub(crate) struct XRange {
+    pub(crate) min_x: i64,
+    pub(crate) max_x: i64,
+}
 
 struct InsertCandidate {
     scheduled: ScheduledBlock,
@@ -128,46 +134,116 @@ impl ActiveIntervalSlots {
         }
     }
 
-    fn first_feasible_time(&self, intervals: &[Interval], min_t: i64, max_t: i64) -> Option<i64> {
-        self.first_feasible_time_impl(intervals, min_t, max_t, || {})
+    fn iter<'a>(&'a self, intervals: &'a [Interval]) -> ActiveIntervalIter<'a> {
+        ActiveIntervalIter {
+            active: self,
+            intervals,
+            summary_idx: 0,
+            summary_bits: 0,
+            word_idx: 0,
+            word_bits: 0,
+        }
     }
+}
 
-    fn first_feasible_time_impl(
-        &self,
-        intervals: &[Interval],
+struct ActiveIntervalIter<'a> {
+    active: &'a ActiveIntervalSlots,
+    intervals: &'a [Interval],
+    summary_idx: usize,
+    summary_bits: u64,
+    word_idx: usize,
+    word_bits: u64,
+}
+
+impl Iterator for ActiveIntervalIter<'_> {
+    type Item = Interval;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.word_bits != 0 {
+                let bit = self.word_bits.trailing_zeros() as usize;
+                self.word_bits &= self.word_bits - 1;
+                return self.intervals.get(self.word_idx * 64 + bit).copied();
+            }
+            if self.summary_bits != 0 {
+                let bit = self.summary_bits.trailing_zeros() as usize;
+                self.summary_bits &= self.summary_bits - 1;
+                self.word_idx = (self.summary_idx - 1) * 64 + bit;
+                self.word_bits = self.active.words.get(self.word_idx).copied().unwrap_or(0);
+                continue;
+            }
+            self.summary_bits = *self.active.summary.get(self.summary_idx)?;
+            self.summary_idx += 1;
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ForbiddenIntervals<'a> {
+    active: &'a ActiveIntervalSlots,
+    intervals: &'a [Interval],
+}
+
+impl ForbiddenIntervals<'_> {
+    pub(crate) fn first_feasible_time(
+        self,
+        base: &[Interval],
         min_t: i64,
         max_t: i64,
-        mut on_interval: impl FnMut(),
     ) -> Option<i64> {
         let mut t = min_t;
-        for (summary_idx, &summary) in self.summary.iter().enumerate() {
-            let mut summary = summary;
-            while summary != 0 {
-                let word_offset = summary.trailing_zeros() as usize;
-                let word_idx = summary_idx * 64 + word_offset;
-                let mut word = self.words[word_idx];
-                while word != 0 {
-                    let bit = word.trailing_zeros() as usize;
-                    let (l, r) = intervals[word_idx * 64 + bit];
-                    on_interval();
-                    if l > t {
-                        return Some(t);
+        let mut base_pos = base.partition_point(|&(_, right)| right < t);
+        let mut added = self.active.iter(self.intervals).peekable();
+
+        loop {
+            let base_next = base.get(base_pos).copied();
+            let added_next = added.peek().copied();
+            let next = match (base_next, added_next) {
+                (Some(base_interval), Some(added_interval)) => {
+                    if base_interval <= added_interval {
+                        base_pos += 1;
+                        base_interval
+                    } else {
+                        added.next();
+                        added_interval
                     }
-                    if t <= r {
-                        if r == i64::MAX {
-                            return None;
-                        }
-                        t = r + 1;
-                        if t > max_t {
-                            return None;
-                        }
-                    }
-                    word &= word - 1;
                 }
-                summary &= summary - 1;
+                (Some(base_interval), None) => {
+                    base_pos += 1;
+                    base_interval
+                }
+                (None, Some(added_interval)) => {
+                    added.next();
+                    added_interval
+                }
+                (None, None) => return (t <= max_t).then_some(t),
+            };
+
+            let (left, right) = next;
+            if right < t {
+                continue;
+            }
+            if left > t {
+                return Some(t);
+            }
+            t = right.checked_add(1)?;
+            if t > max_t {
+                return None;
             }
         }
-        Some(t)
+    }
+
+    pub(crate) fn collect_merged(self, output: &mut Vec<Interval>) {
+        output.clear();
+        for (left, right) in self.active.iter(self.intervals) {
+            if let Some(last) = output.last_mut()
+                && left <= last.1.saturating_add(1)
+            {
+                last.1 = last.1.max(right);
+            } else {
+                output.push((left, right));
+            }
+        }
     }
 }
 
@@ -250,14 +326,48 @@ impl<'a> PlacementXScanner<'a> {
         y: i64,
         mut on_candidate: impl FnMut(ScheduledBlock) -> bool,
     ) -> bool {
-        let Some(range) = self
+        let block_id = self.block_id;
+        let bay_id = self.bay_id;
+        let process_t = self.process_t;
+        let min_t = self.min_t;
+        let max_t = self.max_t;
+        self.scan_y_ranges(orient_idx, y, i64::MIN, i64::MAX, |range, forbidden| {
+            let Some(entry_time) = forbidden.first_feasible_time(&[], min_t, max_t) else {
+                return false;
+            };
+            on_candidate(ScheduledBlock {
+                block_id,
+                bay_id,
+                orient_idx,
+                x: range.min_x,
+                y,
+                entry_time,
+                exit_time: entry_time + process_t,
+            })
+        })
+    }
+
+    pub(crate) fn scan_y_ranges(
+        &mut self,
+        orient_idx: usize,
+        y: i64,
+        requested_min_x: i64,
+        requested_max_x: i64,
+        mut on_range: impl FnMut(XRange, ForbiddenIntervals<'_>) -> bool,
+    ) -> bool {
+        let Some(fit_range) = self
             .pre
             .collision
             .fit_range(self.bay_id, self.block_id, orient_idx)
         else {
             return false;
         };
-        if y < range.min_y || y > range.max_y {
+        if y < fit_range.min_y || y > fit_range.max_y {
+            return false;
+        }
+        let min_x = fit_range.min_x.max(requested_min_x);
+        let max_x = fit_range.max_x.min(requested_max_x);
+        if min_x > max_x {
             return false;
         }
 
@@ -304,8 +414,8 @@ impl<'a> PlacementXScanner<'a> {
                     old.x - lo,
                     old_idx,
                     1,
-                    range.min_x,
-                    range.max_x,
+                    min_x,
+                    max_x,
                     &mut self.events,
                 );
             }
@@ -315,8 +425,8 @@ impl<'a> PlacementXScanner<'a> {
                     old.x + hi,
                     old_idx,
                     2,
-                    range.min_x,
-                    range.max_x,
+                    min_x,
+                    max_x,
                     &mut self.events,
                 );
             }
@@ -325,14 +435,14 @@ impl<'a> PlacementXScanner<'a> {
             &mut self.events,
             &mut self.event_sort_scratch,
             &mut self.event_counts,
-            range.min_x,
-            range.max_x,
+            min_x,
+            max_x,
         );
 
-        let mut valid_y = false;
+        let mut accepted = false;
         let mut event_pos = 0;
         let mut x_offset = 0u32;
-        let mut x = range.min_x;
+        let mut x = min_x;
         loop {
             self.event_group_generation += 1;
             self.touched_old_ids.clear();
@@ -356,36 +466,34 @@ impl<'a> PlacementXScanner<'a> {
                     true,
                 );
             }
-            let entry_time = self.active_slots.first_feasible_time(
-                &self.forbidden_slots.intervals,
-                self.min_t,
-                self.max_t,
-            );
 
-            if let Some(entry_time) = entry_time {
-                let scheduled = ScheduledBlock {
-                    block_id: self.block_id,
-                    bay_id: self.bay_id,
-                    orient_idx,
-                    x,
-                    y,
-                    entry_time,
-                    exit_time: entry_time + self.process_t,
-                };
-                valid_y |= on_candidate(scheduled);
-            }
+            let range_max_x = if event_pos < self.events.len() {
+                min_x + self.events[event_pos].x_offset as i64 - 1
+            } else {
+                max_x
+            };
+            accepted |= on_range(
+                XRange {
+                    min_x: x,
+                    max_x: range_max_x,
+                },
+                ForbiddenIntervals {
+                    active: &self.active_slots,
+                    intervals: &self.forbidden_slots.intervals,
+                },
+            );
 
             if event_pos >= self.events.len() {
                 break;
             }
             x_offset = self.events[event_pos].x_offset;
-            x = range.min_x + x_offset as i64;
-            if x > range.max_x {
+            x = min_x + x_offset as i64;
+            if x > max_x {
                 break;
             }
         }
 
-        valid_y
+        accepted
     }
 }
 
