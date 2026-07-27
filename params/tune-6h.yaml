@@ -66,18 +66,18 @@ steps:
   - name: global-neighbor-mix
     mode: combinations
     parameters:
-      - optimize_neighbor.default.probabilities.large_reconstruct: 0.2
-        optimize_neighbor.default.probabilities.shift: 3.0
-        optimize_neighbor.default.probabilities.move: 0.1
-        optimize_neighbor.default.probabilities.rotate: 0.5
-        optimize_neighbor.default.probabilities.swap: 3.0
-      - optimize_neighbor.default.probabilities.large_reconstruct: 0.5
-        optimize_neighbor.default.probabilities.shift: 2.0
-        optimize_neighbor.default.probabilities.move: 0.3
-        optimize_neighbor.default.probabilities.rotate: 1.0
-        optimize_neighbor.default.probabilities.swap: 2.0
-      - optimize_neighbor.default.probabilities.large_reconstruct: 0.8
-        optimize_neighbor.default.probabilities.shift: 1.5
-        optimize_neighbor.default.probabilities.move: 0.8
-        optimize_neighbor.default.probabilities.rotate: 1.0
-        optimize_neighbor.default.probabilities.swap: 1.5
+      - global_neighbor.probabilities.large_reconstruct: 0.2
+        global_neighbor.probabilities.shift: 3.0
+        global_neighbor.probabilities.move: 0.1
+        global_neighbor.probabilities.rotate: 0.5
+        global_neighbor.probabilities.swap: 3.0
+      - global_neighbor.probabilities.large_reconstruct: 0.5
+        global_neighbor.probabilities.shift: 2.0
+        global_neighbor.probabilities.move: 0.3
+        global_neighbor.probabilities.rotate: 1.0
+        global_neighbor.probabilities.swap: 2.0
+      - global_neighbor.probabilities.large_reconstruct: 0.8
+        global_neighbor.probabilities.shift: 1.5
+        global_neighbor.probabilities.move: 0.8
+        global_neighbor.probabilities.rotate: 1.0
+        global_neighbor.probabilities.swap: 1.5

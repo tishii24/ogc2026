@@ -1,4 +1,4 @@
-use crate::*;
+use crate::{Bay, Boundsf, Boundsi, Orientation, Pointf, Problem, local_enabled, log};
 use geo::{Coord, Distance, Euclidean, Intersects, LineString, Polygon, Translate};
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};
@@ -146,6 +146,8 @@ impl CollisionPrecompute {
         let cell = &self.block_pairs[pair_idx].orient_pairs[key];
         let ptr = cell.ptr.load(Ordering::Acquire);
         if !ptr.is_null() {
+            // SAFETY: The Acquire load observes a Box pointer published by this cell's
+            // Release CAS, which stays owned by the cache for the returned `&self` lifetime.
             return unsafe { &*ptr };
         }
 
@@ -169,6 +171,8 @@ impl CollisionPrecompute {
             crane: forward_crane,
         };
         let ptr = cell.publish(forward);
+        // SAFETY: `publish` returns the Box pointer owned by this cell, whether this call or
+        // another CAS won; the cache outlives the returned reference tied to `&self`.
         unsafe { &*ptr }
     }
 
@@ -201,6 +205,8 @@ impl OrientPairCache {
         {
             Ok(_) => raw,
             Err(existing) => {
+                // SAFETY: On CAS failure `raw` was not published, so this thread retains
+                // exclusive ownership of the Box created above and reclaims it exactly once.
                 unsafe {
                     drop(Box::from_raw(raw));
                 }
@@ -214,6 +220,8 @@ impl Drop for OrientPairCache {
     fn drop(&mut self) {
         let ptr = *self.ptr.get_mut();
         if !ptr.is_null() {
+            // SAFETY: Exclusive `&mut self` rules out concurrent access and live references;
+            // `ptr` is the single Box ownership transferred by the successful CAS.
             unsafe {
                 drop(Box::from_raw(ptr));
             }

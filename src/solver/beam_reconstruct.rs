@@ -1,12 +1,14 @@
+use crate::{Problem, ScheduledBlock, params::NeighborParams, utils::random::Random};
+
 use super::{
-    PrecedenceConstraints, build_topological_order, choose_removed_blocks,
-    precedence_entry_time_range, sample_reconstruct_order_weights, sample_removed_count,
-    scheduled_by_id, score13_block, sort_block_order,
-};
-use crate::{
-    Problem, ScheduledBlock,
-    solver::{PlacementXScanner, insert::Interval},
-    utils::{base::rand::Random, params::NeighborParams, precompute::Precompute},
+    objective::{ScheduleScore, normalized_imbalance, score_schedule, score13_block},
+    placement_scan::{Interval, PlacementXScanner},
+    precompute::Precompute,
+    reconstruct::{
+        EntryTimeBounds, HeuristicPrecedence, ReconstructBase, build_reconstruct_base,
+        build_topological_order, choose_removed_blocks, precedence_entry_time_bounds,
+        sample_reconstruct_order_weights, sample_removed_count, scheduled_by_id, sort_block_order,
+    },
 };
 
 const HASH_OFFSET: u64 = 1469598103934665603;
@@ -48,7 +50,7 @@ struct PlacementCandidate {
 pub(super) fn try_beam_large_reconstruct<R: Random>(
     problem: &Problem,
     pre: &Precompute,
-    constraints: Option<&PrecedenceConstraints>,
+    constraints: Option<&HeuristicPrecedence>,
     schedule: &[ScheduledBlock],
     rng: &mut R,
     accept_threshold: f64,
@@ -66,7 +68,7 @@ pub(super) fn try_beam_large_reconstruct<R: Random>(
     } else {
         sort_block_order(
             problem,
-            &pre.block_area,
+            &pre.max_footprint_area,
             &pre.pref_spread,
             &mut removed_ids,
             weights,
@@ -76,22 +78,11 @@ pub(super) fn try_beam_large_reconstruct<R: Random>(
     };
 
     let original_by_id = scheduled_by_id(problem, schedule);
-    let mut removed = vec![false; problem.blocks.len()];
-    for &block_id in &removed_ids {
-        removed[block_id] = true;
-    }
-
-    let mut base = Vec::with_capacity(schedule.len() - removed_ids.len());
-    let mut base_loads = vec![0.0; problem.bays.len()];
-    let mut base_score13 = 0.0;
-    for &scheduled in schedule {
-        if removed[scheduled.block_id] {
-            continue;
-        }
-        base_loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
-        base_score13 += score13_block(problem, pre, scheduled);
-        base.push(scheduled);
-    }
+    let ReconstructBase {
+        schedule: base,
+        loads: base_loads,
+        weighted_z1_z3: base_score13,
+    } = build_reconstruct_base(problem, pre, schedule, &removed_ids);
     if base_score13 > accept_threshold + 1e-9 {
         return None;
     }
@@ -110,7 +101,8 @@ pub(super) fn try_beam_large_reconstruct<R: Random>(
     }
 
     let base_by_id = scheduled_by_id(problem, &base);
-    let initial_score = base_score13 + problem.weights.w2 * normalized_imbalance(pre, &base_loads);
+    let initial_score =
+        base_score13 + problem.weights.w2 * normalized_imbalance(&base_loads, &pre.bay_load_scale);
     let mut beam = vec![BeamState {
         added: Vec::with_capacity(order.len()),
         loads: base_loads,
@@ -129,19 +121,25 @@ pub(super) fn try_beam_large_reconstruct<R: Random>(
             Vec::with_capacity(beam.len() * params.beam_large_reconstruct.candidate_count.max(1));
 
         for state in &beam {
-            let (min_entry_time, max_entry_time) = if let Some(constraints) = constraints {
+            let EntryTimeBounds {
+                min: min_entry_time,
+                max: max_entry_time,
+            } = if let Some(constraints) = constraints {
                 let mut current_by_id = base_by_id.clone();
                 for &scheduled in &state.added {
                     current_by_id[scheduled.block_id] = Some(scheduled);
                 }
-                let Some(range) =
-                    precedence_entry_time_range(problem, constraints, &current_by_id, block_id)
+                let Some(bounds) =
+                    precedence_entry_time_bounds(problem, constraints, &current_by_id, block_id)
                 else {
                     continue;
                 };
-                range
+                bounds
             } else {
-                (i64::MIN, i64::MAX)
+                EntryTimeBounds {
+                    min: i64::MIN,
+                    max: i64::MAX,
+                }
             };
 
             let mut scanners: Vec<_> = (0..problem.bays.len())
@@ -249,7 +247,9 @@ pub(super) fn try_beam_large_reconstruct<R: Random>(
         }
         let mut blocks = base.clone();
         blocks.extend(state.added);
-        let (score, _) = super::score_schedule(problem, pre, &blocks);
+        let ScheduleScore {
+            objective: score, ..
+        } = score_schedule(problem, pre, &blocks);
         if score > accept_threshold + 1e-9 {
             continue;
         }
@@ -406,10 +406,6 @@ fn push_placement_candidate(
         changed: state.changed || scheduled != original,
         original_prefix: state.original_prefix && scheduled == original,
     });
-}
-
-fn normalized_imbalance(pre: &Precompute, loads: &[f64]) -> f64 {
-    normalized_imbalance_with_add(pre, loads, 0, 0.0)
 }
 
 fn normalized_imbalance_with_add(

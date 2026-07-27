@@ -1,12 +1,20 @@
-use crate::{utils::collision::CollisionPrecompute, utils::params::PrecomputeParams, *};
+use crate::{Block, Boundsf, Orientation, Problem, params::PrecomputeParams};
+
+use super::collision::CollisionPrecompute;
 use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use std::cmp::Reverse;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct OtherBlockNeighbor {
+pub(crate) struct SwapNeighbor {
     pub(crate) block_id: usize,
     pub(crate) orient_idx: usize,
     pub(crate) dx: i64,
+    pub(crate) dy: i64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OrientationNeighbor {
+    pub(crate) orient_idx: usize,
     pub(crate) dy: i64,
 }
 
@@ -19,9 +27,37 @@ pub(crate) struct Precompute {
     pub(crate) orientation_order_by_bbox: Vec<Vec<usize>>,
     pub(crate) orientation_bbox_center: Vec<Vec<(f64, f64)>>,
     pub(crate) orientation_bbox_bounds: Vec<Vec<Boundsf>>,
-    pub(crate) orientation_neighbors: Vec<Vec<Vec<(usize, i64, i64)>>>,
-    pub(crate) other_block_neighbors: Vec<Vec<Vec<OtherBlockNeighbor>>>,
-    pub(crate) block_area: Vec<f64>,
+    pub(crate) orientation_neighbors: Vec<Vec<Vec<OrientationNeighbor>>>,
+    pub(crate) swap_neighbors: Vec<Vec<Vec<SwapNeighbor>>>,
+    pub(crate) max_footprint_area: Vec<f64>,
+}
+
+pub(crate) fn build_bay_load_scale(problem: &Problem) -> Vec<f64> {
+    let bay_areas: Vec<_> = problem
+        .bays
+        .iter()
+        .map(|bay| (bay.width * bay.height) as f64)
+        .collect();
+    let average_area = bay_areas.iter().sum::<f64>() / bay_areas.len() as f64;
+    bay_areas
+        .into_iter()
+        .map(|area| average_area / area)
+        .collect()
+}
+
+pub(crate) fn build_pref_penalty(problem: &Problem) -> Vec<Vec<i64>> {
+    problem
+        .blocks
+        .iter()
+        .map(|block| {
+            let max_preference = block.bay_preferences.iter().copied().max().unwrap_or(0);
+            block
+                .bay_preferences
+                .iter()
+                .map(|&preference| max_preference - preference)
+                .collect()
+        })
+        .collect()
 }
 
 pub(crate) fn build_pref_spread(problem: &Problem) -> Vec<i64> {
@@ -41,7 +77,7 @@ pub(crate) fn build_pref_spread(problem: &Problem) -> Vec<i64> {
         .collect()
 }
 
-fn orientation_bbox_bounds(orientation: &Orientation) -> Boundsf {
+pub(crate) fn orientation_bounds(orientation: &Orientation) -> Boundsf {
     let mut min_x = f64::INFINITY;
     let mut min_y = f64::INFINITY;
     let mut max_x = f64::NEG_INFINITY;
@@ -64,17 +100,6 @@ fn orientation_bbox_bounds(orientation: &Orientation) -> Boundsf {
     }
 }
 
-fn orientation_bbox(orientation: &Orientation) -> (f64, (f64, f64)) {
-    let bbox = orientation_bbox_bounds(orientation);
-    (
-        (bbox.max_x - bbox.min_x) * (bbox.max_y - bbox.min_y),
-        (
-            (bbox.min_x + bbox.max_x) * 0.5,
-            (bbox.min_y + bbox.max_y) * 0.5,
-        ),
-    )
-}
-
 fn layer_polygon(layer: &[[f64; 2]]) -> Polygon<f64> {
     let mut coords: Vec<_> = layer.iter().map(|&[x, y]| Coord { x, y }).collect();
     if coords.first() != coords.last() {
@@ -93,7 +118,7 @@ pub(crate) fn orientation_union(orientation: &Orientation) -> Option<MultiPolygo
     Some(union)
 }
 
-fn block_area(block: &Block) -> f64 {
+fn max_footprint_area(block: &Block) -> f64 {
     block
         .shape
         .iter()
@@ -132,7 +157,7 @@ fn bbox_iou(from: Boundsf, to: Boundsf, dx: i64, dy: i64) -> f64 {
 fn orientation_neighbors_for_block(
     bboxes: &[Boundsf],
     limit: usize,
-) -> Vec<Vec<(usize, i64, i64)>> {
+) -> Vec<Vec<OrientationNeighbor>> {
     let mut result = vec![Vec::new(); bboxes.len()];
     for from_orient in 0..bboxes.len() {
         let from = bboxes[from_orient];
@@ -166,7 +191,7 @@ fn orientation_neighbors_for_block(
         candidates.truncate(limit);
         result[from_orient] = candidates
             .into_iter()
-            .map(|(to_orient, _, dx, dy)| (to_orient, dx, dy))
+            .map(|(orient_idx, _, _, dy)| OrientationNeighbor { orient_idx, dy })
             .collect();
     }
     result
@@ -175,22 +200,22 @@ fn orientation_neighbors_for_block(
 fn build_orientation_neighbors(
     orientation_bbox_bounds: &[Vec<Boundsf>],
     limit: usize,
-) -> Vec<Vec<Vec<(usize, i64, i64)>>> {
+) -> Vec<Vec<Vec<OrientationNeighbor>>> {
     orientation_bbox_bounds
         .iter()
         .map(|bboxes| orientation_neighbors_for_block(bboxes, limit))
         .collect()
 }
 
-fn area_neighbor_blocks(block_area: &[f64], from_block: usize, top_k: usize) -> Vec<usize> {
-    let from_area = block_area[from_block];
-    let mut order: Vec<usize> = (0..block_area.len())
+fn area_neighbor_blocks(max_footprint_area: &[f64], from_block: usize, top_k: usize) -> Vec<usize> {
+    let from_area = max_footprint_area[from_block];
+    let mut order: Vec<usize> = (0..max_footprint_area.len())
         .filter(|&block_id| block_id != from_block)
         .collect();
     order.sort_by(|&a, &b| {
-        (from_area - block_area[a])
+        (from_area - max_footprint_area[a])
             .abs()
-            .total_cmp(&(from_area - block_area[b]).abs())
+            .total_cmp(&(from_area - max_footprint_area[b]).abs())
             .then(a.cmp(&b))
     });
     order.truncate(top_k.min(order.len()));
@@ -229,15 +254,15 @@ fn best_bbox_neighbor_offset(
     best
 }
 
-fn build_other_block_neighbors(
+fn build_swap_neighbors(
     orientation_bbox_bounds: &[Vec<Boundsf>],
-    block_area: &[f64],
+    max_footprint_area: &[f64],
     top_k: usize,
     align_delta: i64,
-) -> Vec<Vec<Vec<OtherBlockNeighbor>>> {
+) -> Vec<Vec<Vec<SwapNeighbor>>> {
     (0..orientation_bbox_bounds.len())
         .map(|from_block| {
-            let to_blocks = area_neighbor_blocks(block_area, from_block, top_k);
+            let to_blocks = area_neighbor_blocks(max_footprint_area, from_block, top_k);
             orientation_bbox_bounds[from_block]
                 .iter()
                 .map(|&from_bbox| {
@@ -250,7 +275,7 @@ fn build_other_block_neighbors(
                                 best_bbox_neighbor_offset(from_bbox, to_bbox, align_delta)
                             {
                                 candidates.push((
-                                    OtherBlockNeighbor {
+                                    SwapNeighbor {
                                         block_id: to_block,
                                         orient_idx: to_orient,
                                         dx,
@@ -282,33 +307,8 @@ impl Precompute {
     pub(crate) fn build(problem: &Problem, params: &PrecomputeParams) -> Self {
         let collision = CollisionPrecompute::build(problem);
 
-        let bay_area: Vec<f64> = problem
-            .bays
-            .iter()
-            .map(|bay| (bay.width * bay.height) as f64)
-            .collect();
-        let avg_area = if bay_area.is_empty() {
-            0.0
-        } else {
-            bay_area.iter().sum::<f64>() / bay_area.len() as f64
-        };
-        let bay_load_scale = bay_area
-            .iter()
-            .map(|&area| if area > 0.0 { avg_area / area } else { 0.0 })
-            .collect();
-
-        let pref_penalty = problem
-            .blocks
-            .iter()
-            .map(|block| {
-                let max_pref = block.bay_preferences.iter().copied().max().unwrap_or(0);
-                block
-                    .bay_preferences
-                    .iter()
-                    .map(|&pref| max_pref - pref)
-                    .collect()
-            })
-            .collect();
+        let bay_load_scale = build_bay_load_scale(problem);
+        let pref_penalty = build_pref_penalty(problem);
         let pref_spread = build_pref_spread(problem);
 
         let bay_order_by_pref = problem
@@ -326,49 +326,48 @@ impl Precompute {
             })
             .collect();
 
-        let orientation_order_by_bbox = problem
+        let orientation_bbox_bounds: Vec<Vec<Boundsf>> = problem
             .blocks
             .iter()
-            .map(|block| {
-                let mut order: Vec<usize> = (0..block.shape.len()).collect();
+            .map(|block| block.shape.iter().map(orientation_bounds).collect())
+            .collect();
+        let orientation_order_by_bbox = orientation_bbox_bounds
+            .iter()
+            .map(|bounds| {
+                let mut order: Vec<usize> = (0..bounds.len()).collect();
                 order.sort_by(|&a, &b| {
-                    orientation_bbox(&block.shape[a])
-                        .0
-                        .total_cmp(&orientation_bbox(&block.shape[b]).0)
+                    bbox_area(bounds[a])
+                        .total_cmp(&bbox_area(bounds[b]))
                         .then(a.cmp(&b))
                 });
                 order
             })
             .collect();
-
-        let orientation_bbox_center = problem
-            .blocks
+        let orientation_bbox_center = orientation_bbox_bounds
             .iter()
-            .map(|block| {
-                block
-                    .shape
+            .map(|bounds| {
+                bounds
                     .iter()
-                    .map(|orientation| orientation_bbox(orientation).1)
+                    .map(|bounds| {
+                        (
+                            (bounds.min_x + bounds.max_x) * 0.5,
+                            (bounds.min_y + bounds.max_y) * 0.5,
+                        )
+                    })
                     .collect()
             })
-            .collect();
-
-        let orientation_bbox_bounds: Vec<Vec<Boundsf>> = problem
-            .blocks
-            .iter()
-            .map(|block| block.shape.iter().map(orientation_bbox_bounds).collect())
             .collect();
 
         let orientation_neighbors = build_orientation_neighbors(
             &orientation_bbox_bounds,
             params.orientation_neighbor_limit,
         );
-        let block_area: Vec<f64> = problem.blocks.iter().map(block_area).collect();
-        let other_block_neighbors = build_other_block_neighbors(
+        let max_footprint_area: Vec<f64> = problem.blocks.iter().map(max_footprint_area).collect();
+        let swap_neighbors = build_swap_neighbors(
             &orientation_bbox_bounds,
-            &block_area,
-            params.other_block_neighbor_area_top_k,
-            params.other_block_neighbor_align_delta,
+            &max_footprint_area,
+            params.swap_neighbor_area_top_k,
+            params.swap_neighbor_align_delta,
         );
 
         Self {
@@ -381,8 +380,8 @@ impl Precompute {
             orientation_bbox_center,
             orientation_bbox_bounds,
             orientation_neighbors,
-            other_block_neighbors,
-            block_area,
+            swap_neighbors,
+            max_footprint_area,
         }
     }
 }

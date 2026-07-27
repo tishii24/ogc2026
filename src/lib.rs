@@ -14,6 +14,7 @@ macro_rules! log {
     }};
 }
 
+pub mod params;
 pub mod solver;
 pub mod utils;
 

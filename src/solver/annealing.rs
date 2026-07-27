@@ -8,14 +8,14 @@ use rayon::prelude::*;
 
 use crate::{
     log,
-    utils::base::{
-        rand::{RandPcg64Mcg, Random},
+    utils::{
+        random::{RandPcg64Mcg, Random},
         time::Timer,
     },
 };
 
 #[cfg(feature = "trace-annealing")]
-use crate::utils::tracing::{
+use super::tracing::{
     AnnealingTraceDiff, AnnealingTraceEvent, AnnealingTraceState, AnnealingTraceWriter,
 };
 
@@ -148,7 +148,7 @@ pub(crate) fn acceptance_threshold(
     temperature: f64,
     rng: &mut impl Random,
 ) -> f64 {
-    current_score - temperature * rng.nextf().ln()
+    current_score - temperature * rng.next_f64().ln()
 }
 
 pub(crate) fn worker_temperature_scale(worker_id: usize, worker_count: usize, scale: f64) -> f64 {
@@ -247,11 +247,10 @@ pub(crate) struct WorkerSummary {
     pub(crate) accepted: usize,
     pub(crate) improved: usize,
     pub(crate) reheats: usize,
-    pub(crate) active_domains: usize,
     pub(crate) positive_tardiness_temperature: (f64, f64),
     pub(crate) zero_tardiness_temperature: (f64, f64),
-    pub(crate) current_scores: Vec<f64>,
-    pub(crate) local_best_scores: Vec<f64>,
+    pub(crate) current_score: f64,
+    pub(crate) local_best_score: f64,
     pub(crate) neighbor_stats: Vec<NeighborStats>,
 }
 
@@ -259,7 +258,7 @@ pub(crate) trait AnnealingDelegate: Sync {
     type State: AnnealingState;
     type Output;
 
-    fn initial_states(&self) -> Vec<Self::State>;
+    fn initial_state(&self) -> Self::State;
 
     fn name(&self) -> &'static str;
 
@@ -277,17 +276,14 @@ pub(crate) trait AnnealingDelegate: Sync {
 
     fn propose(
         &self,
-        domain: usize,
         current: &Self::State,
         accept_threshold: f64,
         rng: &mut RandPcg64Mcg,
     ) -> AnnealingAttempt<Self::State>;
 
-    fn is_finished(&self, domain: usize, state: &Self::State) -> bool;
+    fn on_shared_best(&self, _state: &Self::State, _timer: Timer) {}
 
-    fn on_shared_best(&self, _domain: usize, _state: &Self::State, _timer: Timer) {}
-
-    fn finish(&self, states: Vec<Self::State>) -> Self::Output;
+    fn finish(&self, state: Self::State) -> Self::Output;
 }
 
 struct TabuList {
@@ -328,7 +324,7 @@ struct ReheatState {
     peak_temperature: f64,
 }
 
-struct WorkerDomain<S> {
+struct WorkerState<S> {
     current: S,
     local_best_score: f64,
     last_progress_iteration: usize,
@@ -364,24 +360,19 @@ impl<D: AnnealingDelegate> Annealer<D> {
     }
 
     pub(crate) fn run(self, timer: Timer) -> D::Output {
-        let initial_states = self.delegate.initial_states();
-        assert!(!initial_states.is_empty());
+        let initial_state = self.delegate.initial_state();
         assert!(self.worker_count > 0);
         assert!(self.params.exchange_interval > 0);
 
-        let shared: Vec<_> = initial_states
-            .iter()
-            .cloned()
-            .map(SharedBest::new)
-            .collect();
+        let shared = SharedBest::new(initial_state.clone());
         let worker_results: Vec<_> = (0..self.worker_count)
             .into_par_iter()
-            .map(|worker_id| self.run_worker(&initial_states, &shared, timer, worker_id))
+            .map(|worker_id| self.run_worker(&initial_state, &shared, timer, worker_id))
             .collect();
-        let states: Vec<_> = shared.into_iter().map(SharedBest::into_inner).collect();
+        let state = shared.into_inner();
         for worker in &worker_results {
             log!(
-                "[{:.4}] [{:8} worker={}] iter={:8}, accepted={:8}, improved={:8}, reheats={:4}, active_domains={:8}, current={:?}, local_best={:?}, temp(z1>0)={:.6}->{:.6}, temp(z1=0)={:.6}->{:.6}\nneighbor stats:\n{}",
+                "[{:.4}] [{:8} worker={}] iter={:8}, accepted={:8}, improved={:8}, reheats={:4}, current={:.3}, local_best={:.3}, temp(z1>0)={:.6}->{:.6}, temp(z1=0)={:.6}->{:.6}\nneighbor stats:\n{}",
                 timer.elapsed_seconds(),
                 self.delegate.name(),
                 worker.worker_id,
@@ -389,9 +380,8 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 worker.accepted,
                 worker.improved,
                 worker.reheats,
-                worker.active_domains,
-                worker.current_scores,
-                worker.local_best_scores,
+                worker.current_score,
+                worker.local_best_score,
                 worker.positive_tardiness_temperature.0,
                 worker.positive_tardiness_temperature.1,
                 worker.zero_tardiness_temperature.0,
@@ -399,54 +389,36 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 format_neighbor_stats(&worker.neighbor_stats, self.delegate.neighbor_kinds()),
             );
         }
-        for (domain, state) in states.iter().enumerate() {
-            log!(
-                "[{:.4}] [{}] result: domain={}, best={:.3}, finished={}",
-                timer.elapsed_seconds(),
-                self.delegate.name(),
-                domain,
-                state.annealing_score(),
-                self.delegate.is_finished(domain, state),
-            );
-        }
-        self.delegate.finish(states)
+        log!(
+            "[{:.4}] [{}] result: best={:.3}",
+            timer.elapsed_seconds(),
+            self.delegate.name(),
+            state.annealing_score(),
+        );
+        self.delegate.finish(state)
     }
 
     fn run_worker(
         &self,
-        initial_states: &[D::State],
-        shared: &[SharedBest<D::State>],
+        initial_state: &D::State,
+        shared: &SharedBest<D::State>,
         timer: Timer,
         worker_id: usize,
     ) -> WorkerSummary {
-        let mut domains: Vec<_> = initial_states
-            .iter()
-            .cloned()
-            .map(|state| {
-                let score = state.annealing_score();
-                let mut tabu = TabuList::new(self.params.tabu_capacity);
-                if let Some(key) = state.tabu_key() {
-                    tabu.insert(key);
-                }
-                WorkerDomain {
-                    current: state,
-                    local_best_score: score,
-                    last_progress_iteration: 0,
-                    reheat: None,
-                    reheat_count: 0,
-                    last_imported_revision: None,
-                    tabu,
-                }
-            })
-            .collect();
-        let mut active_domains: Vec<_> = initial_states
-            .iter()
-            .enumerate()
-            .filter_map(|(domain, state)| {
-                (!self.delegate.is_finished(domain, state)).then_some(domain)
-            })
-            .collect();
-
+        let score = initial_state.annealing_score();
+        let mut tabu = TabuList::new(self.params.tabu_capacity);
+        if let Some(key) = initial_state.tabu_key() {
+            tabu.insert(key);
+        }
+        let mut local = WorkerState {
+            current: initial_state.clone(),
+            local_best_score: score,
+            last_progress_iteration: 0,
+            reheat: None,
+            reheat_count: 0,
+            last_imported_revision: None,
+            tabu,
+        };
         let scale = worker_temperature_scale(
             worker_id,
             self.worker_count,
@@ -470,45 +442,43 @@ impl<D: AnnealingDelegate> Annealer<D> {
         let mut neighbor_stats =
             vec![NeighborStats::default(); self.delegate.neighbor_kinds().len()];
         #[cfg(feature = "trace-annealing")]
-        let mut trace_writer = initial_states
-            .iter()
-            .any(|state| self.delegate.trace_state(state).is_some())
+        let mut trace_writer = self
+            .delegate
+            .trace_state(initial_state)
+            .is_some()
             .then(|| AnnealingTraceWriter::new(self.delegate.name(), worker_id))
             .flatten();
         #[cfg(feature = "trace-annealing")]
-        if let Some(writer) = &mut trace_writer {
-            for (domain, local) in domains.iter().enumerate() {
-                if let Some(state) = self.delegate.trace_state(&local.current) {
-                    writer.write(
-                        timer.elapsed_seconds(),
-                        0,
-                        domain,
-                        AnnealingTraceEvent {
-                            event: "start",
-                            neighbor: None,
-                            temperature: None,
-                            accept_threshold: None,
-                            before: state,
-                            after: state,
-                            diff: AnnealingTraceDiff::default(),
-                            shared_revision: Some(0),
-                        },
-                    );
-                }
-            }
+        if let Some(writer) = &mut trace_writer
+            && let Some(state) = self.delegate.trace_state(&local.current)
+        {
+            writer.write(
+                timer.elapsed_seconds(),
+                0,
+                0,
+                AnnealingTraceEvent {
+                    event: "start",
+                    neighbor: None,
+                    temperature: None,
+                    accept_threshold: None,
+                    before: state,
+                    after: state,
+                    diff: AnnealingTraceDiff::default(),
+                    shared_revision: Some(0),
+                },
+            );
         }
 
-        while !active_domains.is_empty() {
+        loop {
             let Some(progress) = context.next(timer) else {
                 break;
             };
             if context.should_exchange(self.params.exchange_interval) {
                 self.exchange_shared(
-                    &mut domains,
+                    &mut local,
                     shared,
-                    &mut active_domains,
                     context.iterations(),
-                    |_domain, _before, _after, _revision| {
+                    |_before, _after, _revision| {
                         #[cfg(feature = "trace-annealing")]
                         if let Some(writer) = &mut trace_writer
                             && let (Some(before), Some(after)) = (
@@ -531,7 +501,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
                             writer.write(
                                 timer.elapsed_seconds(),
                                 context.iterations(),
-                                _domain,
+                                0,
                                 AnnealingTraceEvent {
                                     event: "exchange",
                                     neighbor: None,
@@ -550,14 +520,8 @@ impl<D: AnnealingDelegate> Annealer<D> {
                         }
                     },
                 );
-                if active_domains.is_empty() {
-                    break;
-                }
             }
 
-            let active_index = context.rng.gen_index(active_domains.len());
-            let domain = active_domains[active_index];
-            let local = &mut domains[domain];
             let current_score = local.current.annealing_score();
             let (regime, temperature_range) = if local.current.has_tardiness() {
                 (
@@ -589,11 +553,10 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 local.last_progress_iteration = context.iterations();
                 local.reheat_count += 1;
                 log!(
-                    "[{:.4}] [{}] reheat: worker={}, domain={}, iter={}, base={:.3}, peak={:.3}, local_best={:.3}",
+                    "[{:.4}] [{}] reheat: worker={}, iter={}, base={:.3}, peak={:.3}, local_best={:.3}",
                     timer.elapsed_seconds(),
                     self.delegate.name(),
                     worker_id,
-                    domain,
                     context.iterations(),
                     base_temperature,
                     peak_temperature,
@@ -606,7 +569,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
                     writer.write(
                         timer.elapsed_seconds(),
                         context.iterations(),
-                        domain,
+                        0,
                         AnnealingTraceEvent {
                             event: "temperature_reheat",
                             neighbor: None,
@@ -638,9 +601,9 @@ impl<D: AnnealingDelegate> Annealer<D> {
             let accept_threshold =
                 acceptance_threshold(current_score, current_temperature, &mut context.rng);
             let neighbor_start = Instant::now();
-            let attempt =
-                self.delegate
-                    .propose(domain, &local.current, accept_threshold, &mut context.rng);
+            let attempt = self
+                .delegate
+                .propose(&local.current, accept_threshold, &mut context.rng);
             debug_assert!(attempt.neighbor_kind < neighbor_stats.len());
             let stats = &mut neighbor_stats[attempt.neighbor_kind];
             stats.selected += 1;
@@ -687,7 +650,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 writer.write(
                     timer.elapsed_seconds(),
                     context.iterations(),
-                    domain,
+                    0,
                     AnnealingTraceEvent {
                         event: "accepted",
                         neighbor: Some(self.delegate.neighbor_kinds()[attempt.neighbor_kind]),
@@ -706,11 +669,10 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 local.last_progress_iteration = context.iterations();
                 improved += 1;
                 log!(
-                    "[{:.4}] [{}]  local best: worker={}, domain={}, iter={:8}, score={:.3}",
+                    "[{:.4}] [{}]  local best: worker={}, iter={:8}, score={:.3}",
                     timer.elapsed_seconds(),
                     self.delegate.name(),
                     worker_id,
-                    domain,
                     context.iterations(),
                     candidate_score,
                 );
@@ -721,7 +683,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
                     writer.write(
                         timer.elapsed_seconds(),
                         context.iterations(),
-                        domain,
+                        0,
                         AnnealingTraceEvent {
                             event: "local_best",
                             neighbor: Some(self.delegate.neighbor_kinds()[attempt.neighbor_kind]),
@@ -734,14 +696,13 @@ impl<D: AnnealingDelegate> Annealer<D> {
                         },
                     );
                 }
-                if let Some(_revision) = shared[domain].update(&local.current) {
-                    self.delegate.on_shared_best(domain, &local.current, timer);
+                if let Some(_revision) = shared.update(&local.current) {
+                    self.delegate.on_shared_best(&local.current, timer);
                     log!(
-                        "[{:.4}] [{}] shared best: worker={}, domain={}, iter={:8}, score={:.3}",
+                        "[{:.4}] [{}] shared best: worker={}, iter={:8}, score={:.3}",
                         timer.elapsed_seconds(),
                         self.delegate.name(),
                         worker_id,
-                        domain,
                         context.iterations(),
                         candidate_score,
                     );
@@ -752,7 +713,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
                         writer.write(
                             timer.elapsed_seconds(),
                             context.iterations(),
-                            domain,
+                            0,
                             AnnealingTraceEvent {
                                 event: "shared_best",
                                 neighbor: Some(
@@ -768,34 +729,29 @@ impl<D: AnnealingDelegate> Annealer<D> {
                         );
                     }
                 }
-                if self.delegate.is_finished(domain, &local.current) {
-                    active_domains.swap_remove(active_index);
-                }
             }
             stats.time_sec += neighbor_start.elapsed().as_secs_f64();
         }
 
         #[cfg(feature = "trace-annealing")]
-        if let Some(writer) = &mut trace_writer {
-            for (domain, local) in domains.iter().enumerate() {
-                if let Some(state) = self.delegate.trace_state(&local.current) {
-                    writer.write(
-                        timer.elapsed_seconds(),
-                        context.iterations(),
-                        domain,
-                        AnnealingTraceEvent {
-                            event: "finish",
-                            neighbor: None,
-                            temperature: None,
-                            accept_threshold: None,
-                            before: state,
-                            after: state,
-                            diff: AnnealingTraceDiff::default(),
-                            shared_revision: local.last_imported_revision,
-                        },
-                    );
-                }
-            }
+        if let Some(writer) = &mut trace_writer
+            && let Some(state) = self.delegate.trace_state(&local.current)
+        {
+            writer.write(
+                timer.elapsed_seconds(),
+                context.iterations(),
+                0,
+                AnnealingTraceEvent {
+                    event: "finish",
+                    neighbor: None,
+                    temperature: None,
+                    accept_threshold: None,
+                    before: state,
+                    after: state,
+                    diff: AnnealingTraceDiff::default(),
+                    shared_revision: local.last_imported_revision,
+                },
+            );
         }
 
         WorkerSummary {
@@ -803,57 +759,42 @@ impl<D: AnnealingDelegate> Annealer<D> {
             iterations: context.iterations(),
             accepted,
             improved,
-            reheats: domains.iter().map(|domain| domain.reheat_count).sum(),
-            active_domains: active_domains.len(),
+            reheats: local.reheat_count,
             positive_tardiness_temperature,
             zero_tardiness_temperature,
-            current_scores: domains
-                .iter()
-                .map(|domain| domain.current.annealing_score())
-                .collect(),
-            local_best_scores: domains
-                .iter()
-                .map(|domain| domain.local_best_score)
-                .collect(),
+            current_score: local.current.annealing_score(),
+            local_best_score: local.local_best_score,
             neighbor_stats,
         }
     }
 
     fn exchange_shared(
         &self,
-        domains: &mut [WorkerDomain<D::State>],
-        shared: &[SharedBest<D::State>],
-        active_domains: &mut Vec<usize>,
+        local: &mut WorkerState<D::State>,
+        shared: &SharedBest<D::State>,
         iteration: usize,
-        mut on_exchange: impl FnMut(usize, &D::State, &D::State, u64),
+        mut on_exchange: impl FnMut(&D::State, &D::State, u64),
     ) {
-        active_domains.clear();
-        for domain in 0..domains.len() {
-            let local = &mut domains[domain];
-            let exchange_threshold = if local.current.has_tardiness() {
-                self.params.positive_tardiness.exchange_threshold
-            } else {
-                self.params.zero_tardiness.exchange_threshold
-            };
-            if let Some((best, revision)) = shared[domain].get_if_better(
-                local.current.annealing_score(),
-                exchange_threshold,
-                local.last_imported_revision,
-            ) {
-                let score = best.annealing_score();
-                on_exchange(domain, &local.current, &best, revision);
-                if let Some(key) = best.tabu_key() {
-                    local.tabu.insert(key);
-                }
-                local.current = best;
-                local.local_best_score = local.local_best_score.min(score);
-                local.last_progress_iteration = iteration;
-                local.reheat = None;
-                local.last_imported_revision = Some(revision);
+        let exchange_threshold = if local.current.has_tardiness() {
+            self.params.positive_tardiness.exchange_threshold
+        } else {
+            self.params.zero_tardiness.exchange_threshold
+        };
+        if let Some((best, revision)) = shared.get_if_better(
+            local.current.annealing_score(),
+            exchange_threshold,
+            local.last_imported_revision,
+        ) {
+            let score = best.annealing_score();
+            on_exchange(&local.current, &best, revision);
+            if let Some(key) = best.tabu_key() {
+                local.tabu.insert(key);
             }
-            if !self.delegate.is_finished(domain, &local.current) {
-                active_domains.push(domain);
-            }
+            local.current = best;
+            local.local_best_score = local.local_best_score.min(score);
+            local.last_progress_iteration = iteration;
+            local.reheat = None;
+            local.last_imported_revision = Some(revision);
         }
     }
 }

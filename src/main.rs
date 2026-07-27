@@ -4,7 +4,7 @@ use std::io::{self, Read};
 use std::path::Path;
 use std::process;
 
-use ogc2026::{Problem, solver, utils::base::time::Timer, utils::params::SolverParams};
+use ogc2026::{Problem, params::SolverParams, solver, utils::time::Timer};
 
 #[derive(Debug)]
 struct Args {
@@ -14,7 +14,7 @@ struct Args {
 }
 
 fn main() {
-    let timer = Timer::start(1.);
+    let timer = Timer::start();
     if let Err(err) = run(timer) {
         eprintln!("error: {err}");
         process::exit(1);

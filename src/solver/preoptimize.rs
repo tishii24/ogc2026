@@ -2,14 +2,19 @@ use std::sync::Mutex;
 
 use crate::{
     Bay, Orientation, Problem, log,
-    solver::{PreoptimizeState, PreoptimizedBlock, sort_default_reconstruct_order},
-    utils::annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
-    utils::base::{
-        rand::{RandPcg64Mcg, Random},
-        time::Timer,
+    params::{AnnealingParamsConfig, NeighborParams, PreoptimizeSolverParams},
+    solver::{
+        PreoptimizeState, PreoptimizedBlock,
+        annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
+        objective::normalized_imbalance,
+        precompute::{
+            build_bay_load_scale, build_pref_penalty, build_pref_spread, orientation_bounds,
+            orientation_union,
+        },
+        reconstruct::sort_default_reconstruct_order,
     },
-    utils::params::{AnnealingParamsConfig, NeighborParams, PreoptimizeSolverParams},
-    utils::precompute::{build_pref_spread, orientation_union},
+    utils::random::{RandPcg64Mcg, Random},
+    utils::time::Timer,
 };
 use geo::Area;
 use rayon::prelude::*;
@@ -66,25 +71,8 @@ impl PreoptimizePrecompute {
                     .map_err(|err| format!("block {block_id}: {err}"))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let bay_areas: Vec<f64> = problem
-            .bays
-            .iter()
-            .map(|bay| (bay.width * bay.height) as f64)
-            .collect();
-        let avg_bay_area = bay_areas.iter().sum::<f64>() / bay_areas.len() as f64;
-        let bay_load_scale = bay_areas.iter().map(|&area| avg_bay_area / area).collect();
-        let pref_penalty = problem
-            .blocks
-            .iter()
-            .map(|block| {
-                let max_pref = block.bay_preferences.iter().copied().max().unwrap_or(0);
-                block
-                    .bay_preferences
-                    .iter()
-                    .map(|&pref| max_pref - pref)
-                    .collect()
-            })
-            .collect();
+        let bay_load_scale = build_bay_load_scale(problem);
+        let pref_penalty = build_pref_penalty(problem);
         let pref_spread = build_pref_spread(problem);
 
         if problem.blocks.is_empty() {
@@ -166,20 +154,6 @@ impl AnnealingState for PreoptimizeAnnealingState {
     }
 }
 
-fn normalized_imbalance(loads: &[f64], bay_load_scale: &[f64]) -> f64 {
-    if loads.len() < 2 {
-        return 0.0;
-    }
-    let mut min_load = f64::INFINITY;
-    let mut max_load = f64::NEG_INFINITY;
-    for (bay_id, &load) in loads.iter().enumerate() {
-        let normalized = bay_load_scale[bay_id] * load;
-        min_load = min_load.min(normalized);
-        max_load = max_load.max(normalized);
-    }
-    (max_load - min_load).floor()
-}
-
 fn evaluate_schedule(
     problem: &Problem,
     pref_penalty: &[Vec<i64>],
@@ -204,19 +178,7 @@ fn orientation_area(orientation: &Orientation) -> Result<OrientationArea, String
     let union = orientation_union(orientation)
         .ok_or_else(|| "orientation must contain at least one layer".to_string())?;
 
-    let mut min_x = f64::INFINITY;
-    let mut min_y = f64::INFINITY;
-    let mut max_x = f64::NEG_INFINITY;
-    let mut max_y = f64::NEG_INFINITY;
-    for layer in &orientation.layers {
-        for &[x, y] in layer {
-            min_x = min_x.min(x);
-            min_y = min_y.min(y);
-            max_x = max_x.max(x);
-            max_y = max_y.max(y);
-        }
-    }
-
+    let bounds = orientation_bounds(orientation);
     let perimeter = union
         .0
         .iter()
@@ -231,12 +193,12 @@ fn orientation_area(orientation: &Orientation) -> Result<OrientationArea, String
 
     Ok(OrientationArea {
         union_area: union.unsigned_area(),
-        bbox_area: (max_x - min_x) * (max_y - min_y),
+        bbox_area: (bounds.max_x - bounds.min_x) * (bounds.max_y - bounds.min_y),
         perimeter,
-        min_x,
-        min_y,
-        max_x,
-        max_y,
+        min_x: bounds.min_x,
+        min_y: bounds.min_y,
+        max_x: bounds.max_x,
+        max_y: bounds.max_y,
     })
 }
 
@@ -538,7 +500,7 @@ fn select_block(
     state: &PreoptimizeAnnealingState,
     rng: &mut impl Random,
 ) -> usize {
-    if rng.nextf() >= context.params.neighbor.bad_block_select_probability {
+    if rng.next_f64() >= context.params.neighbor.bad_block_select_probability {
         return rng.gen_index(problem.blocks.len());
     }
     let mut best = rng.gen_index(problem.blocks.len());
@@ -607,15 +569,6 @@ fn try_relocate(
         }
     }
     let Some(selected) = candidate else {
-        add_used_area(
-            problem,
-            context,
-            &mut state.used_area,
-            &mut state.congestion,
-            block_id,
-            old,
-            1.0,
-        );
         return false;
     };
 
@@ -668,7 +621,7 @@ fn try_swap(
     }
     let old_a = state.schedule[a];
     let old_b = state.schedule[b];
-    let (entry_a, entry_b) = if rng.nextf() < 0.5 {
+    let (entry_a, entry_b) = if rng.next_f64() < 0.5 {
         (old_a.entry_time, old_b.entry_time)
     } else {
         (old_b.entry_time, old_a.entry_time)
@@ -704,24 +657,6 @@ fn try_swap(
         -1.0,
     );
     if !can_place(problem, context, &state.used_area, a, new_a) {
-        add_used_area(
-            problem,
-            context,
-            &mut state.used_area,
-            &mut state.congestion,
-            a,
-            old_a,
-            1.0,
-        );
-        add_used_area(
-            problem,
-            context,
-            &mut state.used_area,
-            &mut state.congestion,
-            b,
-            old_b,
-            1.0,
-        );
         return false;
     }
     add_used_area(
@@ -734,33 +669,6 @@ fn try_swap(
         1.0,
     );
     if !can_place(problem, context, &state.used_area, b, new_b) {
-        add_used_area(
-            problem,
-            context,
-            &mut state.used_area,
-            &mut state.congestion,
-            a,
-            new_a,
-            -1.0,
-        );
-        add_used_area(
-            problem,
-            context,
-            &mut state.used_area,
-            &mut state.congestion,
-            a,
-            old_a,
-            1.0,
-        );
-        add_used_area(
-            problem,
-            context,
-            &mut state.used_area,
-            &mut state.congestion,
-            b,
-            old_b,
-            1.0,
-        );
         return false;
     }
     add_used_area(
@@ -805,7 +713,7 @@ fn sample_large_reconstruct_count(
 ) -> usize {
     let params = &context.params.neighbor;
     let span = params.max_removed_blocks - params.min_removed_blocks + 1;
-    let u = rng.nextf().powf(params.remove_count_sample_power);
+    let u = rng.next_f64().powf(params.remove_count_sample_power);
     params.min_removed_blocks + ((u * span as f64) as usize).min(span - 1)
 }
 
@@ -924,8 +832,8 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
     type State = PreoptimizeAnnealingState;
     type Output = PreoptimizeState;
 
-    fn initial_states(&self) -> Vec<Self::State> {
-        return vec![self.initial.clone()];
+    fn initial_state(&self) -> Self::State {
+        self.initial.clone()
     }
 
     fn name(&self) -> &'static str {
@@ -938,7 +846,6 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
 
     fn propose(
         &self,
-        _domain: usize,
         current: &Self::State,
         _accept_threshold: f64,
         rng: &mut RandPcg64Mcg,
@@ -946,7 +853,7 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
         let mut candidate = current.clone();
         let probabilities = &self.context.params.neighbor_probabilities;
         let total = probabilities.relocate + probabilities.swap + probabilities.large_reconstruct;
-        let x = rng.nextf() * total;
+        let x = rng.next_f64() * total;
         let (neighbor_kind, succeeded) = if x < probabilities.large_reconstruct {
             (
                 2,
@@ -969,12 +876,7 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
         }
     }
 
-    fn is_finished(&self, _domain: usize, _state: &Self::State) -> bool {
-        false
-    }
-
-    fn finish(&self, mut states: Vec<Self::State>) -> Self::Output {
-        let state = states.pop().unwrap();
+    fn finish(&self, state: Self::State) -> Self::Output {
         let score = evaluate_schedule(
             self.problem,
             &self.context.pre.pref_penalty,
@@ -1031,7 +933,7 @@ pub fn preoptimize(
         bay_capacities,
         max_time: pre.search_horizon,
     };
-    let timer = Timer::start(1.0);
+    let timer = Timer::start();
     let initial_build_time_limit =
         (time_limit * params.initial_build.time_ratio).min(params.initial_build.max_seconds);
     let initial = build_initial_state(
