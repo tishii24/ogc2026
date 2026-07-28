@@ -30,4 +30,3 @@ pending:
 - 取り出す時刻を変えてABBA <->　ABABを入れ替える
 - kick
 - hashを荒くする
-- reheat

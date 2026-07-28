@@ -76,17 +76,3 @@ docker run --rm \
 (cd "solutions/$VERSION" && zip -r "../../$VERSION.zip" .)
 zipinfo "$VERSION.zip"
 ```
-
-## 焼きなまし過程の可視化
-
-```bash
-PROB=prob_6
-OGC_ANNEALING_TRACE_DIR=log/trace cargo run --release \
-  --features trace-annealing \
-  --bin ogc2026 \
-  -- train/$PROB.json 60 --params params/default.yaml > /dev/null
-
-python tools/plot_annealing_trace.py \
-  log/trace \
-  --output log/trace.html
-```

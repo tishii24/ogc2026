@@ -24,11 +24,6 @@ precompute:
 
 insert:
   y_buffer: 10
-  reconstruct_random_progress_power: 1.0
-  reconstruct_bay_skip_probability: 0.0
-  reconstruct_orientation_skip_probability: 0.0
-  reconstruct_y_skip_probability: 0.0
-  reconstruct_bbox_anchor_probability: 0.0
 
 annealing:
   preoptimize:
@@ -52,14 +47,12 @@ annealing:
     positive_tardiness:
       type: geometric
       temperature_initial_score_per_block_scale: [1.0, 0.01]
-      reheat_local_best_score_per_block_scale: 1.0
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
     zero_tardiness:
       type: geometric
       temperature_w3_scale: [10.0, 1.0]
-      reheat_local_best_score_per_block_scale: 10.0
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
@@ -91,7 +84,7 @@ preoptimize:
 global_neighbor:
   probabilities:
     large_reconstruct: 0.2
-    beam_large_reconstruct: 0.2
+    beam_large_reconstruct: 0.0
     shift: 3.0
     move: 0.1
     rotate: 0.5

@@ -18,12 +18,6 @@ use super::{
     reconstruct::{HeuristicPrecedence, build_heuristic_precedence, try_large_reconstruct},
 };
 
-#[cfg(feature = "trace-annealing")]
-use super::{
-    reconstruct::scheduled_by_id,
-    tracing::{AnnealingTraceDiff, AnnealingTraceState},
-};
-
 #[derive(Clone, Debug)]
 pub(super) struct OptimizeState {
     pub(super) objective: f64,
@@ -127,41 +121,6 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
         NeighborKind::NAMES
     }
 
-    #[cfg(feature = "trace-annealing")]
-    fn trace_state(&self, state: &Self::State) -> Option<AnnealingTraceState> {
-        Some(AnnealingTraceState {
-            score: state.objective,
-            z1: state.total_tardiness,
-            state_hash: hash_schedule(&state.schedule),
-            bay_hash: hash_bay_assignment(&state.schedule),
-        })
-    }
-
-    #[cfg(feature = "trace-annealing")]
-    fn trace_diff(&self, before: &Self::State, after: &Self::State) -> AnnealingTraceDiff {
-        let before_by_id = scheduled_by_id(self.problem, &before.schedule);
-        let after_by_id = scheduled_by_id(self.problem, &after.schedule);
-        let mut diff = AnnealingTraceDiff::default();
-        for block_id in 0..self.problem.blocks.len() {
-            let (Some(before), Some(after)) = (before_by_id[block_id], after_by_id[block_id])
-            else {
-                continue;
-            };
-            let bay_changed = before.bay_id != after.bay_id;
-            let orientation_changed = before.orient_idx != after.orient_idx;
-            let position_changed = before.x != after.x || before.y != after.y;
-            let time_changed =
-                before.entry_time != after.entry_time || before.exit_time != after.exit_time;
-            diff.bay_changes += usize::from(bay_changed);
-            diff.orientation_changes += usize::from(orientation_changed);
-            diff.position_changes += usize::from(position_changed);
-            diff.time_changes += usize::from(time_changed);
-            diff.changed_blocks +=
-                usize::from(bay_changed || orientation_changed || position_changed || time_changed);
-        }
-        diff
-    }
-
     fn on_shared_best(&self, state: &Self::State, _timer: Timer) {
         self.candidate_emitter.emit(state, self.timer, false);
     }
@@ -249,21 +208,6 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
     fn finish(&self, state: Self::State) -> Self::Output {
         state
     }
-}
-
-#[cfg(feature = "trace-annealing")]
-fn hash_bay_assignment(schedule: &[ScheduledBlock]) -> u64 {
-    let mut assignments: Vec<_> = schedule
-        .iter()
-        .map(|block| (block.block_id, block.bay_id))
-        .collect();
-    assignments.sort_unstable();
-    let mut hash = mix_hash(1469598103934665603, assignments.len() as u64);
-    for (block_id, bay_id) in assignments {
-        hash = mix_hash(hash, block_id as u64);
-        hash = mix_hash(hash, bay_id as u64);
-    }
-    hash
 }
 
 fn hash_schedule(schedule: &[ScheduledBlock]) -> u64 {

@@ -381,7 +381,6 @@ pub(super) fn try_move_neighbor<R: Random>(
         &base,
         &loads,
         insert_params,
-        None,
         &pre.bay_order_by_pref[old.block_id],
         rng,
     )?;

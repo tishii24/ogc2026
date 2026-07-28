@@ -14,11 +14,6 @@ use crate::{
     },
 };
 
-#[cfg(feature = "trace-annealing")]
-use super::tracing::{
-    AnnealingTraceDiff, AnnealingTraceEvent, AnnealingTraceState, AnnealingTraceWriter,
-};
-
 const EPS: f64 = 1e-9;
 
 pub(crate) trait AnnealingState: Clone + Send + Sync {
@@ -162,14 +157,7 @@ pub(crate) fn worker_temperature_scale(worker_id: usize, worker_count: usize, sc
 pub(crate) struct AnnealingRegimeParams {
     pub(crate) temperature_schedule: TemperatureScheduleKind,
     pub(crate) temperature: (f64, f64),
-    pub(crate) reheat_local_best_score_per_block_scale: Option<f64>,
     pub(crate) exchange_threshold: f64,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct ReheatParams {
-    pub(crate) stagnation_iterations: usize,
-    pub(crate) duration_iterations: usize,
 }
 
 pub(crate) struct AnnealingParams {
@@ -178,8 +166,6 @@ pub(crate) struct AnnealingParams {
     pub(crate) zero_tardiness: AnnealingRegimeParams,
     pub(crate) worker_temperature_scale: f64,
     pub(crate) tabu_capacity: usize,
-    pub(crate) reheat: Option<ReheatParams>,
-    pub(crate) block_count: usize,
 }
 
 pub(crate) struct AnnealingAttempt<S> {
@@ -246,7 +232,6 @@ pub(crate) struct WorkerSummary {
     pub(crate) iterations: usize,
     pub(crate) accepted: usize,
     pub(crate) improved: usize,
-    pub(crate) reheats: usize,
     pub(crate) positive_tardiness_temperature: (f64, f64),
     pub(crate) zero_tardiness_temperature: (f64, f64),
     pub(crate) current_score: f64,
@@ -263,16 +248,6 @@ pub(crate) trait AnnealingDelegate: Sync {
     fn name(&self) -> &'static str;
 
     fn neighbor_kinds(&self) -> &'static [&'static str];
-
-    #[cfg(feature = "trace-annealing")]
-    fn trace_state(&self, _state: &Self::State) -> Option<AnnealingTraceState> {
-        None
-    }
-
-    #[cfg(feature = "trace-annealing")]
-    fn trace_diff(&self, _before: &Self::State, _after: &Self::State) -> AnnealingTraceDiff {
-        AnnealingTraceDiff::default()
-    }
 
     fn propose(
         &self,
@@ -318,18 +293,9 @@ impl TabuList {
     }
 }
 
-#[derive(Clone, Copy)]
-struct ReheatState {
-    start_iteration: usize,
-    peak_temperature: f64,
-}
-
 struct WorkerState<S> {
     current: S,
     local_best_score: f64,
-    last_progress_iteration: usize,
-    reheat: Option<ReheatState>,
-    reheat_count: usize,
     last_imported_revision: Option<u64>,
     tabu: TabuList,
 }
@@ -372,14 +338,13 @@ impl<D: AnnealingDelegate> Annealer<D> {
         let state = shared.into_inner();
         for worker in &worker_results {
             log!(
-                "[{:.4}] [{:8} worker={}] iter={:8}, accepted={:8}, improved={:8}, reheats={:4}, current={:.3}, local_best={:.3}, temp(z1>0)={:.6}->{:.6}, temp(z1=0)={:.6}->{:.6}\nneighbor stats:\n{}",
+                "[{:.4}] [{:8} worker={}] iter={:8}, accepted={:8}, improved={:8}, current={:.3}, local_best={:.3}, temp(z1>0)={:.6}->{:.6}, temp(z1=0)={:.6}->{:.6}\nneighbor stats:\n{}",
                 timer.elapsed_seconds(),
                 self.delegate.name(),
                 worker.worker_id,
                 worker.iterations,
                 worker.accepted,
                 worker.improved,
-                worker.reheats,
                 worker.current_score,
                 worker.local_best_score,
                 worker.positive_tardiness_temperature.0,
@@ -413,9 +378,6 @@ impl<D: AnnealingDelegate> Annealer<D> {
         let mut local = WorkerState {
             current: initial_state.clone(),
             local_best_score: score,
-            last_progress_iteration: 0,
-            reheat: None,
-            reheat_count: 0,
             last_imported_revision: None,
             tabu,
         };
@@ -441,85 +403,13 @@ impl<D: AnnealingDelegate> Annealer<D> {
         let mut improved = 0usize;
         let mut neighbor_stats =
             vec![NeighborStats::default(); self.delegate.neighbor_kinds().len()];
-        #[cfg(feature = "trace-annealing")]
-        let mut trace_writer = self
-            .delegate
-            .trace_state(initial_state)
-            .is_some()
-            .then(|| AnnealingTraceWriter::new(self.delegate.name(), worker_id))
-            .flatten();
-        #[cfg(feature = "trace-annealing")]
-        if let Some(writer) = &mut trace_writer
-            && let Some(state) = self.delegate.trace_state(&local.current)
-        {
-            writer.write(
-                timer.elapsed_seconds(),
-                0,
-                0,
-                AnnealingTraceEvent {
-                    event: "start",
-                    neighbor: None,
-                    temperature: None,
-                    accept_threshold: None,
-                    before: state,
-                    after: state,
-                    diff: AnnealingTraceDiff::default(),
-                    shared_revision: Some(0),
-                },
-            );
-        }
 
         loop {
             let Some(progress) = context.next(timer) else {
                 break;
             };
             if context.should_exchange(self.params.exchange_interval) {
-                self.exchange_shared(
-                    &mut local,
-                    shared,
-                    context.iterations(),
-                    |_before, _after, _revision| {
-                        #[cfg(feature = "trace-annealing")]
-                        if let Some(writer) = &mut trace_writer
-                            && let (Some(before), Some(after)) = (
-                                self.delegate.trace_state(_before),
-                                self.delegate.trace_state(_after),
-                            )
-                        {
-                            let (temperature_schedule, temperature_range) =
-                                if _before.has_tardiness() {
-                                    (
-                                        self.params.positive_tardiness.temperature_schedule,
-                                        positive_tardiness_temperature,
-                                    )
-                                } else {
-                                    (
-                                        self.params.zero_tardiness.temperature_schedule,
-                                        zero_tardiness_temperature,
-                                    )
-                                };
-                            writer.write(
-                                timer.elapsed_seconds(),
-                                context.iterations(),
-                                0,
-                                AnnealingTraceEvent {
-                                    event: "exchange",
-                                    neighbor: None,
-                                    temperature: Some(temperature(
-                                        temperature_schedule,
-                                        temperature_range,
-                                        progress,
-                                    )),
-                                    accept_threshold: None,
-                                    before,
-                                    after,
-                                    diff: self.delegate.trace_diff(_before, _after),
-                                    shared_revision: Some(_revision),
-                                },
-                            );
-                        }
-                    },
-                );
+                self.exchange_shared(&mut local, shared);
             }
 
             let current_score = local.current.annealing_score();
@@ -531,73 +421,8 @@ impl<D: AnnealingDelegate> Annealer<D> {
             } else {
                 (&self.params.zero_tardiness, zero_tardiness_temperature)
             };
-            let base_temperature =
+            let current_temperature =
                 temperature(regime.temperature_schedule, temperature_range, progress);
-            let reheat_scale = regime.reheat_local_best_score_per_block_scale;
-            if reheat_scale.is_none() {
-                local.reheat = None;
-            }
-            if let (Some(reheat_params), Some(reheat_scale)) = (self.params.reheat, reheat_scale)
-                && local.reheat.is_none()
-                && context.iterations() - local.last_progress_iteration
-                    >= reheat_params.stagnation_iterations
-            {
-                let peak_temperature = (local.local_best_score / self.params.block_count as f64
-                    * reheat_scale
-                    * scale)
-                    .max(base_temperature);
-                local.reheat = Some(ReheatState {
-                    start_iteration: context.iterations(),
-                    peak_temperature,
-                });
-                local.last_progress_iteration = context.iterations();
-                local.reheat_count += 1;
-                log!(
-                    "[{:.4}] [{}] reheat: worker={}, iter={}, base={:.3}, peak={:.3}, local_best={:.3}",
-                    timer.elapsed_seconds(),
-                    self.delegate.name(),
-                    worker_id,
-                    context.iterations(),
-                    base_temperature,
-                    peak_temperature,
-                    local.local_best_score,
-                );
-                #[cfg(feature = "trace-annealing")]
-                if let Some(writer) = &mut trace_writer
-                    && let Some(state) = self.delegate.trace_state(&local.current)
-                {
-                    writer.write(
-                        timer.elapsed_seconds(),
-                        context.iterations(),
-                        0,
-                        AnnealingTraceEvent {
-                            event: "temperature_reheat",
-                            neighbor: None,
-                            temperature: Some(peak_temperature),
-                            accept_threshold: None,
-                            before: state,
-                            after: state,
-                            diff: AnnealingTraceDiff::default(),
-                            shared_revision: None,
-                        },
-                    );
-                }
-            }
-            let current_temperature = if let (Some(reheat_params), Some(reheat)) =
-                (self.params.reheat, local.reheat)
-            {
-                let elapsed = context.iterations() - reheat.start_iteration;
-                if elapsed < reheat_params.duration_iterations {
-                    let reheat_progress = elapsed as f64 / reheat_params.duration_iterations as f64;
-                    let ratio = 0.5 * (1.0 + (std::f64::consts::PI * reheat_progress).cos());
-                    base_temperature + (reheat.peak_temperature - base_temperature).max(0.0) * ratio
-                } else {
-                    local.reheat = None;
-                    base_temperature
-                }
-            } else {
-                base_temperature
-            };
             let accept_threshold =
                 acceptance_threshold(current_score, current_temperature, &mut context.rng);
             let neighbor_start = Instant::now();
@@ -631,42 +456,15 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 continue;
             }
 
-            #[cfg(feature = "trace-annealing")]
-            let trace_transition = (
-                self.delegate.trace_state(&local.current),
-                self.delegate.trace_state(&candidate),
-                self.delegate.trace_diff(&local.current, &candidate),
-            );
             local.current = candidate;
             accepted += 1;
             stats.accepted += 1;
             if let Some(key) = candidate_tabu_key {
                 local.tabu.insert(key);
             }
-            #[cfg(feature = "trace-annealing")]
-            if let Some(writer) = &mut trace_writer
-                && let (Some(before), Some(after), diff) = trace_transition
-            {
-                writer.write(
-                    timer.elapsed_seconds(),
-                    context.iterations(),
-                    0,
-                    AnnealingTraceEvent {
-                        event: "accepted",
-                        neighbor: Some(self.delegate.neighbor_kinds()[attempt.neighbor_kind]),
-                        temperature: Some(current_temperature),
-                        accept_threshold: Some(accept_threshold),
-                        before,
-                        after,
-                        diff,
-                        shared_revision: None,
-                    },
-                );
-            }
 
             if candidate_score + EPS < local.local_best_score {
                 local.local_best_score = candidate_score;
-                local.last_progress_iteration = context.iterations();
                 improved += 1;
                 log!(
                     "[{:.4}] [{}]  local best: worker={}, iter={:8}, score={:.3}",
@@ -676,27 +474,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
                     context.iterations(),
                     candidate_score,
                 );
-                #[cfg(feature = "trace-annealing")]
-                if let Some(writer) = &mut trace_writer
-                    && let Some(state) = self.delegate.trace_state(&local.current)
-                {
-                    writer.write(
-                        timer.elapsed_seconds(),
-                        context.iterations(),
-                        0,
-                        AnnealingTraceEvent {
-                            event: "local_best",
-                            neighbor: Some(self.delegate.neighbor_kinds()[attempt.neighbor_kind]),
-                            temperature: Some(current_temperature),
-                            accept_threshold: Some(accept_threshold),
-                            before: state,
-                            after: state,
-                            diff: AnnealingTraceDiff::default(),
-                            shared_revision: None,
-                        },
-                    );
-                }
-                if let Some(_revision) = shared.update(&local.current) {
+                if shared.update(&local.current).is_some() {
                     self.delegate.on_shared_best(&local.current, timer);
                     log!(
                         "[{:.4}] [{}] shared best: worker={}, iter={:8}, score={:.3}",
@@ -706,52 +484,9 @@ impl<D: AnnealingDelegate> Annealer<D> {
                         context.iterations(),
                         candidate_score,
                     );
-                    #[cfg(feature = "trace-annealing")]
-                    if let Some(writer) = &mut trace_writer
-                        && let Some(state) = self.delegate.trace_state(&local.current)
-                    {
-                        writer.write(
-                            timer.elapsed_seconds(),
-                            context.iterations(),
-                            0,
-                            AnnealingTraceEvent {
-                                event: "shared_best",
-                                neighbor: Some(
-                                    self.delegate.neighbor_kinds()[attempt.neighbor_kind],
-                                ),
-                                temperature: Some(current_temperature),
-                                accept_threshold: Some(accept_threshold),
-                                before: state,
-                                after: state,
-                                diff: AnnealingTraceDiff::default(),
-                                shared_revision: Some(_revision),
-                            },
-                        );
-                    }
                 }
             }
             stats.time_sec += neighbor_start.elapsed().as_secs_f64();
-        }
-
-        #[cfg(feature = "trace-annealing")]
-        if let Some(writer) = &mut trace_writer
-            && let Some(state) = self.delegate.trace_state(&local.current)
-        {
-            writer.write(
-                timer.elapsed_seconds(),
-                context.iterations(),
-                0,
-                AnnealingTraceEvent {
-                    event: "finish",
-                    neighbor: None,
-                    temperature: None,
-                    accept_threshold: None,
-                    before: state,
-                    after: state,
-                    diff: AnnealingTraceDiff::default(),
-                    shared_revision: local.last_imported_revision,
-                },
-            );
         }
 
         WorkerSummary {
@@ -759,7 +494,6 @@ impl<D: AnnealingDelegate> Annealer<D> {
             iterations: context.iterations(),
             accepted,
             improved,
-            reheats: local.reheat_count,
             positive_tardiness_temperature,
             zero_tardiness_temperature,
             current_score: local.current.annealing_score(),
@@ -768,13 +502,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
         }
     }
 
-    fn exchange_shared(
-        &self,
-        local: &mut WorkerState<D::State>,
-        shared: &SharedBest<D::State>,
-        iteration: usize,
-        mut on_exchange: impl FnMut(&D::State, &D::State, u64),
-    ) {
+    fn exchange_shared(&self, local: &mut WorkerState<D::State>, shared: &SharedBest<D::State>) {
         let exchange_threshold = if local.current.has_tardiness() {
             self.params.positive_tardiness.exchange_threshold
         } else {
@@ -786,14 +514,11 @@ impl<D: AnnealingDelegate> Annealer<D> {
             local.last_imported_revision,
         ) {
             let score = best.annealing_score();
-            on_exchange(&local.current, &best, revision);
             if let Some(key) = best.tabu_key() {
                 local.tabu.insert(key);
             }
             local.current = best;
             local.local_best_score = local.local_best_score.min(score);
-            local.last_progress_iteration = iteration;
-            local.reheat = None;
             local.last_imported_revision = Some(revision);
         }
     }

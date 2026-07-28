@@ -4,9 +4,7 @@ use serde::Deserialize;
 
 use crate::{
     Problem,
-    solver::annealing::{
-        AnnealingParams, AnnealingRegimeParams, ReheatParams, TemperatureScheduleKind,
-    },
+    solver::annealing::{AnnealingParams, AnnealingRegimeParams, TemperatureScheduleKind},
 };
 
 #[derive(Clone, Debug, Deserialize)]
@@ -68,11 +66,6 @@ pub struct PrecomputeParams {
 #[serde(deny_unknown_fields)]
 pub struct InsertParams {
     pub y_buffer: usize,
-    pub reconstruct_random_progress_power: f64,
-    pub reconstruct_bay_skip_probability: f64,
-    pub reconstruct_orientation_skip_probability: f64,
-    pub reconstruct_y_skip_probability: f64,
-    pub reconstruct_bbox_anchor_probability: f64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -137,7 +130,6 @@ pub struct AnnealingRegimeConfig {
     pub temperature_w1_scale: Option<(f64, f64)>,
     pub temperature_w3_scale: Option<(f64, f64)>,
     pub temperature_initial_score_per_block_scale: Option<(f64, f64)>,
-    pub reheat_local_best_score_per_block_scale: Option<f64>,
     pub exchange_threshold: WeightScaleConfig,
 }
 
@@ -172,7 +164,6 @@ impl AnnealingRegimeConfig {
         AnnealingRegimeParams {
             temperature_schedule,
             temperature: (temperature[0], temperature[1]),
-            reheat_local_best_score_per_block_scale: self.reheat_local_best_score_per_block_scale,
             exchange_threshold: self.exchange_threshold.make(problem),
         }
     }
@@ -193,14 +184,6 @@ pub struct AnnealingParamsConfig {
     pub zero_tardiness: AnnealingRegimeConfig,
     pub worker_temperature_scale: f64,
     pub tabu_capacity: usize,
-    pub reheat: Option<ReheatConfig>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReheatConfig {
-    pub stagnation_iterations: usize,
-    pub duration_iterations: usize,
 }
 
 impl AnnealingParamsConfig {
@@ -211,11 +194,6 @@ impl AnnealingParamsConfig {
             zero_tardiness: self.zero_tardiness.make(problem, initial_score),
             worker_temperature_scale: self.worker_temperature_scale,
             tabu_capacity: self.tabu_capacity,
-            reheat: self.reheat.as_ref().map(|reheat| ReheatParams {
-                stagnation_iterations: reheat.stagnation_iterations,
-                duration_iterations: reheat.duration_iterations,
-            }),
-            block_count: problem.blocks.len(),
         }
     }
 }

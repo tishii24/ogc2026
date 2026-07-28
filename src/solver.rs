@@ -12,8 +12,6 @@ mod placement_scan;
 mod precompute;
 pub mod preoptimize;
 mod reconstruct;
-#[cfg(feature = "trace-annealing")]
-mod tracing;
 
 use optimize::GlobalAnnealing;
 use output::{CandidateEmitter, schedule_to_solution};

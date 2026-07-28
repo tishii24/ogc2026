@@ -314,8 +314,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
     } = build_reconstruct_base(problem, pre, schedule, &removed_ids);
     let mut current_by_id = constraints.map(|_| scheduled_by_id(problem, &cur));
 
-    let total_insert_count = order.len();
-    for (insert_index, block_id) in order.into_iter().enumerate() {
+    for block_id in order {
         if fixed_score13 > accept_threshold + 1e-9 {
             return None;
         }
@@ -336,12 +335,6 @@ pub(super) fn try_large_reconstruct<R: Random>(
                 max: i64::MAX,
             }
         };
-        let random_strength = if total_insert_count <= 1 {
-            0.0
-        } else {
-            ((total_insert_count - insert_index - 1) as f64 / (total_insert_count - 1) as f64)
-                .powf(insert_params.reconstruct_random_progress_power)
-        };
         let scheduled = insert_greedy(
             problem,
             pre,
@@ -351,7 +344,6 @@ pub(super) fn try_large_reconstruct<R: Random>(
             &cur,
             &loads,
             insert_params,
-            Some(random_strength),
             &pre.bay_order_by_pref[old.block_id],
             rng,
         )?;
@@ -936,7 +928,6 @@ fn build_bay_schedule<R: Random>(
             &schedule,
             &loads,
             params,
-            None,
             &bay_order,
             rng,
         )?;
