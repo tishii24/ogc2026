@@ -68,7 +68,7 @@ annealing:
         w3_scale: 50.0
     zero_tardiness:
       type: geometric
-      temperature_w3_scale: [10.0, 1.0]
+      temperature_w3_scale: [3.0, 1.0]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
@@ -105,34 +105,40 @@ global_neighbor:
     move: 0.1
     rotate: 0.5
     swap: 3.0
-  beam_large_reconstruct:
-    beam_width: 16
-    candidate_count: 16
-    placement_group_limit: 2
-  min_removed_blocks: 7
-  max_removed_blocks: 20
-  remove_pool_factor: 4
-  remove_count_sample_power: 2.0
-  remove_seed_per_block: [1, 10]
-  remove_entry_base_interval_weights: [0.0, 0.0, 0.0, 0.2, 0.2, 0.2, 0.2, 0.2]
-  remove_entry_seed_candidate_count: 10
-  remove_seed_method_weights:
-    badness: 1.0
-    fluidity: 1.0
-    random: 2.0
-  remove_fluidity_slack_weight_range: [0.5, 2.0]
-  remove_fluidity_pref_spread_weight_range: [0.5, 2.0]
-  remove_x_distance_weight_range: [0.0, 3.0]
-  remove_y_distance_weight_range: [0.0, 3.0]
-  remove_t_distance_weight_range: [0.0, 3.0]
-  reconstruct_workload_weight_range: [0.0, 0.5]
-  reconstruct_volume_weight_range: [0.5, 2.0]
-  reconstruct_pref_spread_weight_range: [0.0, 0.5]
-  reconstruct_limit_time_urgency_weight_range: [0.5, 2.0]
-  reconstruct_order_random_weight_range: [0.0, 2.0]
-  shift_dy_range: [-5, 0]
-  rotate_dy_range: [-2, 2]
-  swap_neighbor_top_k: 32
-  swap_dy_range: [-2, 2]
-  move_sample_blocks: 16
-  move_small_pool_size: 8
+  reconstruct:
+    beam:
+      width: 16
+      candidate_count: 16
+      placement_group_limit: 2
+    min_removed_blocks: 7
+    max_removed_blocks: 20
+    remove_pool_factor: 4
+    remove_count_sample_power: 2.0
+    remove_seed_per_block: [1, 10]
+    remove_entry_base_interval_weights: [0.2, 0.2, 0.2, 0.2, 0.2]
+    remove_entry_seed_candidate_count: 10
+    remove_seed_method_weights:
+      badness: 1.0
+      fluidity: 1.0
+      random: 2.0
+    remove_fluidity_slack_weight_range: [0.5, 2.0]
+    remove_fluidity_pref_spread_weight_range: [0.5, 2.0]
+    remove_x_distance_weight_range: [0.0, 3.0]
+    remove_y_distance_weight_range: [0.0, 3.0]
+    remove_t_distance_weight_range: [0.0, 3.0]
+    workload_weight_range: [0.0, 0.5]
+    volume_weight_range: [0.5, 2.0]
+    pref_spread_weight_range: [0.0, 0.5]
+    limit_time_urgency_weight_range: [0.5, 2.0]
+    order_random_weight_range: [0.0, 2.0]
+    insert_candidate_top_k: 8
+  shift:
+    dy_range: [-5, 0]
+  move:
+    sample_blocks: 16
+    small_pool_size: 8
+  rotate:
+    dy_range: [-2, 2]
+  swap:
+    neighbor_top_k: 32
+    dy_range: [-2, 2]

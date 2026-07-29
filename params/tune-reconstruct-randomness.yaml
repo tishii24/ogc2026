@@ -1,0 +1,64 @@
+name: reconstruct-randomness-3h
+version: "078"
+base_params: params/default.yaml
+suite: suites/tardiness-zero.json
+timelimit: 120
+
+steps:
+  - name: randomness-strength
+    mode: combinations
+    parameters:
+      - global_neighbor.reconstruct.remove_seed_method_weights:
+          badness: 1.0
+          fluidity: 1.0
+          random: 0.5
+        global_neighbor.reconstruct.remove_entry_base_interval_weights: [0.0, 0.0, 0.0, 0.2, 0.2, 0.2, 0.2, 0.2]
+        global_neighbor.reconstruct.remove_x_distance_weight_range: [0.75, 1.25]
+        global_neighbor.reconstruct.remove_y_distance_weight_range: [0.75, 1.25]
+        global_neighbor.reconstruct.remove_t_distance_weight_range: [0.75, 1.25]
+        global_neighbor.reconstruct.order_random_weight_range: [0.0, 0.5]
+        global_neighbor.reconstruct.insert_candidate_top_k: 2
+
+      - global_neighbor.reconstruct.remove_seed_method_weights:
+          badness: 1.0
+          fluidity: 1.0
+          random: 2.0
+        global_neighbor.reconstruct.remove_entry_base_interval_weights: [0.0, 0.0, 0.0, 0.2, 0.2, 0.2, 0.2, 0.2]
+        global_neighbor.reconstruct.remove_x_distance_weight_range: [0.0, 3.0]
+        global_neighbor.reconstruct.remove_y_distance_weight_range: [0.0, 3.0]
+        global_neighbor.reconstruct.remove_t_distance_weight_range: [0.0, 3.0]
+        global_neighbor.reconstruct.order_random_weight_range: [0.0, 2.0]
+        global_neighbor.reconstruct.insert_candidate_top_k: 8
+
+      - global_neighbor.reconstruct.remove_seed_method_weights:
+          badness: 1.0
+          fluidity: 1.0
+          random: 4.0
+        global_neighbor.reconstruct.remove_entry_base_interval_weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+        global_neighbor.reconstruct.remove_x_distance_weight_range: [0.0, 3.0]
+        global_neighbor.reconstruct.remove_y_distance_weight_range: [0.0, 3.0]
+        global_neighbor.reconstruct.remove_t_distance_weight_range: [0.0, 3.0]
+        global_neighbor.reconstruct.order_random_weight_range: [0.0, 4.0]
+        global_neighbor.reconstruct.insert_candidate_top_k: 16
+
+      - global_neighbor.reconstruct.remove_seed_method_weights:
+          badness: 1.0
+          fluidity: 1.0
+          random: 8.0
+        global_neighbor.reconstruct.remove_entry_base_interval_weights: [1.0]
+        global_neighbor.reconstruct.remove_x_distance_weight_range: [0.0, 3.0]
+        global_neighbor.reconstruct.remove_y_distance_weight_range: [0.0, 3.0]
+        global_neighbor.reconstruct.remove_t_distance_weight_range: [0.0, 3.0]
+        global_neighbor.reconstruct.order_random_weight_range: [0.0, 8.0]
+        global_neighbor.reconstruct.insert_candidate_top_k: 32
+
+  - name: remove-size
+    mode: combinations
+    parameters:
+      - global_neighbor.reconstruct.min_removed_blocks: 7
+        global_neighbor.reconstruct.max_removed_blocks: 20
+        global_neighbor.reconstruct.remove_count_sample_power: 2.0
+
+      - global_neighbor.reconstruct.min_removed_blocks: 10
+        global_neighbor.reconstruct.max_removed_blocks: 30
+        global_neighbor.reconstruct.remove_count_sample_power: 1.0

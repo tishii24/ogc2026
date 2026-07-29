@@ -203,7 +203,18 @@ impl AnnealingParamsConfig {
 #[serde(deny_unknown_fields)]
 pub struct NeighborParams {
     pub probabilities: NeighborProbabilities,
-    pub beam_large_reconstruct: BeamLargeReconstructParams,
+    pub reconstruct: ReconstructNeighborParams,
+    pub shift: ShiftNeighborParams,
+    #[serde(rename = "move")]
+    pub move_block: MoveNeighborParams,
+    pub rotate: RotateNeighborParams,
+    pub swap: SwapNeighborParams,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReconstructNeighborParams {
+    pub beam: BeamLargeReconstructParams,
     pub min_removed_blocks: usize,
     pub max_removed_blocks: usize,
     pub remove_pool_factor: usize,
@@ -217,17 +228,38 @@ pub struct NeighborParams {
     pub remove_x_distance_weight_range: (f64, f64),
     pub remove_y_distance_weight_range: (f64, f64),
     pub remove_t_distance_weight_range: (f64, f64),
-    pub reconstruct_workload_weight_range: (f64, f64),
-    pub reconstruct_volume_weight_range: (f64, f64),
-    pub reconstruct_pref_spread_weight_range: (f64, f64),
-    pub reconstruct_limit_time_urgency_weight_range: (f64, f64),
-    pub reconstruct_order_random_weight_range: (f64, f64),
-    pub shift_dy_range: (i64, i64),
-    pub rotate_dy_range: (i64, i64),
-    pub swap_neighbor_top_k: usize,
-    pub swap_dy_range: (i64, i64),
-    pub move_sample_blocks: usize,
-    pub move_small_pool_size: usize,
+    pub workload_weight_range: (f64, f64),
+    pub volume_weight_range: (f64, f64),
+    pub pref_spread_weight_range: (f64, f64),
+    pub limit_time_urgency_weight_range: (f64, f64),
+    pub order_random_weight_range: (f64, f64),
+    pub insert_candidate_top_k: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShiftNeighborParams {
+    pub dy_range: (i64, i64),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MoveNeighborParams {
+    pub sample_blocks: usize,
+    pub small_pool_size: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RotateNeighborParams {
+    pub dy_range: (i64, i64),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SwapNeighborParams {
+    pub neighbor_top_k: usize,
+    pub dy_range: (i64, i64),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -266,7 +298,7 @@ impl NeighborProbabilities {
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BeamLargeReconstructParams {
-    pub beam_width: usize,
+    pub width: usize,
     pub candidate_count: usize,
     pub placement_group_limit: usize,
 }

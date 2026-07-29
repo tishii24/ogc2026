@@ -68,7 +68,7 @@ pub fn solve(
         &preoptimize_pre,
         &params.preoptimize,
         &params.annealing.preoptimize,
-        &params.global_neighbor,
+        &params.global_neighbor.reconstruct,
         preoptimize_time_limit,
         params.runtime.worker_count,
         params.runtime.preoptimize_seed,
@@ -92,7 +92,7 @@ pub fn solve(
         timer,
         params.runtime.worker_count,
         params.runtime.solver_seed,
-        &params.global_neighbor,
+        &params.global_neighbor.reconstruct,
         &params.insert,
         params.preoptimize.precedence_margin,
     )

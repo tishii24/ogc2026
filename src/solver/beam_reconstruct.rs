@@ -1,4 +1,4 @@
-use crate::{Problem, ScheduledBlock, params::NeighborParams, utils::random::Random};
+use crate::{Problem, ScheduledBlock, params::ReconstructNeighborParams, utils::random::Random};
 
 use super::{
     objective::{ScheduleScore, normalized_imbalance, score_schedule, score13_block},
@@ -54,7 +54,7 @@ pub(super) fn try_beam_large_reconstruct<R: Random>(
     schedule: &[ScheduledBlock],
     rng: &mut R,
     accept_threshold: f64,
-    params: &NeighborParams,
+    params: &ReconstructNeighborParams,
 ) -> Option<Vec<ScheduledBlock>> {
     let k = sample_removed_count(rng, params).min(problem.blocks.len());
     let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng, params)?;
@@ -95,8 +95,8 @@ pub(super) fn try_beam_large_reconstruct<R: Random>(
             pre,
             &base,
             block_id,
-            params.beam_large_reconstruct.candidate_count,
-            params.beam_large_reconstruct.placement_group_limit,
+            params.beam.candidate_count,
+            params.beam.placement_group_limit,
         );
     }
 
@@ -117,8 +117,7 @@ pub(super) fn try_beam_large_reconstruct<R: Random>(
     for &block_id in &order {
         let original = original_by_id[block_id]?;
         let block = &problem.blocks[block_id];
-        let mut next =
-            Vec::with_capacity(beam.len() * params.beam_large_reconstruct.candidate_count.max(1));
+        let mut next = Vec::with_capacity(beam.len() * params.beam.candidate_count.max(1));
 
         for state in &beam {
             let EntryTimeBounds {
@@ -204,10 +203,7 @@ pub(super) fn try_beam_large_reconstruct<R: Random>(
             if state.original_prefix {
                 push_placement_candidate(problem, pre, state, original, original, &mut placements);
             }
-            retain_parent_candidates(
-                &mut placements,
-                params.beam_large_reconstruct.candidate_count,
-            );
+            retain_parent_candidates(&mut placements, params.beam.candidate_count);
 
             for placement in placements {
                 if placement.score13 > accept_threshold + 1e-9 {
@@ -230,11 +226,7 @@ pub(super) fn try_beam_large_reconstruct<R: Random>(
             }
         }
 
-        beam = select_beam(
-            next,
-            params.beam_large_reconstruct.beam_width,
-            params.beam_large_reconstruct.placement_group_limit,
-        );
+        beam = select_beam(next, params.beam.width, params.beam.placement_group_limit);
         if beam.is_empty() {
             return None;
         }

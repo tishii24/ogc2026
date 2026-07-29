@@ -3,7 +3,8 @@ timelimitは長そうなので、近傍を大きくして、より広く探索�
 insert-candidateはbbox-right,bbox-topで評価する必要はなさそう
 一方で、詰めて配置する価値はあることはわかっている
 色々なorientationを試すことに価値はありそう
-
+- bbox-right, bbox-topの上位k件からランダムに選ぶようにする
+- orientationはshuffleして、色々なorientationを試せるようにしたい
 
 large-reconstructのinsertを探索する
 - 今はgreedyに挿入しているが、これを改良したい

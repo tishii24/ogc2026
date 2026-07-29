@@ -21,16 +21,16 @@ pub(crate) fn insert_greedy<R: Random>(
     loads: &[f64],
     params: &InsertParams,
     bay_order: &[usize],
+    candidate_top_k: usize,
     rng: &mut R,
 ) -> Option<ScheduledBlock> {
-    fn insert_candidate_better(a: &InsertCandidate, b: &InsertCandidate) -> bool {
+    fn insert_candidate_cmp(a: &InsertCandidate, b: &InsertCandidate) -> std::cmp::Ordering {
         a.score_delta
             .total_cmp(&b.score_delta)
             .then(a.scheduled.entry_time.cmp(&b.scheduled.entry_time))
             .then(a.bbox_right.total_cmp(&b.bbox_right))
             .then(a.bbox_top.total_cmp(&b.bbox_top))
             .then(a.scheduled.block_id.cmp(&b.scheduled.block_id))
-            .is_lt()
     }
 
     let block_id = original.block_id;
@@ -44,7 +44,8 @@ pub(crate) fn insert_greedy<R: Random>(
 
     let current_obj2 = normalized_imbalance(loads, &pre.bay_load_scale);
     let original_tardiness = (original.exit_time - block.due_date).max(0);
-    let mut best: Option<InsertCandidate> = None;
+    let mut candidates = Vec::new();
+    let mut best_score_delta = f64::INFINITY;
 
     for &bay_id in bay_order {
         let mut next_loads = loads.to_vec();
@@ -58,10 +59,7 @@ pub(crate) fn insert_greedy<R: Random>(
             .saturating_sub(block.due_date)
             .max(0);
         let lower_score_delta = problem.weights.w1 * min_tardiness as f64 + delta_obj23;
-        if best
-            .as_ref()
-            .is_some_and(|best| lower_score_delta > best.score_delta)
-        {
+        if lower_score_delta > best_score_delta {
             continue;
         }
 
@@ -73,6 +71,7 @@ pub(crate) fn insert_greedy<R: Random>(
                 continue;
             };
             let bounds = pre.orientation_bbox_bounds[block_id][orient_idx];
+            let mut group_best: Option<InsertCandidate> = None;
 
             let mut ys: Vec<i64> = (range.min_y..=range.max_y).collect();
             rng.shuffle(&mut ys);
@@ -86,17 +85,18 @@ pub(crate) fn insert_greedy<R: Random>(
                 let valid_y = scanner.scan_y(orient_idx, y, |scheduled| {
                     let tardiness = (scheduled.exit_time - block.due_date).max(0);
                     let score_delta = problem.weights.w1 * tardiness as f64 + delta_obj23;
+                    best_score_delta = best_score_delta.min(score_delta);
                     let candidate = InsertCandidate {
                         scheduled,
                         score_delta,
                         bbox_right: scheduled.x as f64 + bounds.max_x,
                         bbox_top: scheduled.y as f64 + bounds.max_y,
                     };
-                    if best
+                    if group_best
                         .as_ref()
-                        .map_or(true, |best| insert_candidate_better(&candidate, best))
+                        .is_none_or(|best| insert_candidate_cmp(&candidate, best).is_lt())
                     {
-                        best = Some(candidate);
+                        group_best = Some(candidate);
                     }
                     tardiness <= original_tardiness
                 });
@@ -107,9 +107,19 @@ pub(crate) fn insert_greedy<R: Random>(
                     None => {}
                 }
             }
+
+            if let Some(candidate) = group_best {
+                candidates.push(candidate);
+            }
         }
     }
 
-    let result = best.map(|candidate| candidate.scheduled);
-    result
+    candidates.retain(|candidate| candidate.score_delta <= best_score_delta + 1e-9);
+    if candidates.is_empty() {
+        return None;
+    }
+    candidates.sort_by(insert_candidate_cmp);
+    candidates.truncate(candidate_top_k);
+    let selected = rng.gen_range(0, candidates.len());
+    Some(candidates.swap_remove(selected).scheduled)
 }

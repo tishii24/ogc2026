@@ -1,17 +1,21 @@
 todo:
 - 良い配置に向かう
-- workerごとに定期的にスコアを出す
-- global-cとglobalの温度を分ける
+- removeの時間距離をENTRY差から滞在区間gapへ変更
+- 入りきらないなら
+  - pref/volumeが大きい順に入れる
+  - slack/volumeが大きい順に入れる
+- target-bay/time-window removeを追加
+- beam-reconstructの調整
 - 1st(pref)-2nd(pref)をpref-spreadとする
 - swapを入れる
-- beam-reconstructの調整
+- randomnessを高める
 - 温度の調整
   - schedule: (cosine, linear)
   - constraint->globalで温度を滑らかにする
 - obj2を軽視する
 - seedの選び方を増やす
 - 高速化
-- safety
+- 多点スタート？
 - チューニング
   - 温度の調整
   - 時間に応じて近傍サイズを大きくする

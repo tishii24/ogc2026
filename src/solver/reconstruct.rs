@@ -8,7 +8,7 @@ use rayon::prelude::*;
 
 use crate::{
     Problem, ScheduledBlock, log,
-    params::{InsertParams, NeighborParams},
+    params::{InsertParams, ReconstructNeighborParams},
     utils::{
         random::{RandPcg64Mcg, Random, sample_weighted_index},
         time::Timer,
@@ -66,28 +66,25 @@ pub(super) struct EntryTimeBounds {
 
 pub(super) fn sample_reconstruct_order_weights(
     rng: &mut impl Random,
-    params: &NeighborParams,
+    params: &ReconstructNeighborParams,
 ) -> BlockOrderWeights {
     BlockOrderWeights {
         workload: rng.gen_range_f64(
-            params.reconstruct_workload_weight_range.0,
-            params.reconstruct_workload_weight_range.1,
+            params.workload_weight_range.0,
+            params.workload_weight_range.1,
         ),
-        volume: rng.gen_range_f64(
-            params.reconstruct_volume_weight_range.0,
-            params.reconstruct_volume_weight_range.1,
-        ),
+        volume: rng.gen_range_f64(params.volume_weight_range.0, params.volume_weight_range.1),
         pref_spread: rng.gen_range_f64(
-            params.reconstruct_pref_spread_weight_range.0,
-            params.reconstruct_pref_spread_weight_range.1,
+            params.pref_spread_weight_range.0,
+            params.pref_spread_weight_range.1,
         ),
         limit_time_urgency: rng.gen_range_f64(
-            params.reconstruct_limit_time_urgency_weight_range.0,
-            params.reconstruct_limit_time_urgency_weight_range.1,
+            params.limit_time_urgency_weight_range.0,
+            params.limit_time_urgency_weight_range.1,
         ),
         random: rng.gen_range_f64(
-            params.reconstruct_order_random_weight_range.0,
-            params.reconstruct_order_random_weight_range.1,
+            params.order_random_weight_range.0,
+            params.order_random_weight_range.1,
         ),
     }
 }
@@ -99,7 +96,7 @@ pub(super) fn build_optimize_state(
     timer: Timer,
     max_worker_count: usize,
     seed: u64,
-    neighbor_params: &NeighborParams,
+    neighbor_params: &ReconstructNeighborParams,
     insert_params: &InsertParams,
     precedence_margin: i64,
 ) -> Option<OptimizeState> {
@@ -282,7 +279,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
     schedule: &[ScheduledBlock],
     rng: &mut R,
     accept_threshold: f64,
-    params: &NeighborParams,
+    params: &ReconstructNeighborParams,
     insert_params: &InsertParams,
 ) -> Option<Vec<ScheduledBlock>> {
     let k = sample_removed_count(rng, params).min(problem.blocks.len());
@@ -345,6 +342,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
             &loads,
             insert_params,
             &pre.bay_order_by_pref[old.block_id],
+            params.insert_candidate_top_k,
             rng,
         )?;
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
@@ -393,7 +391,10 @@ pub(super) fn precedence_entry_time_bounds(
     })
 }
 
-pub(super) fn sample_removed_count<R: Random>(rng: &mut R, params: &NeighborParams) -> usize {
+pub(super) fn sample_removed_count<R: Random>(
+    rng: &mut R,
+    params: &ReconstructNeighborParams,
+) -> usize {
     let span = params.max_removed_blocks - params.min_removed_blocks + 1;
     let u = rng.next_f64().powf(params.remove_count_sample_power);
     params.min_removed_blocks + ((u * span as f64) as usize).min(span - 1)
@@ -449,7 +450,7 @@ fn choose_local_proximity_seeds<R: Random>(
     k: usize,
     bad_pool: &[usize],
     rng: &mut R,
-    params: &NeighborParams,
+    params: &ReconstructNeighborParams,
 ) -> Option<Vec<RemoveSeed>> {
     let pool_len = (k * params.remove_pool_factor).min(schedule.len()).max(k);
     let slack_weight = rng.gen_range_f64(
@@ -632,7 +633,7 @@ pub(super) fn choose_removed_blocks<R: Random>(
     schedule: &[ScheduledBlock],
     k: usize,
     rng: &mut R,
-    params: &NeighborParams,
+    params: &ReconstructNeighborParams,
 ) -> Option<Vec<usize>> {
     if schedule.is_empty() || k == 0 {
         return None;
@@ -792,7 +793,7 @@ pub(super) fn sort_default_reconstruct_order<R: Random>(
     pref_spread: &[i64],
     order: &mut [usize],
     rng: &mut R,
-    params: &NeighborParams,
+    params: &ReconstructNeighborParams,
 ) {
     let weights = sample_reconstruct_order_weights(rng, params);
     sort_block_order(problem, block_areas, pref_spread, order, weights, rng);
@@ -941,6 +942,7 @@ fn build_bay_schedule<R: Random>(
             &loads,
             params,
             &bay_order,
+            1,
             rng,
         )?;
         loads[bay_id] += block.workload as f64;

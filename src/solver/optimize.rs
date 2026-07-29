@@ -143,7 +143,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 &current.schedule,
                 rng,
                 accept_threshold,
-                params,
+                &params.reconstruct,
                 self.insert_params,
             ),
             NeighborKind::BeamLargeReconstruct => try_beam_large_reconstruct(
@@ -153,7 +153,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 &current.schedule,
                 rng,
                 accept_threshold,
-                params,
+                &params.reconstruct,
             ),
             NeighborKind::Shift => try_shift_neighbor(
                 self.problem,
@@ -161,7 +161,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 &current.schedule,
                 rng,
                 precedence,
-                params,
+                &params.shift,
             ),
             NeighborKind::Move => try_move_neighbor(
                 self.problem,
@@ -169,7 +169,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 &current.schedule,
                 rng,
                 precedence,
-                params,
+                &params.move_block,
                 self.insert_params,
             ),
             NeighborKind::Rotate => try_rotate_neighbor(
@@ -178,7 +178,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 &current.schedule,
                 rng,
                 precedence,
-                params,
+                &params.rotate,
             ),
             NeighborKind::Swap => try_swap_neighbor(
                 self.problem,
@@ -186,7 +186,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 &current.schedule,
                 rng,
                 precedence,
-                params,
+                &params.swap,
             ),
         };
         AnnealingAttempt {

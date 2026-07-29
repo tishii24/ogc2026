@@ -1,6 +1,9 @@
 use crate::{
     Problem, ScheduledBlock,
-    params::{InsertParams, NeighborParams},
+    params::{
+        InsertParams, MoveNeighborParams, RotateNeighborParams, ShiftNeighborParams,
+        SwapNeighborParams,
+    },
     utils::random::Random,
 };
 
@@ -79,7 +82,7 @@ pub(super) fn try_shift_neighbor<R: Random>(
     schedule: &[ScheduledBlock],
     rng: &mut R,
     constraints: Option<&HeuristicPrecedence>,
-    params: &NeighborParams,
+    params: &ShiftNeighborParams,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.is_empty() {
         return None;
@@ -117,7 +120,7 @@ pub(super) fn try_shift_neighbor<R: Random>(
         max_entry_time,
     )?;
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
-    for dy in params.shift_dy_range.0..=params.shift_dy_range.1 {
+    for dy in params.dy_range.0..=params.dy_range.1 {
         let y = old.y + dy;
         scanner.scan_y(old.orient_idx, y, |moved| {
             if moved != old {
@@ -138,7 +141,7 @@ pub(super) fn try_rotate_neighbor<R: Random>(
     schedule: &[ScheduledBlock],
     rng: &mut R,
     constraints: Option<&HeuristicPrecedence>,
-    params: &NeighborParams,
+    params: &RotateNeighborParams,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.is_empty() {
         return None;
@@ -181,7 +184,7 @@ pub(super) fn try_rotate_neighbor<R: Random>(
     )?;
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
     for neighbor in &pre.orientation_neighbors[old.block_id][old.orient_idx] {
-        for ddy in params.rotate_dy_range.0..=params.rotate_dy_range.1 {
+        for ddy in params.dy_range.0..=params.dy_range.1 {
             let y = old.y + neighbor.dy + ddy;
             scanner.scan_y(neighbor.orient_idx, y, |rotated| {
                 update_best(problem, &mut best, rotated);
@@ -205,7 +208,7 @@ fn try_swap_place(
     base_y: i64,
     min_entry_time: i64,
     max_entry_time: i64,
-    params: &NeighborParams,
+    params: &SwapNeighborParams,
 ) -> Option<ScheduledBlock> {
     let mut scanner = PlacementXScanner::new(
         problem,
@@ -217,7 +220,7 @@ fn try_swap_place(
         max_entry_time,
     )?;
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
-    for dy in params.swap_dy_range.0..=params.swap_dy_range.1 {
+    for dy in params.dy_range.0..=params.dy_range.1 {
         scanner.scan_y(orient_idx, base_y + dy, |scheduled| {
             update_best(problem, &mut best, scheduled);
             false
@@ -233,7 +236,7 @@ pub(super) fn try_swap_neighbor<R: Random>(
     schedule: &[ScheduledBlock],
     rng: &mut R,
     constraints: Option<&HeuristicPrecedence>,
-    params: &NeighborParams,
+    params: &SwapNeighborParams,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.len() < 2 {
         return None;
@@ -250,7 +253,7 @@ pub(super) fn try_swap_neighbor<R: Random>(
             (constraints.is_none() || schedule[b_idx].bay_id == a_old.bay_id)
                 .then_some((candidate, b_idx))
         })
-        .take(params.swap_neighbor_top_k)
+        .take(params.neighbor_top_k)
         .collect();
     if candidates.is_empty() {
         return None;
@@ -322,14 +325,14 @@ pub(super) fn try_move_neighbor<R: Random>(
     schedule: &[ScheduledBlock],
     rng: &mut R,
     constraints: Option<&HeuristicPrecedence>,
-    params: &NeighborParams,
+    params: &MoveNeighborParams,
     insert_params: &InsertParams,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.is_empty() {
         return None;
     }
 
-    let sample_count = params.move_sample_blocks.min(schedule.len());
+    let sample_count = params.sample_blocks.min(schedule.len());
     let mut indices: Vec<usize> = (0..schedule.len()).collect();
     rng.shuffle(&mut indices);
     indices.truncate(sample_count);
@@ -338,7 +341,7 @@ pub(super) fn try_move_neighbor<R: Random>(
             .total_cmp(&pre.max_footprint_area[schedule[b].block_id])
             .then(schedule[a].block_id.cmp(&schedule[b].block_id))
     });
-    indices.truncate(params.move_small_pool_size.min(indices.len()));
+    indices.truncate(params.small_pool_size.min(indices.len()));
 
     let idx = indices.into_iter().max_by(|&a, &b| {
         let sa = score13_block(problem, pre, schedule[a]);
@@ -382,6 +385,7 @@ pub(super) fn try_move_neighbor<R: Random>(
         &loads,
         insert_params,
         &pre.bay_order_by_pref[old.block_id],
+        1,
         rng,
     )?;
     if scheduled == old {
