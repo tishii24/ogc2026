@@ -8,9 +8,10 @@ mod neighbors;
 mod objective;
 mod optimize;
 mod output;
+pub mod pair_structure;
 mod placement_scan;
 mod precompute;
-pub mod preoptimize;
+mod preoptimize;
 mod reconstruct;
 
 use optimize::GlobalAnnealing;

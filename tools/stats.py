@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa
 """Summarize log/score.csv by version."""
 
 from __future__ import annotations

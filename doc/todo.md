@@ -1,6 +1,8 @@
 todo:
+- 良い配置に向かう
+- 1st(pref)-2nd(pref)をpref-spreadとする
 - swapを入れる
-- reconstructの配置をgreedyにやらずに全探索する
+- beam-reconstructの調整
 - 温度の調整
   - schedule: (cosine, linear)
   - constraint->globalで温度を滑らかにする
