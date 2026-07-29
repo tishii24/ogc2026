@@ -42,7 +42,23 @@ annealing:
         w3_scale: 50.0
     worker_temperature_scale: 0.0
     tabu_capacity: 4096
-  optimize:
+  global_constrained:
+    exchange_interval: 2000
+    positive_tardiness:
+      type: geometric
+      temperature_initial_score_per_block_scale: [1.0, 0.01]
+      exchange_threshold:
+        w1_scale: 0.5
+        w3_scale: 50.0
+    zero_tardiness:
+      type: geometric
+      temperature_w3_scale: [10.0, 1.0]
+      exchange_threshold:
+        w1_scale: 0.5
+        w3_scale: 50.0
+    worker_temperature_scale: 0.0
+    tabu_capacity: 4096
+  global:
     exchange_interval: 2000
     positive_tardiness:
       type: geometric

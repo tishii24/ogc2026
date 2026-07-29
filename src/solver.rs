@@ -136,7 +136,7 @@ pub fn solve(
     let initial = global.run(
         initial,
         constrained_deadline,
-        &params.annealing.optimize,
+        &params.annealing.global_constrained,
         &params.global_neighbor,
         &params.insert,
         true,
@@ -153,7 +153,7 @@ pub fn solve(
     let best = global.run(
         initial,
         deadline,
-        &params.annealing.optimize,
+        &params.annealing.global,
         &params.global_neighbor,
         &params.insert,
         false,

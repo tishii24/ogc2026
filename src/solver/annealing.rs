@@ -15,6 +15,7 @@ use crate::{
 };
 
 const EPS: f64 = 1e-9;
+const STATUS_LOG_INTERVAL_SECONDS: f64 = 1.0;
 
 pub(crate) trait AnnealingState: Clone + Send + Sync {
     fn annealing_score(&self) -> f64;
@@ -120,13 +121,13 @@ impl AnnealingWorkerContext {
         }
     }
 
-    pub(crate) fn next(&mut self, timer: Timer) -> Option<f64> {
+    pub(crate) fn next(&mut self, timer: Timer) -> Option<(f64, f64)> {
         let elapsed = timer.elapsed_seconds();
         if elapsed >= self.deadline {
             return None;
         }
         self.iterations += 1;
-        Some(self.temperature.progress(elapsed))
+        Some((elapsed, self.temperature.progress(elapsed)))
     }
 
     pub(crate) fn should_exchange(&self, interval: usize) -> bool {
@@ -403,9 +404,12 @@ impl<D: AnnealingDelegate> Annealer<D> {
         let mut improved = 0usize;
         let mut neighbor_stats =
             vec![NeighborStats::default(); self.delegate.neighbor_kinds().len()];
+        let mut next_status_time = (timer.elapsed_seconds() / STATUS_LOG_INTERVAL_SECONDS).floor()
+            * STATUS_LOG_INTERVAL_SECONDS
+            + STATUS_LOG_INTERVAL_SECONDS;
 
         loop {
-            let Some(progress) = context.next(timer) else {
+            let Some((elapsed, progress)) = context.next(timer) else {
                 break;
             };
             if context.should_exchange(self.params.exchange_interval) {
@@ -413,7 +417,8 @@ impl<D: AnnealingDelegate> Annealer<D> {
             }
 
             let current_score = local.current.annealing_score();
-            let (regime, temperature_range) = if local.current.has_tardiness() {
+            let has_tardiness = local.current.has_tardiness();
+            let (regime, temperature_range) = if has_tardiness {
                 (
                     &self.params.positive_tardiness,
                     positive_tardiness_temperature,
@@ -423,6 +428,17 @@ impl<D: AnnealingDelegate> Annealer<D> {
             };
             let current_temperature =
                 temperature(regime.temperature_schedule, temperature_range, progress);
+            if elapsed >= next_status_time {
+                log!(
+                    "[{elapsed:.4}] [{} worker={worker_id}] iter={:8}, current={current_score:.3}, temperature={current_temperature:.6}, regime={}",
+                    self.delegate.name(),
+                    context.iterations(),
+                    if has_tardiness { "T>0" } else { "T=0" },
+                );
+                next_status_time = (elapsed / STATUS_LOG_INTERVAL_SECONDS).floor()
+                    * STATUS_LOG_INTERVAL_SECONDS
+                    + STATUS_LOG_INTERVAL_SECONDS;
+            }
             let accept_threshold =
                 acceptance_threshold(current_score, current_temperature, &mut context.rng);
             let neighbor_start = Instant::now();

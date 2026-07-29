@@ -173,7 +173,8 @@ impl AnnealingRegimeConfig {
 #[serde(deny_unknown_fields)]
 pub struct AnnealingConfigs {
     pub preoptimize: AnnealingParamsConfig,
-    pub optimize: AnnealingParamsConfig,
+    pub global_constrained: AnnealingParamsConfig,
+    pub global: AnnealingParamsConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
