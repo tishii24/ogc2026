@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
+use std::time::Instant;
 
 use ogc2026::Problem;
 use ogc2026::solver::pair_structure::{
@@ -121,7 +122,11 @@ fn run() -> Result<(), String> {
     );
     let mut skipped = 0usize;
 
-    for case in cases {
+    let case_count = cases.len();
+    for (case_index, case) in cases.into_iter().enumerate() {
+        let case_number = case_index + 1;
+        let started = Instant::now();
+        eprintln!("[pair-analysis] case start: {case_number}/{case_count}, case={case}");
         match process_case(
             &case,
             &by_case[&case],
@@ -132,10 +137,17 @@ fn run() -> Result<(), String> {
             Ok((record, details)) => {
                 records.push(record);
                 detail_lines.push_str(&details);
+                eprintln!(
+                    "[pair-analysis] case end: {case_number}/{case_count}, case={case}, status=ok, elapsed={:.3}s",
+                    started.elapsed().as_secs_f64(),
+                );
             }
             Err(err) => {
                 skipped += 1;
-                eprintln!("case {case}: {err}; skipped");
+                eprintln!(
+                    "[pair-analysis] case end: {case_number}/{case_count}, case={case}, status=skipped, elapsed={:.3}s, error={err}",
+                    started.elapsed().as_secs_f64(),
+                );
             }
         }
     }

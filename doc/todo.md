@@ -1,5 +1,7 @@
 todo:
 - 良い配置に向かう
+- workerごとに定期的にスコアを出す
+- global-cとglobalの温度を分ける
 - 1st(pref)-2nd(pref)をpref-spreadとする
 - swapを入れる
 - beam-reconstructの調整

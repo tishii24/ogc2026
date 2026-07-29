@@ -583,6 +583,7 @@ fn collect_removed_blocks<R: Random>(
     bad_pool: &[usize],
     remove_x_distance_weight: f64,
     remove_y_distance_weight: f64,
+    remove_t_distance_weight: f64,
     rng: &mut R,
 ) -> Vec<usize> {
     let mut selected = Vec::with_capacity(k);
@@ -606,7 +607,7 @@ fn collect_removed_blocks<R: Random>(
                 (
                     remove_x_distance_weight * dx * dx
                         + remove_y_distance_weight * dy * dy
-                        + dt * dt,
+                        + remove_t_distance_weight * dt * dt,
                     candidate.block_id,
                 )
             })
@@ -638,8 +639,18 @@ pub(super) fn choose_removed_blocks<R: Random>(
     }
 
     let k = k.min(schedule.len());
-    let remove_x_distance_weight = rng.gen_range_f64(0.0, params.remove_x_distance_weight_max);
-    let remove_y_distance_weight = rng.gen_range_f64(0.0, params.remove_y_distance_weight_max);
+    let remove_x_distance_weight = rng.gen_range_f64(
+        params.remove_x_distance_weight_range.0,
+        params.remove_x_distance_weight_range.1,
+    );
+    let remove_y_distance_weight = rng.gen_range_f64(
+        params.remove_y_distance_weight_range.0,
+        params.remove_y_distance_weight_range.1,
+    );
+    let remove_t_distance_weight = rng.gen_range_f64(
+        params.remove_t_distance_weight_range.0,
+        params.remove_t_distance_weight_range.1,
+    );
     let badness = remove_badness(problem, pre, schedule);
     let mut by_block = vec![None; problem.blocks.len()];
     for &scheduled in schedule {
@@ -664,6 +675,7 @@ pub(super) fn choose_removed_blocks<R: Random>(
         &bad_pool,
         remove_x_distance_weight,
         remove_y_distance_weight,
+        remove_t_distance_weight,
         rng,
     );
     Some(blocks)
