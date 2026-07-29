@@ -28,7 +28,7 @@ steps:
         global_neighbor.reconstruct.remove_y_distance_weight_range: [0.0, 3.0]
         global_neighbor.reconstruct.remove_t_distance_weight_range: [0.0, 3.0]
         global_neighbor.reconstruct.order_random_weight_range: [0.0, 2.0]
-        global_neighbor.reconstruct.insert_candidate_top_k: 8
+        global_neighbor.reconstruct.insert_candidate_top_k: 4
 
       - global_neighbor.reconstruct.remove_seed_method_weights:
           badness: 1.0
@@ -39,7 +39,7 @@ steps:
         global_neighbor.reconstruct.remove_y_distance_weight_range: [0.0, 3.0]
         global_neighbor.reconstruct.remove_t_distance_weight_range: [0.0, 3.0]
         global_neighbor.reconstruct.order_random_weight_range: [0.0, 4.0]
-        global_neighbor.reconstruct.insert_candidate_top_k: 16
+        global_neighbor.reconstruct.insert_candidate_top_k: 8
 
       - global_neighbor.reconstruct.remove_seed_method_weights:
           badness: 1.0
@@ -50,7 +50,7 @@ steps:
         global_neighbor.reconstruct.remove_y_distance_weight_range: [0.0, 3.0]
         global_neighbor.reconstruct.remove_t_distance_weight_range: [0.0, 3.0]
         global_neighbor.reconstruct.order_random_weight_range: [0.0, 8.0]
-        global_neighbor.reconstruct.insert_candidate_top_k: 32
+        global_neighbor.reconstruct.insert_candidate_top_k: 16
 
   - name: remove-size
     mode: combinations

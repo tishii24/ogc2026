@@ -1,12 +1,13 @@
 todo:
+- refactor
 - 良い配置に向かう
 - removeの時間距離をENTRY差から滞在区間gapへ変更
-- 入りきらないなら
-  - pref/volumeが大きい順に入れる
-  - slack/volumeが大きい順に入れる
+- pref/volume, limit-t/volumeの交互作用を入れる
 - target-bay/time-window removeを追加
 - beam-reconstructの調整
 - 1st(pref)-2nd(pref)をpref-spreadとする
+- 長時間での検証
+- reheatの再検証
 - swapを入れる
 - randomnessを高める
 - 温度の調整

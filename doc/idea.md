@@ -6,6 +6,9 @@ insert-candidateはbbox-right,bbox-topで評価する必要はなさそう
 - bbox-right, bbox-topの上位k件からランダムに選ぶようにする
 - orientationはshuffleして、色々なorientationを試せるようにしたい
 
+スコアが停滞していることを検知したら or 探索がある程度進んだら、徐々に近傍を大きく・randomnessを上げたい
+ただ、個々のパラメータをチューニングするというよりかは、一つのスカラーで近傍の範囲を定義して、それを引数に他のパラメータは定義されるようにしたい
+
 large-reconstructのinsertを探索する
 - 今はgreedyに挿入しているが、これを改良したい
 - 残っているblockに対するinsertを試す
