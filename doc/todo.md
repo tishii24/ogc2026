@@ -1,10 +1,8 @@
 todo:
 - refactor
-- rough-hashの種類数を見る
 - beam-reconstructの導入
 - 時刻の優先度だけでなく、bayの優先度を制約に入れて最適化する
 - reheatの再検証
-  - tl=300くらいで、reheat-tempを変えて検証
 - obj2を軽視する
 - seedの選び方を増やす
   - target-bay/time-window remove
@@ -15,14 +13,12 @@ nits:
 - 1st(pref)-2nd(pref)をpref-spreadとする
 - pref/volume, limit-t/volumeの交互作用をorderに入れる
 - 1:1 moveを入れる
-- insert_candidate_top_kを削除
 - exchange=1にする
 
 tuning:
-- tlを問題サイズに合わせて設定
 - 温度の調整
-- ステップごとの制限時間の調整
-- 進捗に応じて近傍サイズを大きくする係数を導入
+- 制限時間の調整
+- 進捗に応じて近傍サイズを大きくする係数をチューニングする
 
 precompute:
 - 取得の高速化
