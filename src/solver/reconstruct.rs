@@ -7,7 +7,7 @@ use std::{
 use rayon::prelude::*;
 
 use crate::{
-    Problem, ScheduledBlock, log,
+    Problem, ScheduledBlock,
     params::{InsertParams, ReconstructNeighborParams},
     utils::{
         random::{RandPcg64Mcg, Random, sample_weighted_index},
@@ -42,6 +42,7 @@ pub(super) struct BlockOrderWeights {
     volume: f64,
     pref_spread: f64,
     limit_time_urgency: f64,
+    slack_tightness: f64,
     random: f64,
 }
 
@@ -51,6 +52,8 @@ struct BlockOrderContext {
     max_pref_spread: f64,
     max_limit_time: i64,
     limit_time_span: f64,
+    max_slack: i64,
+    slack_span: f64,
 }
 
 pub(super) struct HeuristicPrecedence {
@@ -81,6 +84,10 @@ pub(super) fn sample_reconstruct_order_weights(
         limit_time_urgency: rng.gen_range_f64(
             params.limit_time_urgency_weight_range.0,
             params.limit_time_urgency_weight_range.1,
+        ),
+        slack_tightness: rng.gen_range_f64(
+            params.slack_tightness_weight_range.0,
+            params.slack_tightness_weight_range.1,
         ),
         random: rng.gen_range_f64(
             params.order_random_weight_range.0,
@@ -146,6 +153,8 @@ pub(super) fn build_optimize_state(
                     &blocks_by_bay[bay_id],
                     &constraints,
                     weights,
+                    None,
+                    0.0,
                     &mut rng,
                 );
                 let order_hash = hash_order(&order);
@@ -289,8 +298,25 @@ pub(super) fn try_large_reconstruct<R: Random>(
         return None;
     }
     let weights = sample_reconstruct_order_weights(rng, params);
+    let current_penalty_weight = rng.gen_range_f64(
+        params.current_penalty_weight_range.0,
+        params.current_penalty_weight_range.1,
+    );
+    let mut current_penalties = vec![0.0; problem.blocks.len()];
+    for &scheduled in schedule {
+        current_penalties[scheduled.block_id] = score13_block(problem, pre, scheduled);
+    }
     let order = if let Some(constraints) = constraints {
-        build_topological_order(problem, pre, &removed_ids, constraints, weights, rng)
+        build_topological_order(
+            problem,
+            pre,
+            &removed_ids,
+            constraints,
+            weights,
+            Some(&current_penalties),
+            current_penalty_weight,
+            rng,
+        )
     } else {
         sort_block_order(
             problem,
@@ -298,6 +324,8 @@ pub(super) fn try_large_reconstruct<R: Random>(
             &pre.pref_spread,
             &mut removed_ids,
             weights,
+            Some(&current_penalties),
+            current_penalty_weight,
             rng,
         );
         removed_ids.clone()
@@ -691,6 +719,11 @@ fn block_limit_time(problem: &Problem, block_id: usize) -> i64 {
     block.due_date - block.processing_time
 }
 
+fn block_slack(problem: &Problem, block_id: usize) -> i64 {
+    let block = &problem.blocks[block_id];
+    (block.due_date - block.processing_time - block.release_time).max(0)
+}
+
 fn build_block_order_context(
     problem: &Problem,
     block_areas: &[f64],
@@ -722,6 +755,16 @@ fn build_block_order_context(
         .map(|&block_id| block_limit_time(problem, block_id))
         .max()
         .unwrap_or(min_limit_time);
+    let min_slack = order
+        .iter()
+        .map(|&block_id| block_slack(problem, block_id))
+        .min()
+        .unwrap_or(0);
+    let max_slack = order
+        .iter()
+        .map(|&block_id| block_slack(problem, block_id))
+        .max()
+        .unwrap_or(min_slack);
 
     BlockOrderContext {
         max_workload,
@@ -729,6 +772,8 @@ fn build_block_order_context(
         max_pref_spread,
         max_limit_time,
         limit_time_span: (max_limit_time - min_limit_time).max(1) as f64,
+        max_slack,
+        slack_span: (max_slack - min_slack).max(1) as f64,
     }
 }
 
@@ -738,6 +783,9 @@ fn block_order_score(
     pref_spread: &[i64],
     ctx: &BlockOrderContext,
     weights: BlockOrderWeights,
+    current_penalties: Option<&[f64]>,
+    current_penalty_weight: f64,
+    max_current_penalty: f64,
     block_id: usize,
 ) -> f64 {
     let block = &problem.blocks[block_id];
@@ -746,11 +794,17 @@ fn block_order_score(
     let pref_spread_norm = pref_spread[block_id] as f64 / ctx.max_pref_spread;
     let limit_time_urgency =
         (ctx.max_limit_time - block_limit_time(problem, block_id)) as f64 / ctx.limit_time_span;
+    let slack_tightness = (ctx.max_slack - block_slack(problem, block_id)) as f64 / ctx.slack_span;
+    let current_penalty = current_penalties
+        .map(|penalties| penalties[block_id] / max_current_penalty)
+        .unwrap_or(0.0);
 
     weights.workload * workload_norm
         + weights.volume * volume_norm
         + weights.pref_spread * pref_spread_norm
         + weights.limit_time_urgency * limit_time_urgency
+        + weights.slack_tightness * slack_tightness
+        + current_penalty_weight * current_penalty
 }
 
 pub(super) fn sort_block_order<R: Random>(
@@ -759,18 +813,47 @@ pub(super) fn sort_block_order<R: Random>(
     pref_spread: &[i64],
     order: &mut [usize],
     weights: BlockOrderWeights,
+    current_penalties: Option<&[f64]>,
+    current_penalty_weight: f64,
     rng: &mut R,
 ) {
     let ctx = build_block_order_context(problem, block_areas, pref_spread, order);
+    let max_current_penalty = current_penalties
+        .map(|penalties| {
+            order
+                .iter()
+                .map(|&block_id| penalties[block_id])
+                .fold(0.0, f64::max)
+                .max(1.0)
+        })
+        .unwrap_or(1.0);
     let mut random_scores = vec![0.0; problem.blocks.len()];
     for &block_id in order.iter() {
         random_scores[block_id] = rng.gen_range_f64(0., weights.random);
     }
     order.sort_by(|&a, &b| {
-        let score_a = block_order_score(problem, block_areas, pref_spread, &ctx, weights, a)
-            + random_scores[a];
-        let score_b = block_order_score(problem, block_areas, pref_spread, &ctx, weights, b)
-            + random_scores[b];
+        let score_a = block_order_score(
+            problem,
+            block_areas,
+            pref_spread,
+            &ctx,
+            weights,
+            current_penalties,
+            current_penalty_weight,
+            max_current_penalty,
+            a,
+        ) + random_scores[a];
+        let score_b = block_order_score(
+            problem,
+            block_areas,
+            pref_spread,
+            &ctx,
+            weights,
+            current_penalties,
+            current_penalty_weight,
+            max_current_penalty,
+            b,
+        ) + random_scores[b];
         score_b
             .total_cmp(&score_a)
             .then(block_limit_time(problem, a).cmp(&block_limit_time(problem, b)))
@@ -796,7 +879,16 @@ pub(super) fn sort_default_reconstruct_order<R: Random>(
     params: &ReconstructNeighborParams,
 ) {
     let weights = sample_reconstruct_order_weights(rng, params);
-    sort_block_order(problem, block_areas, pref_spread, order, weights, rng);
+    sort_block_order(
+        problem,
+        block_areas,
+        pref_spread,
+        order,
+        weights,
+        None,
+        0.0,
+        rng,
+    );
 }
 
 pub(super) fn build_heuristic_precedence(
@@ -854,6 +946,8 @@ pub(super) fn build_topological_order<R: Random>(
     bay_block_ids: &[usize],
     constraints: &HeuristicPrecedence,
     weights: BlockOrderWeights,
+    current_penalties: Option<&[f64]>,
+    current_penalty_weight: f64,
     rng: &mut R,
 ) -> Vec<usize> {
     let mut priority_order = bay_block_ids.to_vec();
@@ -863,6 +957,8 @@ pub(super) fn build_topological_order<R: Random>(
         &pre.pref_spread,
         &mut priority_order,
         weights,
+        current_penalties,
+        current_penalty_weight,
         rng,
     );
     let mut priority_rank = vec![usize::MAX; problem.blocks.len()];

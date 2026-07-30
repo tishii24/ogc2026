@@ -64,7 +64,16 @@ pub(super) fn try_beam_large_reconstruct<R: Random>(
 
     let weights = sample_reconstruct_order_weights(rng, params);
     let order = if let Some(constraints) = constraints {
-        build_topological_order(problem, pre, &removed_ids, constraints, weights, rng)
+        build_topological_order(
+            problem,
+            pre,
+            &removed_ids,
+            constraints,
+            weights,
+            None,
+            0.0,
+            rng,
+        )
     } else {
         sort_block_order(
             problem,
@@ -72,6 +81,8 @@ pub(super) fn try_beam_large_reconstruct<R: Random>(
             &pre.pref_spread,
             &mut removed_ids,
             weights,
+            None,
+            0.0,
             rng,
         );
         removed_ids.clone()

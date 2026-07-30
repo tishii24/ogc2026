@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use crate::{
-    Bay, Orientation, Problem, log,
+    Bay, Orientation, Problem,
     params::{AnnealingParamsConfig, PreoptimizeSolverParams, ReconstructNeighborParams},
     solver::{
         PreoptimizeState, PreoptimizedBlock,

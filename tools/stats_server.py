@@ -17,6 +17,23 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 
+SUMMARY_SORT_COLUMNS = [
+    "version",
+    "tl",
+    "cases",
+    "feasible",
+    "failed",
+    "best",
+    "rank_score",
+    "relative_score",
+    "total_objective",
+    "total_obj1",
+    "total_obj2",
+    "total_obj3",
+    "total_elapsed",
+]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Serve the stats.py browser UI.")
     parser.add_argument("--host", default="127.0.0.1")
@@ -54,6 +71,8 @@ class StatsHandler(BaseHTTPRequestHandler):
         matrix = query_value(query, "m") == "1"
         include_tune = query_value(query, "include_tune") == "1"
         all_feasible = query_value(query, "all_feasible") == "1"
+        sort_by = query_value(query, "sort_by")
+        sort_order = query_value(query, "sort_order") or "desc"
 
         stats_args: list[str] = []
         if suite:
@@ -68,6 +87,8 @@ class StatsHandler(BaseHTTPRequestHandler):
             stats_args.append("--include-tune")
         if all_feasible:
             stats_args.append("--all-feasible")
+        if sort_by:
+            stats_args.extend(["--sort-by", sort_by, "--sort-order", sort_order])
         stats_args.append("--json")
 
         command = [sys.executable, str(self.root / "tools" / "stats.py"), *stats_args]
@@ -86,9 +107,9 @@ class StatsHandler(BaseHTTPRequestHandler):
         else:
             data = json.loads(result.stdout)
             content = (
-                self.render_matrix_table(data)
+                self.render_matrix_table(data, sort_by, sort_order)
                 if matrix
-                else self.render_summary_table(data)
+                else self.render_summary_table(data, sort_by, sort_order)
             )
 
         display_command = " ".join(
@@ -103,6 +124,8 @@ class StatsHandler(BaseHTTPRequestHandler):
             matrix,
             include_tune,
             all_feasible,
+            sort_by,
+            sort_order,
             display_command,
             content,
             result.returncode,
@@ -116,7 +139,9 @@ class StatsHandler(BaseHTTPRequestHandler):
         self.wfile.write(page)
 
     @staticmethod
-    def render_summary_table(summaries: list[dict[str, Any]]) -> str:
+    def render_summary_table(
+        summaries: list[dict[str, Any]], sort_by: str, sort_order: str
+    ) -> str:
         headers = [
             "version",
             "tl",
@@ -150,21 +175,34 @@ class StatsHandler(BaseHTTPRequestHandler):
             ]
             for item in summaries
         ]
-        return StatsHandler.render_table(headers, rows, matrix=False)
+        return StatsHandler.render_table(
+            headers, rows, matrix=False, sort_by=sort_by, sort_order=sort_order
+        )
 
     @staticmethod
-    def render_matrix_table(matrix_data: dict[str, Any]) -> str:
+    def render_matrix_table(
+        matrix_data: dict[str, Any], sort_by: str, sort_order: str
+    ) -> str:
         headers = [str(value) for value in matrix_data["headers"]]
         rows = [[str(value) for value in row] for row in matrix_data["rows"]]
-        return StatsHandler.render_table(headers, rows, matrix=True)
+        return StatsHandler.render_table(
+            headers, rows, matrix=True, sort_by=sort_by, sort_order=sort_order
+        )
 
     @staticmethod
     def render_table(
-        headers: list[str], rows: list[list[str]], matrix: bool
+        headers: list[str],
+        rows: list[list[str]],
+        matrix: bool,
+        sort_by: str,
+        sort_order: str,
     ) -> str:
         best_row = next((row for row in rows if row and row[0] == "best"), None)
         header_html = "".join(
-            f'<th class="{"numeric" if index else ""}">{html.escape(header)}</th>'
+            f'<th class="{"numeric" if index else ""}">'
+            f'{html.escape(header)}'
+            f'{" ▼" if header == sort_by and sort_order == "desc" else " ▲" if header == sort_by else ""}'
+            "</th>"
             for index, header in enumerate(headers)
         )
         body_rows = []
@@ -215,6 +253,8 @@ class StatsHandler(BaseHTTPRequestHandler):
         matrix: bool,
         include_tune: bool,
         all_feasible: bool,
+        sort_by: str,
+        sort_order: str,
         command: str,
         content: str,
         returncode: int,
@@ -223,11 +263,20 @@ class StatsHandler(BaseHTTPRequestHandler):
         tune_checked = " checked" if include_tune else ""
         feasible_checked = " checked" if all_feasible else ""
         status_class = "error" if returncode else ""
+        ascending_selected = " selected" if sort_order == "asc" else ""
+        descending_selected = " selected" if sort_order != "asc" else ""
         suite_option_html = ['<option value="">all cases</option>']
         for option in suite_options:
             selected = " selected" if option == suite else ""
             escaped = html.escape(option, quote=True)
             suite_option_html.append(
+                f'<option value="{escaped}"{selected}>{escaped}</option>'
+            )
+        sort_option_html = ['<option value="">default</option>']
+        for column in SUMMARY_SORT_COLUMNS:
+            selected = " selected" if column == sort_by else ""
+            escaped = html.escape(column, quote=True)
+            sort_option_html.append(
                 f'<option value="{escaped}"{selected}>{escaped}</option>'
             )
         return f"""<!doctype html>
@@ -273,8 +322,17 @@ pre {{ margin: 0; padding: 12px; border: 1px solid #fecaca; border-radius: 8px; 
 <label>tl
 <input type="number" name="tl" value="{html.escape(timelimit, quote=True)}" step="any">
 </label>
-<label>last versions (-n)
+<label>version limit (-n)
 <input type="number" name="n" value="{html.escape(last_versions, quote=True)}" min="1" step="1">
+</label>
+<label>sort by
+<select name="sort_by">{"".join(sort_option_html)}</select>
+</label>
+<label>order
+<select name="sort_order">
+<option value="desc"{descending_selected}>大きい順</option>
+<option value="asc"{ascending_selected}>小さい順</option>
+</select>
 </label>
 <label class="checkbox"><input type="checkbox" name="m" value="1"{matrix_checked}>matrix (-m)</label>
 <label class="checkbox"><input type="checkbox" name="include_tune" value="1"{tune_checked}>include tune</label>
@@ -283,6 +341,27 @@ pre {{ margin: 0; padding: 12px; border: 1px solid #fecaca; border-radius: 8px; 
 </form>
 <div class="command {status_class}">$ {html.escape(command)}</div>
 {content}
+<script>
+const form = document.querySelector('form');
+let submitTimer = null;
+
+function submitNow() {{
+  clearTimeout(submitTimer);
+  form.requestSubmit();
+}}
+
+function submitDebounced() {{
+  clearTimeout(submitTimer);
+  submitTimer = setTimeout(() => form.requestSubmit(), 400);
+}}
+
+form.querySelectorAll('select, input[type="checkbox"]').forEach(element => {{
+  element.addEventListener('change', submitNow);
+}});
+form.querySelectorAll('input[type="number"], input[type="text"]').forEach(element => {{
+  element.addEventListener('input', submitDebounced);
+}});
+</script>
 </body>
 </html>
 """

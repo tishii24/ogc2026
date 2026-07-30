@@ -15,6 +15,23 @@ from pathlib import Path
 from typing import Any
 
 
+SUMMARY_SORT_COLUMNS = [
+    "version",
+    "tl",
+    "cases",
+    "feasible",
+    "failed",
+    "best",
+    "rank_score",
+    "relative_score",
+    "total_objective",
+    "total_obj1",
+    "total_obj2",
+    "total_obj3",
+    "total_elapsed",
+]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Summarize log/score.csv.")
     parser.add_argument(
@@ -38,7 +55,7 @@ def parse_args() -> argparse.Namespace:
         "-n",
         "--last-versions",
         type=int,
-        help="Only show the last N versions in natural sort order.",
+        help="Limit to N versions after --sort-by, or the last N in natural order otherwise.",
     )
     parser.add_argument(
         "--json",
@@ -55,6 +72,17 @@ def parse_args() -> argparse.Namespace:
         "--all-feasible",
         action="store_true",
         help="Only show version/timelimit pairs feasible for every case in --suite.",
+    )
+    parser.add_argument(
+        "--sort-by",
+        choices=SUMMARY_SORT_COLUMNS,
+        help="Sort version/timelimit summaries by this column.",
+    )
+    parser.add_argument(
+        "--sort-order",
+        choices=("asc", "desc"),
+        default="desc",
+        help="Sort direction used with --sort-by. default: desc",
     )
     return parser.parse_args()
 
@@ -425,6 +453,23 @@ def summarize(
     )
 
 
+def sort_summaries(
+    summaries: list[dict[str, Any]], sort_by: str | None, sort_order: str
+) -> list[dict[str, Any]]:
+    if sort_by is None:
+        return summaries
+    key_name = "timelimit" if sort_by == "tl" else sort_by
+    return sorted(
+        summaries,
+        key=lambda item: (
+            natural_key(str(item[key_name]))
+            if key_name == "version"
+            else item[key_name]
+        ),
+        reverse=sort_order == "desc",
+    )
+
+
 def print_rows(headers: list[str], rows: list[list[str]]) -> None:
     widths = [len(header) for header in headers]
     for row in rows:
@@ -498,15 +543,21 @@ def build_score_matrix(
             {row.get("case", "") for row in rows if row.get("case", "")},
             key=lambda case: natural_key(case_label(case)),
         )
-    row_keys = sorted(
-        {
-            (row.get("version", ""), parse_float(row.get("timelimit", "")))
-            for row in rows
-            if row.get("version", "")
-            and parse_float(row.get("timelimit", "")) is not None
-        },
-        key=lambda key: (natural_key(key[0]), key[1]),
-    )
+    if summaries is None:
+        row_keys = sorted(
+            {
+                (row.get("version", ""), parse_float(row.get("timelimit", "")))
+                for row in rows
+                if row.get("version", "")
+                and parse_float(row.get("timelimit", "")) is not None
+            },
+            key=lambda key: (natural_key(key[0]), key[1]),
+        )
+    else:
+        row_keys = [
+            (item["version"], item["timelimit"])
+            for item in summaries
+        ]
     by_key = {
         (
             row.get("version", ""),
@@ -603,10 +654,10 @@ def main() -> int:
         print("error: no valid rows found", file=sys.stderr)
         return 1
 
-    if args.last_versions is not None:
-        if args.last_versions <= 0:
-            print("error: --last-versions must be positive", file=sys.stderr)
-            return 1
+    if args.last_versions is not None and args.last_versions <= 0:
+        print("error: --last-versions must be positive", file=sys.stderr)
+        return 1
+    if args.last_versions is not None and args.sort_by is None:
         versions = sorted(
             {row.get("version", "") for row in rows if row.get("version", "")},
             key=natural_key,
@@ -615,6 +666,21 @@ def main() -> int:
         rows = [row for row in rows if row.get("version", "") in selected_versions]
 
     summaries = summarize(root, rows, suite_cases, best_rows)
+    summaries = sort_summaries(summaries, args.sort_by, args.sort_order)
+    if args.last_versions is not None and args.sort_by is not None:
+        selected_versions = set()
+        for summary in summaries:
+            selected_versions.add(summary["version"])
+            if len(selected_versions) >= args.last_versions:
+                break
+        summaries = [
+            summary
+            for summary in summaries
+            if summary["version"] in selected_versions
+        ]
+        rows = [
+            row for row in rows if row.get("version", "") in selected_versions
+        ]
     if args.json_output:
         output: Any = summaries
         if args.matrix:

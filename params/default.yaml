@@ -126,11 +126,13 @@ global_neighbor:
     remove_x_distance_weight_range: [0.75, 1.25]
     remove_y_distance_weight_range: [0.75, 1.25]
     remove_t_distance_weight_range: [0.75, 1.25]
-    workload_weight_range: [0.0, 0.5]
+    workload_weight_range: [0.0, 0.3]
     volume_weight_range: [0.5, 2.0]
-    pref_spread_weight_range: [0.0, 0.5]
+    pref_spread_weight_range: [0.0, 0.3]
     limit_time_urgency_weight_range: [0.5, 2.0]
-    order_random_weight_range: [0.0, 0.5]
+    slack_tightness_weight_range: [0.0, 0.3]
+    current_penalty_weight_range: [0.0, 0.5]
+    order_random_weight_range: [0.0, 0.3]
     insert_candidate_top_k: 2
   shift:
     dy_range: [-5, 0]

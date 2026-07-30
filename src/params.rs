@@ -232,6 +232,8 @@ pub struct ReconstructNeighborParams {
     pub volume_weight_range: (f64, f64),
     pub pref_spread_weight_range: (f64, f64),
     pub limit_time_urgency_weight_range: (f64, f64),
+    pub slack_tightness_weight_range: (f64, f64),
+    pub current_penalty_weight_range: (f64, f64),
     pub order_random_weight_range: (f64, f64),
     pub insert_candidate_top_k: usize,
 }
