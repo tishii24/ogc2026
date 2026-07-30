@@ -301,6 +301,8 @@ impl NeighborProbabilities {
 #[serde(deny_unknown_fields)]
 pub struct BeamLargeReconstructParams {
     pub width: usize,
+    pub candidate_pool_count: usize,
     pub candidate_count: usize,
-    pub placement_group_limit: usize,
+    pub candidate_group_limit: usize,
+    pub state_group_limit: usize,
 }

@@ -1,5 +1,6 @@
 todo:
 - beam-reconstructの導入
+- caseに応じてtimelimitを設定する
 - 時刻の優先度だけでなく、bayの優先度を制約に入れて最適化する
 - reheatの再検証
 - obj2を軽視する
@@ -7,8 +8,8 @@ todo:
   - target-bay/time-window remove
 
 report:
+- 日本語で書かせる
 - 可視化
-- latexの準備
 
 refactor:
 - n/a
