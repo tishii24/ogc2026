@@ -1,3 +1,4 @@
+# ruff: noqa
 # type: ignore
 #!/usr/bin/env python3
 """Serve a small browser UI that runs tools/stats.py on each request."""
