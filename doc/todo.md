@@ -1,7 +1,6 @@
 todo:
-- beam-reconstructの導入
-- caseに応じてtimelimitを設定する
-- 時刻の優先度だけでなく、bayの優先度を制約に入れて最適化する
+- refactor
+  - beam-reconstructの削除
 - reheatの再検証
 - obj2を軽視する
 - seedの選び方を増やす
@@ -12,7 +11,7 @@ report:
 - 可視化
 
 refactor:
-- n/a
+- todo
 
 nits:
 - reconstruct-weightのpowerをつける
@@ -20,6 +19,7 @@ nits:
 - exchange=1にする
 
 tuning:
+- caseに応じてtimelimitを設定する
 - 進捗に応じて近傍サイズを大きくする係数
 - 温度の調整
 - 制限時間の調整
@@ -44,3 +44,5 @@ pending:
 - hashを荒くする
 - removeの時間距離をENTRY差から滞在区間gapへ変更
 - pref/volume, limit-t/volumeの交互作用をorderに入れる
+- beam-reconstructの導入
+- 時刻の優先度だけでなく、bayの優先度を制約に入れて最適化する

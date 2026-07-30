@@ -99,18 +99,20 @@ preoptimize:
 
 global_neighbor:
   probabilities:
-    large_reconstruct: 0.1
-    beam_large_reconstruct: 0.1
+    large_reconstruct: 0.2
+    beam_large_reconstruct: 0.05
     shift: 3.0
     move: 0.1
     rotate: 0.5
     swap: 3.0
   reconstruct:
     beam:
-      width: 32
-      candidate_pool_count: 96
-      candidate_count: 64
-      candidate_group_limit: 16
+      width: 16
+      candidate_pool_count: 32
+      candidate_count: 16
+      candidate_group_limit: 4
+      orientation_sample_count: 4
+      y_sample_count: 8
       state_group_limit: 2
     min_removed_blocks: 7
     max_removed_blocks: 20

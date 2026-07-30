@@ -1,13 +1,13 @@
 use crate::{Problem, ScheduledBlock, params::ReconstructNeighborParams, utils::random::Random};
 
 use super::{
-    objective::{ScheduleScore, normalized_imbalance, score_schedule, score13_block},
+    objective::{ScheduleScore, score_schedule, score13_block},
     placement_scan::{Interval, PlacementXScanner, XRange, find_leftmost_fixed_time_x},
     precompute::Precompute,
     reconstruct::{
         EntryTimeBounds, HeuristicPrecedence, ReconstructBase, build_reconstruct_base,
-        build_topological_order, choose_removed_blocks, precedence_entry_time_bounds,
-        sample_reconstruct_order_weights, sample_removed_count, scheduled_by_id, sort_block_order,
+        build_topological_order, choose_removed_blocks, sample_reconstruct_order_weights,
+        sample_removed_count, scheduled_by_id, sort_block_order,
     },
 };
 
@@ -28,14 +28,19 @@ struct BeamState {
     added: Vec<ScheduledBlock>,
     projected_loads: Vec<f64>,
     score13: f64,
-    score: f64,
     exact_hash: u64,
     placement_hash: u64,
     changed: bool,
 }
 
+struct BeamPrecedenceContext {
+    base_bounds: Vec<EntryTimeBounds>,
+    removed_predecessor_positions: Vec<Vec<usize>>,
+}
+
 #[derive(Clone, Copy)]
-struct PlacementCandidate {
+struct BeamCandidate {
+    parent_index: usize,
     scheduled: ScheduledBlock,
     score13: f64,
     score: f64,
@@ -95,104 +100,135 @@ pub(super) fn try_beam_large_reconstruct<R: Random>(
         return None;
     }
 
-    let mut templates_by_id: Vec<Vec<BaseInsertTemplate>> =
-        (0..problem.blocks.len()).map(|_| Vec::new()).collect();
-    for &block_id in &order {
-        templates_by_id[block_id] = build_base_templates(
-            problem,
-            pre,
-            &base,
-            block_id,
-            params.beam.candidate_pool_count,
-            params.beam.candidate_group_limit,
-        );
-    }
+    let mut templates_by_id: Vec<Option<Vec<BaseInsertTemplate>>> =
+        (0..problem.blocks.len()).map(|_| None).collect();
 
     let base_by_id = scheduled_by_id(problem, &base);
+    let precedence_context = if let Some(constraints) = constraints {
+        Some(build_beam_precedence_context(
+            problem,
+            constraints,
+            &base_by_id,
+            &order,
+        )?)
+    } else {
+        None
+    };
     let mut projected_loads = vec![0.0; problem.bays.len()];
     for scheduled in schedule {
         projected_loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
     }
-    let initial_score = base_score13
-        + problem.weights.w2 * normalized_imbalance(&projected_loads, &pre.bay_load_scale);
     let mut beam = vec![BeamState {
         added: Vec::with_capacity(order.len()),
         projected_loads,
         score13: base_score13,
-        score: initial_score,
         exact_hash: 0,
         placement_hash: 0,
         changed: false,
     }];
 
-    for (depth, &block_id) in order.iter().enumerate() {
+    for &block_id in &order {
         let original = original_by_id[block_id]?;
+        if templates_by_id[block_id].is_none() {
+            let template_bounds = precedence_context.as_ref().map_or(
+                EntryTimeBounds {
+                    min: problem.blocks[block_id].release_time,
+                    max: i64::MAX,
+                },
+                |context| context.base_bounds[block_id],
+            );
+            templates_by_id[block_id] = Some(build_base_templates(
+                problem,
+                pre,
+                &base,
+                block_id,
+                original.orient_idx,
+                template_bounds,
+                params.beam.candidate_pool_count,
+                params.beam.candidate_group_limit,
+                params.beam.orientation_sample_count,
+                params.beam.y_sample_count,
+                rng,
+            ));
+        }
+        let templates = templates_by_id[block_id].as_ref().unwrap();
         let block = &problem.blocks[block_id];
         let mut next = Vec::with_capacity(beam.len() * params.beam.candidate_count.max(1));
 
-        for state in &beam {
+        for (parent_index, state) in beam.iter().enumerate() {
             let Some(bounds) =
-                entry_time_bounds_for_state(problem, constraints, &base_by_id, state, block_id)
+                entry_time_bounds_for_state(problem, precedence_context.as_ref(), state, block_id)
             else {
                 continue;
             };
             let mut placements = Vec::with_capacity(params.beam.candidate_count);
 
-            for template in &templates_by_id[block_id] {
+            for template in templates {
                 let Some(scheduled) =
                     materialize_template(problem, pre, state, block_id, template, bounds)
                 else {
                     continue;
                 };
-                push_placement_candidate(problem, pre, state, original, scheduled, &mut placements);
+                push_placement_candidate(
+                    problem,
+                    pre,
+                    parent_index,
+                    state,
+                    original,
+                    scheduled,
+                    &mut placements,
+                );
                 if placements.len() >= params.beam.candidate_count {
                     break;
                 }
             }
+            if let Some(scheduled) =
+                compatible_original_placement(problem, pre, state, original, bounds)
+            {
+                push_placement_candidate(
+                    problem,
+                    pre,
+                    parent_index,
+                    state,
+                    original,
+                    scheduled,
+                    &mut placements,
+                );
+            }
             retain_parent_candidates(&mut placements, params.beam.candidate_count);
 
-            for placement in placements {
-                if placement.score13 > accept_threshold + 1e-9 {
-                    continue;
-                }
-                let mut added = state.added.clone();
-                added.push(placement.scheduled);
-                let mut projected_loads = state.projected_loads.clone();
-                let workload = block.workload as f64;
-                projected_loads[original.bay_id] -= workload;
-                projected_loads[placement.scheduled.bay_id] += workload;
-                next.push(BeamState {
-                    added,
-                    projected_loads,
-                    score13: placement.score13,
-                    score: placement.score,
-                    exact_hash: placement.exact_hash,
-                    placement_hash: placement.placement_hash,
-                    changed: placement.changed,
-                });
-            }
+            next.extend(
+                placements
+                    .into_iter()
+                    .filter(|placement| placement.score13 <= accept_threshold + 1e-9),
+            );
         }
 
-        let next_block_id = order.get(depth + 1).copied();
-        beam = select_beam(
+        let selected = select_beam(
             next,
+            &beam,
             params.beam.width,
             params.beam.state_group_limit,
-            |state| {
-                next_block_id.is_none_or(|next_block_id| {
-                    state_has_placement(
-                        problem,
-                        pre,
-                        constraints,
-                        &base_by_id,
-                        state,
-                        next_block_id,
-                        &templates_by_id[next_block_id],
-                        accept_threshold,
-                    )
-                })
-            },
         );
+        let mut next_beam = Vec::with_capacity(selected.len());
+        for candidate in selected {
+            let parent = &beam[candidate.parent_index];
+            let mut added = parent.added.clone();
+            added.push(candidate.scheduled);
+            let mut projected_loads = parent.projected_loads.clone();
+            let workload = block.workload as f64;
+            projected_loads[original.bay_id] -= workload;
+            projected_loads[candidate.scheduled.bay_id] += workload;
+            next_beam.push(BeamState {
+                added,
+                projected_loads,
+                score13: candidate.score13,
+                exact_hash: candidate.exact_hash,
+                placement_hash: candidate.placement_hash,
+                changed: candidate.changed,
+            });
+        }
+        beam = next_beam;
         if beam.is_empty() {
             return None;
         }
@@ -221,41 +257,55 @@ pub(super) fn try_beam_large_reconstruct<R: Random>(
     best.map(|(_, blocks)| blocks)
 }
 
-fn build_base_templates(
+fn build_base_templates<R: Random>(
     problem: &Problem,
     pre: &Precompute,
     base: &[ScheduledBlock],
     block_id: usize,
+    original_orient_idx: usize,
+    bounds: EntryTimeBounds,
     candidate_pool_count: usize,
     candidate_group_limit: usize,
+    orientation_sample_count: usize,
+    y_sample_count: usize,
+    rng: &mut R,
 ) -> Vec<BaseInsertTemplate> {
-    if candidate_pool_count == 0 || candidate_group_limit == 0 {
+    if candidate_pool_count == 0
+        || candidate_group_limit == 0
+        || orientation_sample_count == 0
+        || y_sample_count == 0
+    {
         return Vec::new();
     }
 
     let block = &problem.blocks[block_id];
-    let mut groups: Vec<Vec<Vec<BaseInsertTemplate>>> = (0..problem.bays.len())
-        .map(|_| (0..block.shape.len()).map(|_| Vec::new()).collect())
+    let mut orientation_indices: Vec<_> = (0..block.shape.len())
+        .filter(|&orient_idx| orient_idx != original_orient_idx)
         .collect();
+    rng.shuffle(&mut orientation_indices);
+    orientation_indices.truncate(orientation_sample_count.saturating_sub(1));
+    orientation_indices.push(original_orient_idx);
+    let mut candidate_groups = Vec::new();
 
     for bay_id in 0..problem.bays.len() {
-        let Some(mut scanner) = PlacementXScanner::new(
-            problem,
-            pre,
-            base,
-            block_id,
-            bay_id,
-            block.release_time,
-            i64::MAX,
-        ) else {
+        let Some(mut scanner) =
+            PlacementXScanner::new(problem, pre, base, block_id, bay_id, bounds.min, bounds.max)
+        else {
             continue;
         };
-        for orient_idx in 0..block.shape.len() {
+        for &orient_idx in &orientation_indices {
             let Some(fit_range) = pre.collision.fit_range(bay_id, block_id, orient_idx) else {
                 continue;
             };
-            let group = &mut groups[bay_id][orient_idx];
-            for y in fit_range.min_y..=fit_range.max_y {
+            let mut ys: Vec<_> = (fit_range.min_y + 1..=fit_range.max_y).collect();
+            rng.shuffle(&mut ys);
+            ys.truncate(y_sample_count.saturating_sub(1));
+            ys.push(fit_range.min_y);
+            ys.sort_unstable();
+            let per_y_limit = candidate_group_limit.div_ceil(ys.len());
+            let mut y_groups = Vec::new();
+            for y in ys {
+                let mut y_group: Vec<BaseInsertTemplate> = Vec::new();
                 scanner.scan_y_ranges(
                     orient_idx,
                     y,
@@ -263,15 +313,14 @@ fn build_base_templates(
                     fit_range.max_x,
                     |range, forbidden| {
                         let Some(sort_entry_time) =
-                            forbidden.first_feasible_time(&[], block.release_time, i64::MAX)
+                            forbidden.first_feasible_time(&[], bounds.min, bounds.max)
                         else {
                             return false;
                         };
                         let mut base_forbidden_intervals = Vec::new();
                         forbidden.collect_merged(&mut base_forbidden_intervals);
-                        if let Some(template) = group.iter_mut().find(|template| {
-                            template.y == y
-                                && template.base_forbidden_intervals == base_forbidden_intervals
+                        if let Some(template) = y_group.iter_mut().find(|template| {
+                            template.base_forbidden_intervals == base_forbidden_intervals
                         }) {
                             template.x_ranges.push(range);
                             return false;
@@ -286,7 +335,7 @@ fn build_base_templates(
                             entry_time: sort_entry_time,
                             exit_time: sort_entry_time + block.processing_time,
                         };
-                        group.push(BaseInsertTemplate {
+                        y_group.push(BaseInsertTemplate {
                             bay_id,
                             orient_idx,
                             y,
@@ -298,26 +347,42 @@ fn build_base_templates(
                         false
                     },
                 );
-                for template in group.iter_mut() {
+                for template in &mut y_group {
                     merge_x_ranges(&mut template.x_ranges);
                 }
-                group.sort_by(base_template_cmp);
-                group.truncate(candidate_group_limit);
+                y_group.sort_by(base_template_cmp);
+                y_group.truncate(per_y_limit);
+                if !y_group.is_empty() {
+                    y_groups.push(y_group);
+                }
+            }
+            y_groups.sort_by(|a, b| base_template_cmp(&a[0], &b[0]));
+            let mut y_iterators: Vec<_> = y_groups
+                .into_iter()
+                .map(|group| group.into_iter())
+                .collect();
+            let mut group = Vec::with_capacity(candidate_group_limit);
+            while group.len() < candidate_group_limit {
+                let mut progressed = false;
+                for iter in &mut y_iterators {
+                    if let Some(template) = iter.next() {
+                        group.push(template);
+                        progressed = true;
+                        if group.len() >= candidate_group_limit {
+                            break;
+                        }
+                    }
+                }
+                if !progressed {
+                    break;
+                }
+            }
+            if !group.is_empty() {
+                candidate_groups.push(group);
             }
         }
     }
 
-    let mut candidate_groups = Vec::new();
-    for bay_groups in groups {
-        for mut group in bay_groups {
-            if group.is_empty() {
-                continue;
-            }
-            group.sort_by(base_template_cmp);
-            group.truncate(candidate_group_limit);
-            candidate_groups.push(group);
-        }
-    }
     candidate_groups.sort_by(|a, b| base_template_cmp(&a[0], &b[0]));
 
     let mut iterators: Vec<_> = candidate_groups
@@ -358,40 +423,119 @@ fn merge_x_ranges(ranges: &mut Vec<XRange>) {
 }
 
 fn base_template_cmp(a: &BaseInsertTemplate, b: &BaseInsertTemplate) -> std::cmp::Ordering {
+    let key = |template: &BaseInsertTemplate| {
+        (
+            template.sort_entry_time,
+            template.bay_id,
+            template.orient_idx,
+            template.y,
+            template.x_ranges[0].min_x,
+        )
+    };
     a.sort_score13
         .total_cmp(&b.sort_score13)
-        .then(a.sort_entry_time.cmp(&b.sort_entry_time))
-        .then(a.bay_id.cmp(&b.bay_id))
-        .then(a.orient_idx.cmp(&b.orient_idx))
-        .then(a.y.cmp(&b.y))
-        .then(
-            a.x_ranges
-                .first()
-                .unwrap()
-                .min_x
-                .cmp(&b.x_ranges.first().unwrap().min_x),
-        )
+        .then_with(|| key(a).cmp(&key(b)))
+}
+
+fn compatible_original_placement(
+    problem: &Problem,
+    pre: &Precompute,
+    state: &BeamState,
+    original: ScheduledBlock,
+    bounds: EntryTimeBounds,
+) -> Option<ScheduledBlock> {
+    if original.entry_time < bounds.min || original.entry_time > bounds.max {
+        return None;
+    }
+    let range = XRange {
+        min_x: original.x,
+        max_x: original.x,
+    };
+    find_leftmost_fixed_time_x(
+        problem,
+        pre,
+        original.block_id,
+        original.bay_id,
+        original.orient_idx,
+        original.y,
+        original.entry_time,
+        range,
+        &state.added,
+    )
+    .map(|_| original)
+}
+
+fn build_beam_precedence_context(
+    problem: &Problem,
+    constraints: &HeuristicPrecedence,
+    base_by_id: &[Option<ScheduledBlock>],
+    order: &[usize],
+) -> Option<BeamPrecedenceContext> {
+    let mut removed_position = vec![None; problem.blocks.len()];
+    for (position, &block_id) in order.iter().enumerate() {
+        removed_position[block_id] = Some(position);
+    }
+
+    let mut base_bounds: Vec<_> = problem
+        .blocks
+        .iter()
+        .map(|block| EntryTimeBounds {
+            min: block.release_time,
+            max: i64::MAX,
+        })
+        .collect();
+    let mut removed_predecessor_positions = vec![Vec::new(); problem.blocks.len()];
+    for (position, &block_id) in order.iter().enumerate() {
+        let mut min_entry_time = problem.blocks[block_id].release_time;
+        for &before in &constraints.predecessors[block_id] {
+            if let Some(before_position) = removed_position[before] {
+                debug_assert!(before_position < position);
+                removed_predecessor_positions[block_id].push(before_position);
+            } else {
+                min_entry_time = min_entry_time.max(base_by_id[before]?.exit_time);
+            }
+        }
+
+        let mut max_entry_time = i64::MAX;
+        let process_time = problem.blocks[block_id].processing_time;
+        for &after in &constraints.successors[block_id] {
+            if removed_position[after].is_none() {
+                max_entry_time = max_entry_time.min(base_by_id[after]?.entry_time - process_time);
+            }
+        }
+        if min_entry_time > max_entry_time {
+            return None;
+        }
+        base_bounds[block_id] = EntryTimeBounds {
+            min: min_entry_time,
+            max: max_entry_time,
+        };
+    }
+
+    Some(BeamPrecedenceContext {
+        base_bounds,
+        removed_predecessor_positions,
+    })
 }
 
 fn entry_time_bounds_for_state(
     problem: &Problem,
-    constraints: Option<&HeuristicPrecedence>,
-    base_by_id: &[Option<ScheduledBlock>],
+    context: Option<&BeamPrecedenceContext>,
     state: &BeamState,
     block_id: usize,
 ) -> Option<EntryTimeBounds> {
-    if let Some(constraints) = constraints {
-        let mut current_by_id = base_by_id.to_vec();
-        for &scheduled in &state.added {
-            current_by_id[scheduled.block_id] = Some(scheduled);
-        }
-        precedence_entry_time_bounds(problem, constraints, &current_by_id, block_id)
-    } else {
-        Some(EntryTimeBounds {
+    let Some(context) = context else {
+        return Some(EntryTimeBounds {
             min: problem.blocks[block_id].release_time,
             max: i64::MAX,
-        })
+        });
+    };
+
+    let mut bounds = context.base_bounds[block_id];
+    for &position in &context.removed_predecessor_positions[block_id] {
+        bounds.min = bounds.min.max(state.added.get(position)?.exit_time);
     }
+    (bounds.min <= bounds.max).then_some(bounds)
 }
 
 fn materialize_template(
@@ -451,37 +595,14 @@ fn first_feasible_time(intervals: &[Interval], min_t: i64, max_t: i64) -> Option
     (t <= max_t).then_some(t)
 }
 
-fn state_has_placement(
-    problem: &Problem,
-    pre: &Precompute,
-    constraints: Option<&HeuristicPrecedence>,
-    base_by_id: &[Option<ScheduledBlock>],
-    state: &BeamState,
-    block_id: usize,
-    templates: &[BaseInsertTemplate],
-    accept_threshold: f64,
-) -> bool {
-    let Some(bounds) =
-        entry_time_bounds_for_state(problem, constraints, base_by_id, state, block_id)
-    else {
-        return false;
-    };
-    templates.iter().any(|template| {
-        materialize_template(problem, pre, state, block_id, template, bounds).is_some_and(
-            |scheduled| {
-                state.score13 + score13_block(problem, pre, scheduled) <= accept_threshold + 1e-9
-            },
-        )
-    })
-}
-
 fn push_placement_candidate(
     problem: &Problem,
     pre: &Precompute,
+    parent_index: usize,
     state: &BeamState,
     original: ScheduledBlock,
     scheduled: ScheduledBlock,
-    placements: &mut Vec<PlacementCandidate>,
+    placements: &mut Vec<BeamCandidate>,
 ) {
     let block = &problem.blocks[scheduled.block_id];
     let score13 = state.score13 + score13_block(problem, pre, scheduled);
@@ -492,7 +613,8 @@ fn push_placement_candidate(
         scheduled.bay_id,
         block.workload as f64,
     );
-    placements.push(PlacementCandidate {
+    placements.push(BeamCandidate {
+        parent_index,
         scheduled,
         score13,
         score: score13 + problem.weights.w2 * imbalance,
@@ -529,13 +651,13 @@ fn normalized_imbalance_with_replace(
     (max_value - min_value).floor()
 }
 
-fn retain_parent_candidates(candidates: &mut Vec<PlacementCandidate>, limit: usize) {
+fn retain_parent_candidates(candidates: &mut Vec<BeamCandidate>, limit: usize) {
     candidates.sort_by(placement_candidate_cmp);
     candidates.dedup_by(|a, b| a.scheduled == b.scheduled);
     candidates.truncate(limit);
 }
 
-fn placement_candidate_cmp(a: &PlacementCandidate, b: &PlacementCandidate) -> std::cmp::Ordering {
+fn placement_candidate_cmp(a: &BeamCandidate, b: &BeamCandidate) -> std::cmp::Ordering {
     a.score
         .total_cmp(&b.score)
         .then(a.scheduled.entry_time.cmp(&b.scheduled.entry_time))
@@ -546,11 +668,11 @@ fn placement_candidate_cmp(a: &PlacementCandidate, b: &PlacementCandidate) -> st
 }
 
 fn select_beam(
-    mut candidates: Vec<BeamState>,
+    mut candidates: Vec<BeamCandidate>,
+    parents: &[BeamState],
     width: usize,
     group_limit: usize,
-    mut is_viable: impl FnMut(&BeamState) -> bool,
-) -> Vec<BeamState> {
+) -> Vec<BeamCandidate> {
     if width == 0 {
         return Vec::new();
     }
@@ -563,7 +685,7 @@ fn select_beam(
     let mut selected = Vec::with_capacity(width);
     let mut deferred = Vec::new();
     for candidate in candidates {
-        if contains_exact(&selected, &candidate) {
+        if contains_exact(&selected, &candidate, parents) {
             continue;
         }
         let group_count = selected
@@ -574,16 +696,14 @@ fn select_beam(
             deferred.push(candidate);
             continue;
         }
-        if is_viable(&candidate) {
-            selected.push(candidate);
-            if selected.len() >= width {
-                break;
-            }
+        selected.push(candidate);
+        if selected.len() >= width {
+            break;
         }
     }
     if selected.len() < width {
         for candidate in deferred {
-            if contains_exact(&selected, &candidate) || !is_viable(&candidate) {
+            if contains_exact(&selected, &candidate, parents) {
                 continue;
             }
             selected.push(candidate);
@@ -596,17 +716,24 @@ fn select_beam(
     selected
 }
 
-fn contains_exact(states: &[BeamState], candidate: &BeamState) -> bool {
-    states
-        .iter()
-        .any(|state| state.exact_hash == candidate.exact_hash && state.added == candidate.added)
+fn contains_exact(
+    candidates: &[BeamCandidate],
+    candidate: &BeamCandidate,
+    parents: &[BeamState],
+) -> bool {
+    candidates.iter().any(|current| {
+        current.exact_hash == candidate.exact_hash
+            && current.scheduled == candidate.scheduled
+            && parents[current.parent_index].added == parents[candidate.parent_index].added
+    })
 }
 
 fn hash_block_placement(block: ScheduledBlock) -> u64 {
     let mut hash = HASH_OFFSET;
     hash = mix_hash(hash, block.block_id as u64);
     hash = mix_hash(hash, block.bay_id as u64);
-    mix_hash(hash, block.orient_idx as u64)
+    hash = mix_hash(hash, block.orient_idx as u64);
+    mix_hash(hash, block.y as u64)
 }
 
 fn hash_scheduled_block(block: ScheduledBlock) -> u64 {

@@ -304,5 +304,7 @@ pub struct BeamLargeReconstructParams {
     pub candidate_pool_count: usize,
     pub candidate_count: usize,
     pub candidate_group_limit: usize,
+    pub orientation_sample_count: usize,
+    pub y_sample_count: usize,
     pub state_group_limit: usize,
 }
