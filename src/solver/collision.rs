@@ -1,4 +1,4 @@
-use crate::{Bay, Boundsf, Boundsi, Orientation, Pointf, Problem, local_enabled, log};
+use crate::{Bay, Boundsf, Boundsi, Orientation, Pointf, Problem, local_enabled};
 use geo::{Coord, Distance, Euclidean, Intersects, LineString, Polygon, Translate};
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};

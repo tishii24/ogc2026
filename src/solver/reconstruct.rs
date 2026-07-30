@@ -7,7 +7,7 @@ use std::{
 use rayon::prelude::*;
 
 use crate::{
-    Problem, ScheduledBlock, log,
+    Problem, ScheduledBlock,
     params::{InsertParams, ReconstructNeighborParams},
     utils::{
         random::{RandPcg64Mcg, Random, sample_weighted_index},
@@ -405,6 +405,16 @@ fn scheduled_center(pre: &Precompute, s: ScheduledBlock) -> (f64, f64) {
     (s.x as f64 + cx, s.y as f64 + cy)
 }
 
+fn occupancy_interval_distance(a: ScheduledBlock, b: ScheduledBlock) -> i64 {
+    if a.entry_time < b.exit_time && b.entry_time < a.exit_time {
+        0
+    } else if a.exit_time <= b.entry_time {
+        b.entry_time - a.exit_time + 1
+    } else {
+        a.entry_time - b.exit_time + 1
+    }
+}
+
 fn push_removed_block(selected: &mut Vec<usize>, used: &mut [bool], block_id: usize, limit: usize) {
     if selected.len() < limit && !used[block_id] {
         selected.push(block_id);
@@ -553,7 +563,7 @@ fn choose_local_proximity_seeds<R: Random>(
         seed_pool.sort_by_key(|&block_id| {
             let candidate = by_block[block_id].unwrap();
             (
-                candidate.entry_time.abs_diff(base.entry_time),
+                occupancy_interval_distance(base, candidate),
                 candidate.bay_id == base.bay_id,
             )
         });
@@ -596,7 +606,6 @@ fn collect_removed_blocks<R: Random>(
     for seed in seeds {
         let scheduled = by_block[seed.block_id].unwrap();
         let (sx, sy) = scheduled_center(pre, scheduled);
-        let st = scheduled.entry_time as f64;
         let mut neighbors: Vec<(f64, usize)> = schedule
             .iter()
             .filter(|s| s.bay_id == scheduled.bay_id && !used[s.block_id])
@@ -604,7 +613,7 @@ fn collect_removed_blocks<R: Random>(
                 let (x, y) = scheduled_center(pre, candidate);
                 let dx = x - sx;
                 let dy = y - sy;
-                let dt = candidate.entry_time as f64 - st;
+                let dt = occupancy_interval_distance(scheduled, candidate) as f64;
                 (
                     remove_x_distance_weight * dx * dx
                         + remove_y_distance_weight * dy * dy

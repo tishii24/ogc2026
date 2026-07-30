@@ -1,29 +1,27 @@
 todo:
 - refactor
-- 良い配置に向かう
-- removeの時間距離をENTRY差から滞在区間gapへ変更
-- pref/volume, limit-t/volumeの交互作用を入れる
-- target-bay/time-window removeを追加
-- beam-reconstructの調整
-- 1st(pref)-2nd(pref)をpref-spreadとする
-- 長時間での検証
+- beam-reconstructの導入
+- 時刻の優先度だけでなく、bayの優先度を制約に入れて最適化する
 - reheatの再検証
-- swapを入れる
-- randomnessを高める
-- 温度の調整
-  - schedule: (cosine, linear)
-  - constraint->globalで温度を滑らかにする
 - obj2を軽視する
 - seedの選び方を増やす
+  - target-bay/time-window remove
 - 高速化
-- 多点スタート？
-- チューニング
-  - 温度の調整
-  - 時間に応じて近傍サイズを大きくする
+
+nits:
+- removeの時間距離をENTRY差から滞在区間gapへ変更
+- 1st(pref)-2nd(pref)をpref-spreadとする
+- pref/volume, limit-t/volumeの交互作用をorderに入れる
+- 1:1 moveを入れる
+- exchange=1にする
+
+tuning:
+- 温度の調整
+- 制限時間の調整
+- 進捗に応じて近傍サイズを大きくする係数をチューニングする
 
 precompute:
-- 2つのブロックの有望な隣接位置を計算する
-  - 凸包を作って、面積が大きくならない組み合わせを求める
+- 取得の高速化
 
 solver:
 - preoptimizeの改善
