@@ -6,9 +6,12 @@ use std::{
 
 use rayon::prelude::*;
 
-use crate::utils::{
-    random::{RandPcg64Mcg, Random},
-    time::Timer,
+use crate::{
+    log,
+    utils::{
+        random::{RandPcg64Mcg, Random},
+        time::Timer,
+    },
 };
 
 const EPS: f64 = 1e-9;

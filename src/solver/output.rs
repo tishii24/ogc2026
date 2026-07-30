@@ -4,7 +4,7 @@ use std::{
     sync::Mutex,
 };
 
-use crate::{Operation, ScheduledBlock, Solution, utils::time::Timer};
+use crate::{Operation, ScheduledBlock, Solution, log, utils::time::Timer};
 
 use super::optimize::OptimizeState;
 
