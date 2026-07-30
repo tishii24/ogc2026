@@ -65,21 +65,14 @@ pub(crate) fn build_pref_spread(problem: &Problem) -> Vec<i64> {
         .blocks
         .iter()
         .map(|block| {
-            let mut largest = i64::MIN;
-            let mut second_largest = i64::MIN;
-            for &preference in &block.bay_preferences {
-                if preference > largest {
-                    second_largest = largest;
-                    largest = preference;
-                } else if preference > second_largest {
-                    second_largest = preference;
-                }
-            }
-            if second_largest == i64::MIN {
-                0
-            } else {
-                largest - second_largest
-            }
+            let min_pref = block.bay_preferences.iter().copied().min().unwrap_or(0);
+            let max_pref = block
+                .bay_preferences
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or(min_pref);
+            max_pref - min_pref
         })
         .collect()
 }

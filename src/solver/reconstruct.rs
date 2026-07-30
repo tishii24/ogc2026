@@ -41,7 +41,6 @@ pub(super) struct BlockOrderWeights {
     workload: f64,
     volume: f64,
     pref_spread: f64,
-    pref_density: f64,
     limit_time_urgency: f64,
     random: f64,
 }
@@ -50,7 +49,6 @@ struct BlockOrderContext {
     max_workload: f64,
     max_volume: f64,
     max_pref_spread: f64,
-    max_pref_density: f64,
     max_limit_time: i64,
     limit_time_span: f64,
 }
@@ -79,10 +77,6 @@ pub(super) fn sample_reconstruct_order_weights(
         pref_spread: rng.gen_range_f64(
             params.pref_spread_weight_range.0,
             params.pref_spread_weight_range.1,
-        ),
-        pref_density: rng.gen_range_f64(
-            params.pref_density_weight_range.0,
-            params.pref_density_weight_range.1,
         ),
         limit_time_urgency: rng.gen_range_f64(
             params.limit_time_urgency_weight_range.0,
@@ -701,15 +695,6 @@ fn block_volume(problem: &Problem, block_areas: &[f64], block_id: usize) -> f64 
     block_areas[block_id] * problem.blocks[block_id].processing_time as f64
 }
 
-fn block_pref_density(
-    problem: &Problem,
-    block_areas: &[f64],
-    pref_spread: &[i64],
-    block_id: usize,
-) -> f64 {
-    pref_spread[block_id] as f64 / block_volume(problem, block_areas, block_id).max(1.0)
-}
-
 fn block_limit_time(problem: &Problem, block_id: usize) -> i64 {
     let block = &problem.blocks[block_id];
     block.due_date - block.processing_time
@@ -736,11 +721,6 @@ fn build_block_order_context(
         .map(|&block_id| pref_spread[block_id] as f64)
         .fold(0.0, f64::max)
         .max(1.0);
-    let max_pref_density = order
-        .iter()
-        .map(|&block_id| block_pref_density(problem, block_areas, pref_spread, block_id))
-        .fold(0.0, f64::max)
-        .max(1e-9);
     let min_limit_time = order
         .iter()
         .map(|&block_id| block_limit_time(problem, block_id))
@@ -756,7 +736,6 @@ fn build_block_order_context(
         max_workload,
         max_volume,
         max_pref_spread,
-        max_pref_density,
         max_limit_time,
         limit_time_span: (max_limit_time - min_limit_time).max(1) as f64,
     }
@@ -774,15 +753,12 @@ fn block_order_score(
     let workload_norm = block.workload as f64 / ctx.max_workload;
     let volume_norm = block_volume(problem, block_areas, block_id) / ctx.max_volume;
     let pref_spread_norm = pref_spread[block_id] as f64 / ctx.max_pref_spread;
-    let pref_density_norm =
-        block_pref_density(problem, block_areas, pref_spread, block_id) / ctx.max_pref_density;
     let limit_time_urgency =
         (ctx.max_limit_time - block_limit_time(problem, block_id)) as f64 / ctx.limit_time_span;
 
     weights.workload * workload_norm
         + weights.volume * volume_norm
         + weights.pref_spread * pref_spread_norm
-        + weights.pref_density * pref_density_norm
         + weights.limit_time_urgency * limit_time_urgency
 }
 
