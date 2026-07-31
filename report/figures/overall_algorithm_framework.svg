@@ -1,140 +1,113 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="860" viewBox="0 0 1440 860" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="800" viewBox="0 0 1440 800" role="img" aria-labelledby="title desc">
   <title id="title">Overall algorithm framework</title>
   <desc id="desc">A five-stage optimization pipeline from preprocessing to validated output, with a feedback loop from global improvement to geometric reconstruction.</desc>
 
   <defs>
-    <filter id="card-shadow" x="-20%" y="-20%" width="140%" height="150%">
-      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#64748b" flood-opacity="0.13"/>
-    </filter>
-    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
-      <path d="M 0 0 L 12 6 L 0 12 z" fill="#94a3b8"/>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10" fill="none" stroke="#6f716d" stroke-width="1.4"/>
     </marker>
-    <marker id="arrow-accent" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
-      <path d="M 0 0 L 12 6 L 0 12 z" fill="#818cf8"/>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10" fill="none" stroke="#a36c4f" stroke-width="1.4"/>
     </marker>
     <style>
-      .title { font-family: Arial; font-size: 32px; font-weight: 700; fill: #1e293b; }
-      .subtitle { font-family: Arial; font-size: 17px; font-weight: 400; fill: #64748b; }
-      .stage { font-family: Arial; font-size: 19px; font-weight: 700; fill: #1e293b; }
-      .body { font-family: Arial; font-size: 16px; font-weight: 400; fill: #475569; }
-      .small { font-family: Arial; font-size: 14px; font-weight: 600; fill: #64748b; letter-spacing: 0.4px; }
-      .number { font-family: Arial; font-size: 17px; font-weight: 700; fill: #ffffff; }
-      .flow { fill: none; stroke: #64748b; stroke-width: 4; stroke-linecap: round; marker-end: url(#arrow); }
-      .feedback { fill: none; stroke: #818cf8; stroke-width: 2.5; stroke-dasharray: 8 8; stroke-linecap: round; marker-end: url(#arrow-accent); }
+      .title { font-family: Georgia, serif; font-size: 31px; font-weight: 700; fill: #30312e; }
+      .subtitle { font-family: Arial, sans-serif; font-size: 16px; fill: #777a73; }
+      .stage { font-family: Arial, sans-serif; font-size: 18px; font-weight: 700; fill: #30312e; }
+      .body { font-family: Arial, sans-serif; font-size: 15px; fill: #50534e; }
+      .small { font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 1px; fill: #777a73; }
+      .note { font-family: Arial, sans-serif; font-size: 14px; fill: #5f625b; }
+      .flow { fill: none; stroke: #7b7d77; stroke-width: 2; marker-end: url(#arrow); }
+      .feedback { fill: none; stroke: #a36c4f; stroke-width: 2; marker-end: url(#arrow-accent); }
     </style>
   </defs>
 
-  <rect width="1440" height="860" fill="#f8fafc"/>
-  <circle cx="1320" cy="105" r="170" fill="#eef2ff" opacity="0.68"/>
-  <circle cx="110" cy="790" r="220" fill="#ecfeff" opacity="0.62"/>
+  <rect width="1440" height="800" fill="#fbfaf7"/>
+  <path d="M 70 125 H 1370" stroke="#dedbd3" stroke-width="1"/>
 
-  <text x="720" y="78" text-anchor="middle" class="title">Overall Algorithm Framework</text>
-  <text x="720" y="112" text-anchor="middle" class="subtitle">A two-level search pipeline combining relaxed scheduling with exact geometric reconstruction</text>
+  <text x="70" y="78" class="title">Overall Algorithm Framework</text>
+  <text x="70" y="105" class="subtitle">Relaxed scheduling first, exact geometry later</text>
 
-  <g transform="translate(70 180)">
-    <rect width="238" height="360" rx="22" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" filter="url(#card-shadow)"/>
-    <rect width="238" height="9" rx="4.5" fill="#93c5fd"/>
-    <circle cx="34" cy="48" r="19" fill="#60a5fa"/>
-    <text x="34" y="54" text-anchor="middle" class="number">1</text>
-    <text x="68" y="55" class="stage">Preprocessing</text>
-    <text x="28" y="112" class="small">GEOMETRY &amp; CACHE</text>
-    <text x="28" y="152" class="body">Bounding boxes</text>
-    <text x="28" y="184" class="body">Fit ranges in each bay</text>
-    <text x="28" y="216" class="body">Orientation neighbors</text>
-    <text x="28" y="248" class="body">Lazy collision grids</text>
-    <rect x="28" y="291" width="182" height="38" rx="12" fill="#eff6ff"/>
-    <text x="119" y="316" text-anchor="middle" class="small" fill="#2563eb">Reusable geometric data</text>
+  <g transform="translate(70 175)">
+    <rect width="238" height="325" rx="14" fill="#fffefa" stroke="#d8d5cc" stroke-width="1.5"/>
+    <rect width="7" height="325" rx="3.5" fill="#7aa6a1"/>
+    <text x="28" y="37" class="small">01 / PREPARE</text>
+    <text x="28" y="76" class="stage">Preprocessing</text>
+    <text x="28" y="121" class="body">Bounding boxes</text>
+    <text x="28" y="151" class="body">Fit ranges in each bay</text>
+    <text x="28" y="181" class="body">Orientation neighbors</text>
+    <text x="28" y="211" class="body">Lazy collision grids</text>
+    <path d="M 28 250 H 210" stroke="#e4e1d8"/>
+    <text x="28" y="279" class="note">Reusable geometric data</text>
   </g>
 
-  <path d="M 326 360 H 365" class="flow"/>
-
-  <g transform="translate(365 180)">
-    <rect width="238" height="360" rx="22" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" filter="url(#card-shadow)"/>
-    <rect width="238" height="9" rx="4.5" fill="#86efac"/>
-    <circle cx="34" cy="48" r="19" fill="#4ade80"/>
-    <text x="34" y="54" text-anchor="middle" class="number">2</text>
-    <text x="68" y="55" class="stage">Abstract schedule</text>
-    <text x="28" y="112" class="small">RELAXED SEARCH</text>
-    <text x="28" y="152" class="body">Area-capacity model</text>
-    <text x="28" y="184" class="body">Bay and entry time</text>
-    <text x="28" y="216" class="body">Randomized greedy builds</text>
-    <text x="28" y="248" class="body">Relocate / swap / LNS</text>
-    <rect x="28" y="291" width="182" height="38" rx="12" fill="#f0fdf4"/>
-    <text x="119" y="316" text-anchor="middle" class="small" fill="#16a34a">Good temporal structure</text>
+  <g transform="translate(365 175)">
+    <rect width="238" height="325" rx="14" fill="#fffefa" stroke="#d8d5cc" stroke-width="1.5"/>
+    <rect width="7" height="325" rx="3.5" fill="#8fa77c"/>
+    <text x="28" y="37" class="small">02 / ABSTRACT</text>
+    <text x="28" y="76" class="stage">Abstract schedule</text>
+    <text x="28" y="121" class="body">Area-capacity model</text>
+    <text x="28" y="151" class="body">Bay and entry time</text>
+    <text x="28" y="181" class="body">Randomized greedy builds</text>
+    <text x="28" y="211" class="body">Relocate / swap / LNS</text>
+    <path d="M 28 250 H 210" stroke="#e4e1d8"/>
+    <text x="28" y="279" class="note">Good temporal structure</text>
   </g>
 
-  <path d="M 621 360 H 660" class="flow"/>
-
-  <g transform="translate(660 180)">
-    <rect width="238" height="360" rx="22" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" filter="url(#card-shadow)"/>
-    <rect width="238" height="9" rx="4.5" fill="#fdba74"/>
-    <circle cx="34" cy="48" r="19" fill="#fb923c"/>
-    <text x="34" y="54" text-anchor="middle" class="number">3</text>
-    <text x="68" y="55" class="stage">Reconstruction</text>
-    <text x="28" y="112" class="small">EXACT GEOMETRY</text>
-    <text x="28" y="152" class="body">Heuristic precedence</text>
-    <text x="28" y="184" class="body">Topological order</text>
-    <text x="28" y="216" class="body">Greedy reinsertion</text>
-    <text x="28" y="248" class="body">Crane-aware scanning</text>
-    <rect x="28" y="291" width="182" height="38" rx="12" fill="#fff7ed"/>
-    <text x="119" y="316" text-anchor="middle" class="small" fill="#ea580c">Feasible geometric state</text>
+  <g transform="translate(660 175)">
+    <rect width="238" height="325" rx="14" fill="#fffefa" stroke="#d8d5cc" stroke-width="1.5"/>
+    <rect width="7" height="325" rx="3.5" fill="#c38a62"/>
+    <text x="28" y="37" class="small">03 / REBUILD</text>
+    <text x="28" y="76" class="stage">Reconstruction</text>
+    <text x="28" y="121" class="body">Heuristic precedence</text>
+    <text x="28" y="151" class="body">Topological order</text>
+    <text x="28" y="181" class="body">Greedy reinsertion</text>
+    <text x="28" y="211" class="body">Crane-aware scanning</text>
+    <path d="M 28 250 H 210" stroke="#e4e1d8"/>
+    <text x="28" y="279" class="note">Feasible geometric state</text>
   </g>
 
-  <path d="M 916 360 H 955" class="flow"/>
-
-  <g transform="translate(955 180)">
-    <rect width="238" height="360" rx="22" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" filter="url(#card-shadow)"/>
-    <rect width="238" height="9" rx="4.5" fill="#c4b5fd"/>
-    <circle cx="34" cy="48" r="19" fill="#8b5cf6"/>
-    <text x="34" y="54" text-anchor="middle" class="number">4</text>
-    <text x="68" y="55" class="stage">Global improvement</text>
-    <text x="28" y="112" class="small">PARALLEL SA</text>
-    <text x="28" y="152" class="body">Constrained phase</text>
-    <text x="28" y="184" class="body">Unconstrained phase</text>
-    <text x="28" y="216" class="body">Shift / move / rotate</text>
-    <text x="28" y="248" class="body">Swap / large reconstruct</text>
-    <rect x="28" y="291" width="182" height="38" rx="12" fill="#f5f3ff"/>
-    <text x="119" y="316" text-anchor="middle" class="small" fill="#7c3aed">Shared-best exploration</text>
+  <g transform="translate(955 175)">
+    <rect width="238" height="325" rx="14" fill="#fffefa" stroke="#d8d5cc" stroke-width="1.5"/>
+    <rect width="7" height="325" rx="3.5" fill="#aa8d9b"/>
+    <text x="28" y="37" class="small">04 / IMPROVE</text>
+    <text x="28" y="76" class="stage">Global improvement</text>
+    <text x="28" y="121" class="body">Constrained phase</text>
+    <text x="28" y="151" class="body">Unconstrained phase</text>
+    <text x="28" y="181" class="body">Shift / move / rotate</text>
+    <text x="28" y="211" class="body">Swap / large reconstruct</text>
+    <path d="M 28 250 H 210" stroke="#e4e1d8"/>
+    <text x="28" y="279" class="note">Shared-best exploration</text>
   </g>
 
-  <path d="M 1211 360 H 1250" class="flow"/>
-
-  <g transform="translate(1250 180)">
-    <rect width="120" height="360" rx="22" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" filter="url(#card-shadow)"/>
-    <rect width="120" height="9" rx="4.5" fill="#f9a8d4"/>
-    <circle cx="60" cy="48" r="19" fill="#ec4899"/>
-    <text x="60" y="54" text-anchor="middle" class="number">5</text>
-    <text x="60" y="104" text-anchor="middle" class="stage">Output</text>
-    <text x="60" y="145" text-anchor="middle" class="small">STREAM</text>
-    <text x="60" y="184" text-anchor="middle" class="body">Candidate</text>
-    <text x="60" y="216" text-anchor="middle" class="body">Feasibility</text>
-    <text x="60" y="248" text-anchor="middle" class="body">check</text>
-    <rect x="17" y="291" width="86" height="38" rx="12" fill="#fdf2f8"/>
-    <text x="60" y="316" text-anchor="middle" class="small" fill="#be185d">Validated</text>
+  <g transform="translate(1250 175)">
+    <rect width="120" height="325" rx="14" fill="#fffefa" stroke="#d8d5cc" stroke-width="1.5"/>
+    <rect width="7" height="325" rx="3.5" fill="#d1a45f"/>
+    <text x="60" y="37" text-anchor="middle" class="small">05 / WRITE</text>
+    <text x="60" y="76" text-anchor="middle" class="stage">Output</text>
+    <text x="60" y="127" text-anchor="middle" class="body">Candidate</text>
+    <text x="60" y="157" text-anchor="middle" class="body">Feasibility</text>
+    <text x="60" y="187" text-anchor="middle" class="body">check</text>
+    <path d="M 18 250 H 102" stroke="#e4e1d8"/>
+    <text x="60" y="279" text-anchor="middle" class="note">Validated</text>
   </g>
 
-  <g fill="#64748b" stroke="#64748b" stroke-width="4" stroke-linecap="round" aria-label="Pipeline arrows">
-    <line x1="326" y1="360" x2="355" y2="360"/>
-    <path d="M 365 360 L 350 351 L 350 369 Z" stroke="none"/>
-    <line x1="621" y1="360" x2="650" y2="360"/>
-    <path d="M 660 360 L 645 351 L 645 369 Z" stroke="none"/>
-    <line x1="916" y1="360" x2="945" y2="360"/>
-    <path d="M 955 360 L 940 351 L 940 369 Z" stroke="none"/>
-    <line x1="1211" y1="360" x2="1240" y2="360"/>
-    <path d="M 1250 360 L 1235 351 L 1235 369 Z" stroke="none"/>
-  </g>
+  <line x1="315" y1="337" x2="355" y2="337" stroke="#7b7d77" stroke-width="2"/>
+  <path d="M 355 337 L 345 331 L 345 343 Z" fill="#7b7d77"/>
+  <line x1="610" y1="337" x2="650" y2="337" stroke="#7b7d77" stroke-width="2"/>
+  <path d="M 650 337 L 640 331 L 640 343 Z" fill="#7b7d77"/>
+  <line x1="905" y1="337" x2="945" y2="337" stroke="#7b7d77" stroke-width="2"/>
+  <path d="M 945 337 L 935 331 L 935 343 Z" fill="#7b7d77"/>
+  <line x1="1200" y1="337" x2="1240" y2="337" stroke="#7b7d77" stroke-width="2"/>
+  <path d="M 1240 337 L 1230 331 L 1230 343 Z" fill="#7b7d77"/>
 
-  <g stroke="#6366f1" stroke-width="3" stroke-linecap="round" aria-label="Improvement feedback">
-    <line x1="1074" y1="565" x2="1074" y2="605"/>
-    <line x1="1074" y1="605" x2="780" y2="605"/>
-    <line x1="780" y1="605" x2="780" y2="565"/>
-  </g>
-  <path d="M 780 565 L 794 557 L 794 573 Z" fill="#6366f1"/>
-  <text x="927" y="625" text-anchor="middle" class="small" fill="#6366f1">Iterative improvement through the shared best state</text>
+  <line x1="1074" y1="530" x2="1074" y2="588" stroke="#a36c4f" stroke-width="2"/>
+  <line x1="1074" y1="588" x2="780" y2="588" stroke="#a36c4f" stroke-width="2"/>
+  <line x1="780" y1="588" x2="780" y2="530" stroke="#a36c4f" stroke-width="2"/>
+  <path d="M 780 520 L 772 535 L 788 535 Z" fill="#a36c4f"/>
+  <text x="927" y="615" text-anchor="middle" class="note" fill="#a36c4f">Iterate from the shared best state</text>
 
-  <g transform="translate(70 655)">
-    <rect width="1300" height="78" rx="18" fill="#ffffff" fill-opacity="0.76" stroke="#e2e8f0"/>
-    <circle cx="30" cy="39" r="7" fill="#818cf8"/>
-    <text x="52" y="45" class="body">The relaxed stage provides temporal guidance; the geometric stage enforces exact feasibility.</text>
+  <g transform="translate(70 670)">
+    <path d="M 0 0 H 1300" stroke="#dedbd3"/>
+    <text x="0" y="35" class="note">The abstract stage supplies temporal guidance; reconstruction enforces exact geometric feasibility.</text>
   </g>
 </svg>
