@@ -21,7 +21,6 @@ pub(crate) fn insert_greedy<R: Random>(
     loads: &[f64],
     params: &InsertParams,
     bay_order: &[usize],
-    candidate_top_k: usize,
     rng: &mut R,
 ) -> Option<ScheduledBlock> {
     fn insert_candidate_cmp(a: &InsertCandidate, b: &InsertCandidate) -> std::cmp::Ordering {
@@ -118,8 +117,8 @@ pub(crate) fn insert_greedy<R: Random>(
     if candidates.is_empty() {
         return None;
     }
-    candidates.sort_by(insert_candidate_cmp);
-    candidates.truncate(candidate_top_k);
-    let selected = rng.gen_range(0, candidates.len());
-    Some(candidates.swap_remove(selected).scheduled)
+    candidates
+        .into_iter()
+        .min_by(insert_candidate_cmp)
+        .map(|candidate| candidate.scheduled)
 }
