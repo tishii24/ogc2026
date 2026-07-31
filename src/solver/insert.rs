@@ -1,4 +1,4 @@
-use crate::{Problem, ScheduledBlock, params::InsertParams, utils::random::Random};
+use crate::{Boundsf, Problem, ScheduledBlock, params::InsertParams, utils::random::Random};
 
 use super::{
     objective::normalized_imbalance, placement_scan::PlacementXScanner, precompute::Precompute,
@@ -7,8 +7,15 @@ use super::{
 struct InsertCandidate {
     scheduled: ScheduledBlock,
     score_delta: f64,
-    bbox_right: f64,
-    bbox_top: f64,
+    bbox: Boundsf,
+}
+
+#[derive(Clone, Copy)]
+enum InsertAnchor {
+    BottomLeft,
+    BottomRight,
+    TopLeft,
+    TopRight,
 }
 
 pub(crate) fn insert_greedy<R: Random>(
@@ -22,17 +29,52 @@ pub(crate) fn insert_greedy<R: Random>(
     params: &InsertParams,
     bay_order: &[usize],
     candidate_top_k: usize,
+    candidate_select_p: f64,
     rng: &mut R,
 ) -> Option<ScheduledBlock> {
-    fn insert_candidate_cmp(a: &InsertCandidate, b: &InsertCandidate) -> std::cmp::Ordering {
+    fn insert_candidate_cmp(
+        a: &InsertCandidate,
+        b: &InsertCandidate,
+        anchor: InsertAnchor,
+    ) -> std::cmp::Ordering {
+        let bbox_order = match anchor {
+            InsertAnchor::BottomLeft => a
+                .bbox
+                .max_x
+                .total_cmp(&b.bbox.max_x)
+                .then(a.bbox.max_y.total_cmp(&b.bbox.max_y)),
+            InsertAnchor::BottomRight => b
+                .bbox
+                .min_x
+                .total_cmp(&a.bbox.min_x)
+                .then(a.bbox.max_y.total_cmp(&b.bbox.max_y)),
+            InsertAnchor::TopLeft => a
+                .bbox
+                .max_x
+                .total_cmp(&b.bbox.max_x)
+                .then(b.bbox.min_y.total_cmp(&a.bbox.min_y)),
+            InsertAnchor::TopRight => b
+                .bbox
+                .min_x
+                .total_cmp(&a.bbox.min_x)
+                .then(b.bbox.min_y.total_cmp(&a.bbox.min_y)),
+        };
         a.score_delta
             .total_cmp(&b.score_delta)
             .then(a.scheduled.entry_time.cmp(&b.scheduled.entry_time))
-            .then(a.bbox_right.total_cmp(&b.bbox_right))
-            .then(a.bbox_top.total_cmp(&b.bbox_top))
+            .then(bbox_order)
             .then(a.scheduled.block_id.cmp(&b.scheduled.block_id))
     }
 
+    let anchor = if rng.next_f64() >= params.anchor_randomness {
+        InsertAnchor::BottomLeft
+    } else {
+        match rng.gen_range(0, 3) {
+            0 => InsertAnchor::BottomRight,
+            1 => InsertAnchor::TopLeft,
+            _ => InsertAnchor::TopRight,
+        }
+    };
     let block_id = original.block_id;
     let block = &problem.blocks[block_id];
     let process_t = block.processing_time;
@@ -89,12 +131,16 @@ pub(crate) fn insert_greedy<R: Random>(
                     let candidate = InsertCandidate {
                         scheduled,
                         score_delta,
-                        bbox_right: scheduled.x as f64 + bounds.max_x,
-                        bbox_top: scheduled.y as f64 + bounds.max_y,
+                        bbox: Boundsf {
+                            min_x: scheduled.x as f64 + bounds.min_x,
+                            min_y: scheduled.y as f64 + bounds.min_y,
+                            max_x: scheduled.x as f64 + bounds.max_x,
+                            max_y: scheduled.y as f64 + bounds.max_y,
+                        },
                     };
                     if group_best
                         .as_ref()
-                        .is_none_or(|best| insert_candidate_cmp(&candidate, best).is_lt())
+                        .is_none_or(|best| insert_candidate_cmp(&candidate, best, anchor).is_lt())
                     {
                         group_best = Some(candidate);
                     }
@@ -118,8 +164,11 @@ pub(crate) fn insert_greedy<R: Random>(
     if candidates.is_empty() {
         return None;
     }
-    candidates.sort_by(insert_candidate_cmp);
+    candidates.sort_by(|a, b| insert_candidate_cmp(a, b, anchor));
     candidates.truncate(candidate_top_k);
-    let selected = rng.gen_range(0, candidates.len());
+    let selected = candidates
+        .iter()
+        .position(|_| rng.next_f64() < candidate_select_p)
+        .unwrap_or(0);
     Some(candidates.swap_remove(selected).scheduled)
 }

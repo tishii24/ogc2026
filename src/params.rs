@@ -68,6 +68,7 @@ pub struct PrecomputeParams {
 #[serde(deny_unknown_fields)]
 pub struct InsertParams {
     pub y_buffer: usize,
+    pub anchor_randomness: f64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -252,6 +253,7 @@ pub struct ReconstructNeighborParams {
     pub current_penalty_weight_range: (f64, f64),
     pub order_random_weight_range: (f64, f64),
     pub insert_candidate_top_k: usize,
+    pub insert_candidate_select_p: f64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]

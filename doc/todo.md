@@ -1,5 +1,4 @@
 todo:
-- reheat
 - preopt
 - refactor
 - 高速化
@@ -12,6 +11,7 @@ tuning:
 - caseに応じてtimelimitを設定する
 - 進捗に応じて近傍サイズを大きくする係数
 - 温度の調整
+  - 再加熱
 - 制限時間の調整
 
 solver:

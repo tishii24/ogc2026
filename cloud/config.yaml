@@ -5,5 +5,5 @@ job: ogc2026-runner
 service_account: ogc2026-runner
 tasks: 31
 cpu: 4
-memory: 4Gi
+memory: 8Gi
 task_timeout: 30m

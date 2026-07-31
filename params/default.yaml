@@ -24,6 +24,7 @@ precompute:
 
 insert:
   y_buffer: 10
+  anchor_randomness: 0.2
 
 annealing:
   preoptimize:
@@ -132,7 +133,8 @@ global_neighbor:
     slack_tightness_weight_range: [0.0, 0.3]
     current_penalty_weight_range: [0.0, 0.5]
     order_random_weight_range: [0.0, 0.3]
-    insert_candidate_top_k: 2
+    insert_candidate_top_k: 4
+    insert_candidate_select_p: 0.7
   shift:
     dy_range: [-5, 0]
   move:
