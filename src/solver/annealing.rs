@@ -385,6 +385,16 @@ struct WorkerState<S> {
     tabu: TabuList,
 }
 
+fn apply_shared_best<S: AnnealingState>(local: &mut WorkerState<S>, best: S, revision: u64) {
+    let score = best.annealing_score();
+    if let Some(key) = best.tabu_key() {
+        local.tabu.insert(key);
+    }
+    local.current = best;
+    local.local_best_score = local.local_best_score.min(score);
+    local.last_imported_revision = Some(revision);
+}
+
 pub(crate) struct Annealer<D> {
     pub(crate) deadline: f64,
     pub(crate) worker_count: usize,
@@ -632,13 +642,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
         shared: &SharedBest<D::State>,
     ) -> u64 {
         let (best, revision) = shared.snapshot();
-        let score = best.annealing_score();
-        if let Some(key) = best.tabu_key() {
-            local.tabu.insert(key);
-        }
-        local.current = best;
-        local.local_best_score = local.local_best_score.min(score);
-        local.last_imported_revision = Some(revision);
+        apply_shared_best(local, best, revision);
         revision
     }
 
@@ -657,13 +661,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
             exchange_threshold,
             local.last_imported_revision,
         ) {
-            let score = best.annealing_score();
-            if let Some(key) = best.tabu_key() {
-                local.tabu.insert(key);
-            }
-            local.current = best;
-            local.local_best_score = local.local_best_score.min(score);
-            local.last_imported_revision = Some(revision);
+            apply_shared_best(local, best, revision);
             true
         } else {
             false

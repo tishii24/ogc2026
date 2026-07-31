@@ -44,10 +44,6 @@ annealing:
     tabu_capacity: 4096
   global_constrained:
     exchange_interval: 2000
-    reheat:
-      best_return_interval: 100000
-      interval: 50000
-      temperature_scale: 2.0
     positive_tardiness:
       type: geometric
       temperature_initial_score_per_block_scale: [1.0, 0.01]
@@ -76,7 +72,7 @@ annealing:
         w3_scale: 0.0
     zero_tardiness:
       type: geometric
-      temperature_w3_scale: [3.0, 1.0]
+      temperature_w3_scale: [1.0, 0.9]
       exchange_threshold:
         w1_scale: 0.0
         w3_scale: 0.0
