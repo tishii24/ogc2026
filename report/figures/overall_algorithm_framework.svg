@@ -124,7 +124,11 @@
     <path d="M 1250 360 L 1235 351 L 1235 369 Z" stroke="none"/>
   </g>
 
-  <path d="M 1074 565 V 605 H 780 V 565" fill="none" stroke="#6366f1" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <g stroke="#6366f1" stroke-width="3" stroke-linecap="round" aria-label="Improvement feedback">
+    <line x1="1074" y1="565" x2="1074" y2="605"/>
+    <line x1="1074" y1="605" x2="780" y2="605"/>
+    <line x1="780" y1="605" x2="780" y2="565"/>
+  </g>
   <path d="M 780 565 L 794 557 L 794 573 Z" fill="#6366f1"/>
   <text x="927" y="625" text-anchor="middle" class="small" fill="#6366f1">Iterative improvement through the shared best state</text>
 

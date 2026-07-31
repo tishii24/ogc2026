@@ -522,6 +522,14 @@ impl<D: AnnealingDelegate> Annealer<D> {
                         best_returns += 1;
                         reheats += 1;
                         temperature.start_reheat(context.iterations());
+                        log!(
+                            "[{:.4}] [{} worker={worker_id}] reheat: revision={revision}, iter={}, interval={}, temperature_scale={:.3}",
+                            timer.elapsed_seconds(),
+                            self.delegate.name(),
+                            context.iterations(),
+                            reheat.interval,
+                            reheat.temperature_scale,
+                        );
                     } else {
                         best_imports += 1;
                         temperature.cancel_reheat();
