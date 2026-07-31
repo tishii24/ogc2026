@@ -44,6 +44,10 @@ annealing:
     tabu_capacity: 4096
   global_constrained:
     exchange_interval: 2000
+    reheat:
+      best_return_interval: 100000
+      interval: 50000
+      temperature_scale: 2.0
     positive_tardiness:
       type: geometric
       temperature_initial_score_per_block_scale: [1.0, 0.01]
@@ -60,6 +64,10 @@ annealing:
     tabu_capacity: 4096
   global:
     exchange_interval: 2000
+    reheat:
+      best_return_interval: 100000
+      interval: 50000
+      temperature_scale: 2.0
     positive_tardiness:
       type: geometric
       temperature_initial_score_per_block_scale: [1.0, 0.01]

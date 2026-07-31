@@ -37,7 +37,7 @@ python tools/cloud_runner.py setup
 - Cloud Storage bucketの作成
 - Cloud Run Job用service accountの作成とbucket権限の設定
 - base imageのbuildとArtifact Registryへのpush
-- 4 task × 4 CPUのCloud Run Jobの作成
+- `cloud/config.yaml`に基づくCloud Run Jobの作成
 - DockerのArtifact Registry認証設定
 
 project、bucket、regionは引数で指定できる。
@@ -51,7 +51,12 @@ python tools/cloud_runner.py setup \
 
 `--bucket`未指定時は`PROJECT_ID-ogc2026-runs`を使用する。
 確定した設定は`cloud/config.local.yaml`に保存される。
-`cloud/Dockerfile`やtask設定を変更した場合は、もう一度`setup`を実行する。
+`cloud/Dockerfile`やイメージ自体を変更した場合は、もう一度`setup`を実行する。
+`cloud/config.yaml`のtask数、parallelism、CPU、メモリ、timeoutだけを変更した場合は、次のコマンドでDocker buildなしに反映できる。
+
+```bash
+python tools/cloud_runner.py update
+```
 
 ## suiteの実行
 
@@ -68,13 +73,14 @@ python tools/cloud_runner.py run $VERSION \
 
 処理の流れは以下の通り。
 
-1. base imageをローカルDockerで実行し、Linux版`solutions/{version}`を作成する
-2. solution、checker、対象caseをbundleにしてCloud Storageへ送る
-3. Cloud Run Jobsを4 task並列で実行する
-4. suiteのcaseをtaskへround-robinで割り当てる
-5. task別のログをCloud Storageへ送る
-6. ローカルへ取得し、既存の`log/score.csv`と`log/{version}/{timelimit}`へ統合する
-7. 取得に成功したCloud Storage上の一時ファイルを削除する
+1. `cloud/config.yaml`のJob設定を既存Jobへ同期する
+2. base imageをローカルDockerで実行し、Linux版`solutions/{version}`を作成する
+3. solution、checker、対象caseをbundleにしてCloud Storageへ送る
+4. Cloud Run Jobsを設定されたtask数・parallelismで実行する
+5. suiteのcaseをtaskへround-robinで割り当てる
+6. task別のログをCloud Storageへ送る
+7. ローカルへ取得し、既存の`log/score.csv`と`log/{version}/{timelimit}`へ統合する
+8. 取得に成功したCloud Storage上の一時ファイルを削除する
 
 実行に失敗した場合も、Cloud Storageへ保存できたログはローカルへ取得する。
 一部taskが失敗した場合、コマンドはログ統合後に非ゼロで終了する。
@@ -88,12 +94,20 @@ python tools/stats.py --suite suites/full-hard.json --tl 120
 python tools/visualizer.py log/081/120
 ```
 
-Cloud Run側の標準出力はGoogle Cloud Consoleまたは次のコマンドで確認できる。
+Cloud Run側の標準出力はGoogle Cloud Consoleまたは次のコマンドでリアルタイムに確認できる。
+実行名を省略すると、最新のExecutionを追尾する。
+
+```bash
+python tools/cloud_runner.py logs
+```
+
+複数のExecutionを並行実行している場合は、対象の実行名を指定する。
 
 ```bash
 gcloud run jobs executions list \
   --job ogc2026-runner \
   --region asia-northeast1
+python tools/cloud_runner.py logs EXECUTION_NAME
 ```
 
 ## 設定変更

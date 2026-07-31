@@ -4,7 +4,9 @@ use serde::Deserialize;
 
 use crate::{
     Problem,
-    solver::annealing::{AnnealingParams, AnnealingRegimeParams, TemperatureScheduleKind},
+    solver::annealing::{
+        AnnealingParams, AnnealingRegimeParams, ReheatParams, TemperatureScheduleKind,
+    },
 };
 
 #[derive(Clone, Debug, Deserialize)]
@@ -179,8 +181,18 @@ pub struct AnnealingConfigs {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ReheatConfig {
+    pub best_return_interval: usize,
+    pub interval: usize,
+    pub temperature_scale: f64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AnnealingParamsConfig {
     pub exchange_interval: usize,
+    #[serde(default)]
+    pub reheat: Option<ReheatConfig>,
     pub positive_tardiness: AnnealingRegimeConfig,
     pub zero_tardiness: AnnealingRegimeConfig,
     pub worker_temperature_scale: f64,
@@ -191,6 +203,11 @@ impl AnnealingParamsConfig {
     pub(crate) fn make(&self, problem: &Problem, initial_score: f64) -> AnnealingParams {
         AnnealingParams {
             exchange_interval: self.exchange_interval,
+            reheat: self.reheat.as_ref().map(|reheat| ReheatParams {
+                best_return_interval: reheat.best_return_interval,
+                interval: reheat.interval,
+                temperature_scale: reheat.temperature_scale,
+            }),
             positive_tardiness: self.positive_tardiness.make(problem, initial_score),
             zero_tardiness: self.zero_tardiness.make(problem, initial_score),
             worker_temperature_scale: self.worker_temperature_scale,

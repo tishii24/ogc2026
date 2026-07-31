@@ -1,22 +1,12 @@
 todo:
 - reheat
 - preopt
-- gcloud
+- refactor
 - 高速化
-- seedの選び方を増やす
-  - target-bay/time-window remove
-
-report:
-- todo
-
-refactor:
-- todo
+- report
 
 nits:
-- directionをrandomにする
-- reconstruct-weightのpowerをつける
-- remove-blockの分布を変える
-- moveを小さいブロックに限らない
+- global-cはtardiness=0になったら終了する
 
 tuning:
 - caseに応じてtimelimitを設定する
@@ -24,17 +14,11 @@ tuning:
 - 温度の調整
 - 制限時間の調整
 
-高速化:
-- precompute.crane
-- scan-y
-
 solver:
-- preoptimizeの改善
 - 限界高速化
 
 other:
 - データ拡張
-- gcloudで実行
 
 pending:
 - 同時刻の操作順を考慮する

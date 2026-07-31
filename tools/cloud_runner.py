@@ -33,11 +33,27 @@ def parse_args() -> argparse.Namespace:
     setup.add_argument("--bucket", help="Cloud Storage bucket name.")
     setup.add_argument("--region", help="Google Cloud region.")
 
+    subparsers.add_parser(
+        "update", help="Update an existing Cloud Run Job from cloud/config.yaml."
+    )
+
     run = subparsers.add_parser("run", help="Run a suite on Cloud Run Jobs.")
     run.add_argument("version", help="Version directory under solutions/.")
     run.add_argument("--params", default="params/default.yaml")
     run.add_argument("--suite", required=True)
     run.add_argument("--timelimit", type=float, required=True)
+    run.add_argument(
+        "--local",
+        action="store_true",
+        help="Build the cloud solver with the Rust local feature.",
+    )
+
+    logs = subparsers.add_parser("logs", help="Tail logs for a Cloud Run Job execution.")
+    logs.add_argument(
+        "execution",
+        nargs="?",
+        help="Execution name. Defaults to the latest execution.",
+    )
 
     return parser.parse_args()
 
@@ -319,6 +335,44 @@ def setup_cloud(root: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def update_cloud(root: Path) -> int:
+    config = load_config(root)
+    project = config.get("project")
+    if not project:
+        raise ValueError("cloud setup is incomplete; run cloud_runner.py setup")
+
+    service_account = f"{config['service_account']}@{project}.iam.gserviceaccount.com"
+    run_command(
+        [
+            "gcloud",
+            "run",
+            "jobs",
+            "update",
+            str(config["job"]),
+            "--region",
+            str(config["region"]),
+            "--project",
+            str(project),
+            "--service-account",
+            service_account,
+            "--tasks",
+            str(config["tasks"]),
+            "--parallelism",
+            str(config["tasks"]),
+            "--cpu",
+            str(config["cpu"]),
+            "--memory",
+            str(config["memory"]),
+            "--task-timeout",
+            str(config["task_timeout"]),
+            "--max-retries",
+            "0",
+        ],
+        cwd=root,
+    )
+    return 0
+
+
 def path_in_root(root: Path, value: str) -> tuple[Path, Path]:
     path = Path(value)
     if not path.is_absolute():
@@ -383,29 +437,30 @@ def compose_linux_solution(
     config: dict[str, Any],
     version: str,
     params_relative: Path,
+    local: bool,
 ) -> Path:
-    run_command(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--platform",
-            "linux/amd64",
-            "-v",
-            f"{root}:/work/ogc2026",
-            "-w",
-            "/work/ogc2026",
-            image_url(config),
-            "python3.12",
-            "tools/composer.py",
-            version,
-            "--params",
-            params_relative.as_posix(),
-            "--platform",
-            "linux",
-        ],
-        cwd=root,
-    )
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        "--platform",
+        "linux/amd64",
+        "-v",
+        f"{root}:/work/ogc2026",
+        "-w",
+        "/work/ogc2026",
+        image_url(config),
+        "python3.12",
+        "tools/composer.py",
+        version,
+        "--params",
+        params_relative.as_posix(),
+        "--platform",
+        "linux",
+    ]
+    if local:
+        command.append("--local")
+    run_command(command, cwd=root)
     return root / "solutions" / version
 
 
@@ -484,6 +539,59 @@ def merge_downloaded_logs(root: Path, download_dir: Path) -> list[dict[str, Any]
     return statuses
 
 
+def tail_logs(root: Path, args: argparse.Namespace) -> int:
+    config = load_config(root)
+    if not config.get("project"):
+        raise ValueError("cloud setup is incomplete; run cloud_runner.py setup")
+
+    execution = args.execution
+    if execution is None:
+        completed = run_command(
+            [
+                "gcloud",
+                "run",
+                "jobs",
+                "executions",
+                "list",
+                "--job",
+                str(config["job"]),
+                "--region",
+                str(config["region"]),
+                "--project",
+                str(config["project"]),
+                "--sort-by=~metadata.creationTimestamp",
+                "--limit=1",
+                "--format=value(metadata.name)",
+            ],
+            cwd=root,
+            capture_output=True,
+        )
+        execution = completed.stdout.strip()
+        if not execution:
+            raise ValueError(f"no executions found for job {config['job']}")
+
+    print(f"execution: {execution}", flush=True)
+    completed = run_command(
+        [
+            "gcloud",
+            "beta",
+            "run",
+            "jobs",
+            "executions",
+            "logs",
+            "tail",
+            execution,
+            "--region",
+            str(config["region"]),
+            "--project",
+            str(config["project"]),
+        ],
+        cwd=root,
+        check=False,
+    )
+    return completed.returncode
+
+
 def run_cloud(root: Path, args: argparse.Namespace) -> int:
     if not VERSION_RE.fullmatch(args.version):
         raise ValueError(
@@ -496,11 +604,13 @@ def run_cloud(root: Path, args: argparse.Namespace) -> int:
     if not config.get("project") or not config.get("bucket"):
         raise ValueError("cloud setup is incomplete; run cloud_runner.py setup")
 
+    update_cloud(root)
+
     _, params_relative = path_in_root(root, args.params)
     suite_path, _ = path_in_root(root, args.suite)
     cases = collect_suite_cases(root, suite_path)
     solution_dir = compose_linux_solution(
-        root, config, args.version, params_relative
+        root, config, args.version, params_relative, args.local
     )
 
     run_id = (
@@ -615,6 +725,10 @@ def main() -> int:
     try:
         if args.command == "setup":
             return setup_cloud(root, args)
+        if args.command == "update":
+            return update_cloud(root)
+        if args.command == "logs":
+            return tail_logs(root, args)
         return run_cloud(root, args)
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         print(f"error: {exc}", file=sys.stderr)
