@@ -1,0 +1,9 @@
+region: asia-northeast1
+repository: ogc2026
+base_image: runner-base
+job: ogc2026-runner
+service_account: ogc2026-runner
+tasks: 4
+cpu: 4
+memory: 4Gi
+task_timeout: 24h

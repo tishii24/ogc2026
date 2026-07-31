@@ -1,21 +1,22 @@
 todo:
-- reheatの再検証
-- obj2を軽視する
+- reheat
+- preopt
+- gcloud
+- 高速化
 - seedの選び方を増やす
   - target-bay/time-window remove
 
 report:
-- 日本語で書かせる
-- 可視化
+- todo
 
 refactor:
 - todo
 
 nits:
+- directionをrandomにする
 - reconstruct-weightのpowerをつける
 - remove-blockの分布を変える
 - moveを小さいブロックに限らない
-- exchange=1にする
 
 tuning:
 - caseに応じてtimelimitを設定する

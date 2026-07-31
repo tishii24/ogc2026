@@ -95,6 +95,7 @@ pub(super) fn sample_reconstruct_order_weights(
         ),
     }
 }
+
 pub(super) fn build_optimize_state(
     problem: &Problem,
     pre: &Precompute,
