@@ -8,12 +8,6 @@ use super::{
 pub(super) type Interval = (i64, i64);
 
 #[derive(Clone, Copy)]
-pub(super) struct XRange {
-    pub(super) min_x: i64,
-    pub(super) max_x: i64,
-}
-
-#[derive(Clone, Copy)]
 struct XEvent {
     x_offset: u32,
     old_idx: u32,
@@ -213,19 +207,6 @@ impl ForbiddenIntervals<'_> {
             }
         }
     }
-
-    pub(super) fn collect_merged(self, output: &mut Vec<Interval>) {
-        output.clear();
-        for (left, right) in self.active.iter(self.intervals) {
-            if let Some(last) = output.last_mut()
-                && left <= last.1.saturating_add(1)
-            {
-                last.1 = last.1.max(right);
-            } else {
-                output.push((left, right));
-            }
-        }
-    }
 }
 
 pub(super) struct PlacementXScanner<'a> {
@@ -312,7 +293,7 @@ impl<'a> PlacementXScanner<'a> {
         let process_t = self.process_t;
         let min_t = self.min_t;
         let max_t = self.max_t;
-        self.scan_y_ranges(orient_idx, y, i64::MIN, i64::MAX, |range, forbidden| {
+        self.scan_y_ranges(orient_idx, y, i64::MIN, i64::MAX, |x, forbidden| {
             let Some(entry_time) = forbidden.first_feasible_time(&[], min_t, max_t) else {
                 return false;
             };
@@ -320,7 +301,7 @@ impl<'a> PlacementXScanner<'a> {
                 block_id,
                 bay_id,
                 orient_idx,
-                x: range.min_x,
+                x,
                 y,
                 entry_time,
                 exit_time: entry_time + process_t,
@@ -328,13 +309,13 @@ impl<'a> PlacementXScanner<'a> {
         })
     }
 
-    pub(super) fn scan_y_ranges(
+    fn scan_y_ranges(
         &mut self,
         orient_idx: usize,
         y: i64,
         requested_min_x: i64,
         requested_max_x: i64,
-        mut on_range: impl FnMut(XRange, ForbiddenIntervals<'_>) -> bool,
+        mut on_x: impl FnMut(i64, ForbiddenIntervals<'_>) -> bool,
     ) -> bool {
         let Some(fit_range) = self
             .pre
@@ -448,16 +429,8 @@ impl<'a> PlacementXScanner<'a> {
                 );
             }
 
-            let range_max_x = if event_pos < self.events.len() {
-                min_x + self.events[event_pos].x_offset as i64 - 1
-            } else {
-                max_x
-            };
-            accepted |= on_range(
-                XRange {
-                    min_x: x,
-                    max_x: range_max_x,
-                },
+            accepted |= on_x(
+                x,
                 ForbiddenIntervals {
                     active: &self.active_slots,
                     intervals: &self.forbidden_slots.intervals,
@@ -476,84 +449,6 @@ impl<'a> PlacementXScanner<'a> {
 
         accepted
     }
-}
-
-pub(super) fn find_leftmost_fixed_time_x(
-    problem: &Problem,
-    pre: &Precompute,
-    block_id: usize,
-    bay_id: usize,
-    orient_idx: usize,
-    y: i64,
-    entry_time: i64,
-    range: XRange,
-    added: &[ScheduledBlock],
-) -> Option<i64> {
-    let process_t = problem.blocks[block_id].processing_time;
-    let new_orient = BlockOrient {
-        block_id,
-        orient_idx,
-    };
-    let mut x = range.min_x;
-
-    loop {
-        let mut jump_to = x;
-        for &old in added {
-            if old.bay_id != bay_id {
-                continue;
-            }
-            let Some(info) = old_time_info(old, process_t, entry_time, entry_time) else {
-                continue;
-            };
-            let old_orient = BlockOrient {
-                block_id: old.block_id,
-                orient_idx: old.orient_idx,
-            };
-            let Some((new_old_pair, old_new_pair)) = pre
-                .collision
-                .crane_pairs_both_directions(new_orient, old_orient)
-            else {
-                continue;
-            };
-
-            let new_old_hit =
-                containing_interval(new_old_pair.crane.dx_intervals(old.y - y), old.x - x);
-            let old_new_hit =
-                containing_interval(old_new_pair.crane.dx_intervals(y - old.y), x - old.x);
-            if !forbidden_interval_set(info, new_old_hit.is_some(), old_new_hit.is_some())
-                .as_slice()
-                .iter()
-                .any(|&(left, right)| left <= entry_time && entry_time <= right)
-            {
-                continue;
-            }
-
-            let mut pair_jump = i64::MAX;
-            if let Some((left, _)) = new_old_hit {
-                pair_jump = pair_jump.min(old.x - left + 1);
-            }
-            if let Some((_, right)) = old_new_hit {
-                pair_jump = pair_jump.min(old.x + right + 1);
-            }
-            jump_to = jump_to.max(pair_jump);
-        }
-
-        if jump_to == x {
-            return Some(x);
-        }
-        if jump_to > range.max_x {
-            return None;
-        }
-        x = jump_to;
-    }
-}
-
-fn containing_interval(intervals: &[Interval], value: i64) -> Option<Interval> {
-    let index = intervals.partition_point(|&(_, right)| right < value);
-    intervals
-        .get(index)
-        .copied()
-        .filter(|&(left, _)| left <= value)
 }
 
 fn old_time_info(

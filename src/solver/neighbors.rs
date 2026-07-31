@@ -21,7 +21,6 @@ use super::{
 #[repr(usize)]
 pub(super) enum NeighborKind {
     LargeReconstruct,
-    BeamLargeReconstruct,
     Shift,
     Move,
     Rotate,
@@ -29,23 +28,21 @@ pub(super) enum NeighborKind {
 }
 
 impl NeighborKind {
-    pub(super) const ALL: [Self; 6] = [
+    pub(super) const ALL: [Self; 5] = [
         Self::LargeReconstruct,
-        Self::BeamLargeReconstruct,
         Self::Shift,
         Self::Move,
         Self::Rotate,
         Self::Swap,
     ];
-    pub(super) const NAMES: &'static [&'static str] =
-        &["Large", "BeamLarge", "Shift", "Move", "Rotate", "Swap"];
+    pub(super) const NAMES: &'static [&'static str] = &["Large", "Shift", "Move", "Rotate", "Swap"];
 
     pub(super) fn index(self) -> usize {
         self as usize
     }
 }
 
-pub(super) fn sample_neighbor<R: Random>(rng: &mut R, weights: &[f64; 6]) -> NeighborKind {
+pub(super) fn sample_neighbor<R: Random>(rng: &mut R, weights: &[f64; 5]) -> NeighborKind {
     let total = weights.iter().sum::<f64>();
     debug_assert!(total > 0.0);
 

@@ -1,7 +1,6 @@
 use crate::{Problem, Solution, params::SolverParams, utils::time::Timer};
 
 pub(crate) mod annealing;
-mod beam_reconstruct;
 mod collision;
 mod insert;
 mod neighbors;

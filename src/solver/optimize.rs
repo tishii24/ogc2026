@@ -7,7 +7,6 @@ use crate::{
 use super::{
     PreoptimizeState,
     annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
-    beam_reconstruct::try_beam_large_reconstruct,
     neighbors::{
         NeighborKind, sample_neighbor, try_move_neighbor, try_rotate_neighbor, try_shift_neighbor,
         try_swap_neighbor,
@@ -146,15 +145,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 &params.reconstruct,
                 self.insert_params,
             ),
-            NeighborKind::BeamLargeReconstruct => try_beam_large_reconstruct(
-                self.problem,
-                self.pre,
-                precedence,
-                &current.schedule,
-                rng,
-                accept_threshold,
-                &params.reconstruct,
-            ),
+
             NeighborKind::Shift => try_shift_neighbor(
                 self.problem,
                 self.pre,

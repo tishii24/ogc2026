@@ -1,3 +1,4 @@
+# ruff: noqa
 #!/usr/bin/env python3
 """Create an interactive HTML viewer from runner output directories."""
 

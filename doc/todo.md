@@ -1,6 +1,4 @@
 todo:
-- refactor
-  - beam-reconstructの削除
 - reheatの再検証
 - obj2を軽視する
 - seedの選び方を増やす
@@ -16,6 +14,7 @@ refactor:
 nits:
 - reconstruct-weightのpowerをつける
 - remove-blockの分布を変える
+- moveを小さいブロックに限らない
 - exchange=1にする
 
 tuning:

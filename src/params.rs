@@ -214,7 +214,6 @@ pub struct NeighborParams {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReconstructNeighborParams {
-    pub beam: BeamLargeReconstructParams,
     pub min_removed_blocks: usize,
     pub max_removed_blocks: usize,
     pub remove_pool_factor: usize,
@@ -276,7 +275,6 @@ pub struct RemoveSeedMethodWeights {
 #[serde(deny_unknown_fields)]
 pub struct NeighborProbabilities {
     pub large_reconstruct: f64,
-    pub beam_large_reconstruct: f64,
     pub shift: f64,
     #[serde(rename = "move")]
     pub move_block: f64,
@@ -285,26 +283,13 @@ pub struct NeighborProbabilities {
 }
 
 impl NeighborProbabilities {
-    pub(crate) fn weights(&self) -> [f64; 6] {
+    pub(crate) fn weights(&self) -> [f64; 5] {
         [
             self.large_reconstruct,
-            self.beam_large_reconstruct,
             self.shift,
             self.move_block,
             self.rotate,
             self.swap,
         ]
     }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BeamLargeReconstructParams {
-    pub width: usize,
-    pub candidate_pool_count: usize,
-    pub candidate_count: usize,
-    pub candidate_group_limit: usize,
-    pub orientation_sample_count: usize,
-    pub y_sample_count: usize,
-    pub state_group_limit: usize,
 }
