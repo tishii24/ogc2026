@@ -32,14 +32,14 @@ annealing:
       type: geometric
       temperature_initial_score_per_block_scale: [1.0, 0.01]
       exchange_threshold:
-        w1_scale: 0.0
-        w3_scale: 0.0
+        w1_scale: 0.5
+        w3_scale: 50.0
     zero_tardiness:
       type: geometric
       temperature_w3_scale: [10.0, 1.0]
       exchange_threshold:
-        w1_scale: 0.0
-        w3_scale: 0.0
+        w1_scale: 0.5
+        w3_scale: 50.0
     worker_temperature_scale: 0.0
     tabu_capacity: 4096
   global_constrained:
@@ -48,14 +48,14 @@ annealing:
       type: geometric
       temperature_initial_score_per_block_scale: [1.0, 0.01]
       exchange_threshold:
-        w1_scale: 0.0
-        w3_scale: 0.0
+        w1_scale: 0.5
+        w3_scale: 50.0
     zero_tardiness:
       type: geometric
       temperature_w3_scale: [10.0, 1.0]
       exchange_threshold:
-        w1_scale: 0.0
-        w3_scale: 0.0
+        w1_scale: 0.5
+        w3_scale: 50.0
     worker_temperature_scale: 0.0
     tabu_capacity: 4096
   global:
@@ -68,14 +68,14 @@ annealing:
       type: geometric
       temperature_initial_score_per_block_scale: [1.0, 0.01]
       exchange_threshold:
-        w1_scale: 0.0
-        w3_scale: 0.0
+        w1_scale: 0.5
+        w3_scale: 50.0
     zero_tardiness:
       type: geometric
       temperature_w3_scale: [1.0, 0.9]
       exchange_threshold:
-        w1_scale: 0.0
-        w3_scale: 0.0
+        w1_scale: 0.5
+        w3_scale: 50.0
     worker_temperature_scale: 0.0
     tabu_capacity: 4096
 
@@ -132,6 +132,7 @@ global_neighbor:
     slack_tightness_weight_range: [0.0, 0.3]
     current_penalty_weight_range: [0.0, 0.5]
     order_random_weight_range: [0.0, 0.3]
+    insert_candidate_top_k: 2
   shift:
     dy_range: [-5, 0]
   move:

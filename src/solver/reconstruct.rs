@@ -371,6 +371,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
             &loads,
             insert_params,
             &pre.bay_order_by_pref[old.block_id],
+            params.insert_candidate_top_k,
             rng,
         )?;
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
@@ -1038,6 +1039,7 @@ fn build_bay_schedule<R: Random>(
             &loads,
             params,
             &bay_order,
+            1,
             rng,
         )?;
         loads[bay_id] += block.workload as f64;
