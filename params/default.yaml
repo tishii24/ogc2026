@@ -24,7 +24,7 @@ precompute:
 
 insert:
   y_buffer: 10
-  anchor_randomness: 0.0
+  anchor_randomness: 0.2
 
 annealing:
   preoptimize:
@@ -47,7 +47,7 @@ annealing:
     exchange_interval: 2000
     positive_tardiness:
       type: geometric
-      temperature_initial_score_per_block_scale: [1.0, 0.01]
+      temperature_initial_score_per_block_scale: [0.5, 0.1]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
@@ -61,18 +61,13 @@ annealing:
     tabu_capacity: 4096
   global:
     exchange_interval: 2000
-    objective_scale:
-      obj2_start: 0.0
-      obj2_end: 0.0
-      obj3_start: 0.0
-      obj3_end: 0.0
     reheat:
       best_return_interval: 100000
       interval: 50000
       temperature_scale: 2.0
     positive_tardiness:
       type: geometric
-      temperature_initial_score_per_block_scale: [1.0, 0.01]
+      temperature_initial_score_per_block_scale: [0.5, 0.1]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
@@ -116,30 +111,30 @@ global_neighbor:
     swap: 3.0
   reconstruct:
     min_removed_blocks: 7
-    max_removed_blocks: 13
+    max_removed_blocks: 20
     remove_pool_factor: 4
     remove_count_sample_power: 2.0
     remove_seed_per_block: [1, 10]
-    remove_entry_base_interval_weights: [0.0, 0.0, 1.0]
+    remove_entry_base_interval_weights: [0.0, 0.0, 0.0, 0.2, 0.2, 0.2, 0.2, 0.2]
     remove_entry_seed_candidate_count: 10
     remove_seed_method_weights:
       badness: 1.0
       fluidity: 1.0
-      random: 2.0
+      random: 0.5
     remove_fluidity_slack_weight_range: [0.5, 2.0]
     remove_fluidity_pref_spread_weight_range: [0.5, 2.0]
-    remove_x_distance_weight_range: [0.0, 3.0]
-    remove_y_distance_weight_range: [0.0, 3.0]
-    remove_t_distance_weight_range: [1.0, 1.0]
-    workload_weight_range: [0.0, 0.5]
+    remove_x_distance_weight_range: [0.75, 1.25]
+    remove_y_distance_weight_range: [0.75, 1.25]
+    remove_t_distance_weight_range: [0.75, 1.25]
+    workload_weight_range: [0.0, 0.3]
     volume_weight_range: [0.5, 2.0]
-    pref_spread_weight_range: [0.0, 0.5]
+    pref_spread_weight_range: [0.0, 0.3]
     limit_time_urgency_weight_range: [0.5, 2.0]
-    slack_tightness_weight_range: [0.0, 0.0]
+    slack_tightness_weight_range: [0.0, 0.3]
     current_penalty_weight_range: [0.0, 0.5]
     order_random_weight_range: [0.0, 0.3]
-    insert_candidate_top_k: 1
-    insert_candidate_select_p: 1.0
+    insert_candidate_top_k: 4
+    insert_candidate_select_p: 0.7
   shift:
     dy_range: [-5, 0]
   move:
