@@ -9,13 +9,13 @@ runtime:
 phases:
   initial_preoptimize:
     time_ratio: 0.1
-    max_seconds: 10.0
+    max_seconds: 20.0
   initial_build:
     time_ratio: 0.1
     max_seconds: 10.0
   global_constrained:
-    time_ratio: 0.25
-    max_seconds: 20.0
+    time_ratio: 0.3
+    max_seconds: 300.0
 
 precompute:
   orientation_neighbor_limit: 100
