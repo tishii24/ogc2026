@@ -1,28 +1,44 @@
 todo:
-- 根本的な改善
-- スコアが離れすぎたら、bestをもらってくる
-- preopt
+- multi-stage optimizeの仮検証
+- adaptive-annealing
+  - refactor: trait
+  - reheat、温度設定
+- multi-stage optimizeの追加
 - initial-build
-- refactor
-- 高速化
+  - beam-search
+- preopt
+  - 近似方法の改善
+  - チューニング
 - report
 
 nits:
-- global-cはtardiness=0になったら終了する
 - moveを全てのblockを対象にする
+- reconstruct-weightのpowerをつける
+- seedの選び方を増やす
+  - target-bay/time-window remove
+- reconstructはpreserved-loadsを使う
+- preopt、global-cはtardiness=0になったら終了する
+
+annealing:
+- adaptive-annealing
+  - reheat
+  - temperature_per_block_scale を取り直す
+  - スコアが離れすぎたら、bestをもらってくる
+- multi-stage
+  - tardiness -> pref -> pref + loads
+  - obj2を軽視する
 
 tuning:
-- caseに応じてtimelimitを設定する
-- 進捗に応じて近傍サイズを大きくする係数
 - 温度の調整
-  - 再加熱
 - 制限時間の調整
+- 進捗に応じて近傍サイズを大きくする係数の導入
 
 solver:
 - 限界高速化
 
-other:
+evaluation:
 - データ拡張
+- caseに応じてtimelimitを設定する
 
 pending:
 - 同時刻の操作順を考慮する

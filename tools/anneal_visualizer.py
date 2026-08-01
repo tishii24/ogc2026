@@ -1,3 +1,4 @@
+# ruff: noqa
 #!/usr/bin/env python3
 """Create an annealing-process HTML viewer from worker JSONL snapshots."""
 

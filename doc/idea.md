@@ -1,27 +1,30 @@
-## 小さいケース
-
-特定の構造を目指すより、たくさん動かして良い構造を探索することが重要
-
-- reheat
-- randomnessを上げる
-  - directionをrandomにする
-
-## 大きいケース
-
-- 高速化
-- preoptの改善
+- adaptive-annealing
+- multi-stage
+  - tardiness -> pref -> pref + loads
+- preoptimizeの改善
   - 近似方法・パラメータ
-- 近傍の精度向上
-  - reconstruct-weightのpowerをつける
-  - seedの選び方を増やす
-    - target-bay/time-window remove
-  - moveを小さいブロックに限らない
+- initial-build、constraint-optimizeの改善
+  - bay割り当てをもっと重視する
+  - constraint-optimizeはbay割当をしばらく固定する
 
-### reheat
+## 理想的な状態に向かう
 
-- best解が更新されたら必ずexchangeする
-- best解を取得して、一定iterationが経ったらbest解に戻る
-- 同じbest解を取得するのが2回目以上だったら、温度を少し上げてreheatする
+実行時間はあるので、目指している解の状態にはだいたい到達できると考えて良い
+となると、目指す解の状態の決定と、目指し方を適切に定めてあげる必要がある
 
-根本的なアイディアを試しても良さそう
-- 探索空間を狭める
+理想的な状態はpreoptimizeで得られると仮定する（この仮定は疑い、調整する必要はある）
+理想的な状態に向かうにはどうすれば良いか？
+
+1. multi-stage optimize
+  - obj1,obj3,obj2のweight-schedule
+2. constraint optimize
+  - bay-assign,insert-priorityをconstraintとする
+3. guided optimize
+  - bay-assign,entry-tをguideとして評価項に入れる
+  - bay-assignを求める必要がある
+
+## adaptive-parallel-annealing
+
+ケースによってスコアのスケールが異なり、適切な温度設定が異なる
+最適化時間が長い
+並列性を活かしたい
