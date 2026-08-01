@@ -8,9 +8,9 @@ use crate::{
 };
 
 use super::{
-    insert::{ScheduleView, Scratch as InsertScratch, insert_greedy},
+    insert::insert_greedy,
     objective::score13_block,
-    placement_scan::{PlacementXScanner, Scratch as PlacementScratch},
+    placement_scan::PlacementXScanner,
     precompute::Precompute,
     reconstruct::{
         EntryTimeBounds, HeuristicPrecedence, precedence_entry_time_bounds, scheduled_by_id,
@@ -107,17 +107,10 @@ pub(super) fn try_shift_neighbor<R: Random>(
             max: i64::MAX,
         }
     };
-    let bay_blocks: Vec<_> = base
-        .iter()
-        .copied()
-        .filter(|scheduled| scheduled.bay_id == old.bay_id)
-        .collect();
-    let mut scratch = PlacementScratch::new();
     let mut scanner = PlacementXScanner::new(
         problem,
         pre,
-        &mut scratch,
-        &bay_blocks,
+        &base,
         old.block_id,
         old.bay_id,
         min_entry_time,
@@ -177,17 +170,10 @@ pub(super) fn try_rotate_neighbor<R: Random>(
             max: i64::MAX,
         }
     };
-    let bay_blocks: Vec<_> = base
-        .iter()
-        .copied()
-        .filter(|scheduled| scheduled.bay_id == old.bay_id)
-        .collect();
-    let mut scratch = PlacementScratch::new();
     let mut scanner = PlacementXScanner::new(
         problem,
         pre,
-        &mut scratch,
-        &bay_blocks,
+        &base,
         old.block_id,
         old.bay_id,
         min_entry_time,
@@ -221,17 +207,10 @@ fn try_swap_place(
     max_entry_time: i64,
     params: &SwapNeighborParams,
 ) -> Option<ScheduledBlock> {
-    let bay_blocks: Vec<_> = schedule
-        .iter()
-        .copied()
-        .filter(|scheduled| scheduled.bay_id == bay_id)
-        .collect();
-    let mut scratch = PlacementScratch::new();
     let mut scanner = PlacementXScanner::new(
         problem,
         pre,
-        &mut scratch,
-        &bay_blocks,
+        schedule,
         old.block_id,
         bay_id,
         min_entry_time,
@@ -393,21 +372,19 @@ pub(super) fn try_move_neighbor<R: Random>(
             max: i64::MAX,
         }
     };
-    let mut scratch = InsertScratch::new();
     let scheduled = insert_greedy(
         problem,
         pre,
         old,
         min_entry_time,
         max_entry_time,
-        ScheduleView::Flat(&base),
+        &base,
         &loads,
         insert_params,
         &pre.bay_order_by_pref[old.block_id],
         1,
         1.0,
         rng,
-        &mut scratch,
     )?;
     if scheduled == old {
         return None;

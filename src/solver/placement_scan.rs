@@ -77,13 +77,6 @@ impl ActiveIntervalSlots {
         }
     }
 
-    fn reset(&mut self, slot_count: usize) {
-        let word_count = slot_count.div_ceil(64);
-        self.words.resize(word_count, 0);
-        self.summary.resize(word_count.div_ceil(64), 0);
-        self.clear();
-    }
-
     fn clear(&mut self) {
         self.words.fill(0);
         self.summary.fill(0);
@@ -216,11 +209,16 @@ impl ForbiddenIntervals<'_> {
     }
 }
 
-pub(super) struct Scratch<'a> {
+pub(super) struct PlacementXScanner<'a> {
+    pre: &'a Precompute,
+    block_id: usize,
+    bay_id: usize,
+    process_t: i64,
+    min_t: i64,
+    max_t: i64,
     bay_old_blocks: Vec<ScheduledBlock>,
     old_time_infos: Vec<Option<OldTimeInfo>>,
     forbidden_slots: ForbiddenSlotPrecompute,
-    forbidden_slot_pending: Vec<(Interval, usize, usize, usize)>,
     active_slots: ActiveIntervalSlots,
     events: Vec<XEvent>,
     event_sort_scratch: Vec<XEvent>,
@@ -233,46 +231,11 @@ pub(super) struct Scratch<'a> {
     prepared_orient_idx: Option<usize>,
 }
 
-impl<'a> Scratch<'a> {
-    pub(super) fn new() -> Self {
-        Self {
-            bay_old_blocks: Vec::new(),
-            old_time_infos: Vec::new(),
-            forbidden_slots: ForbiddenSlotPrecompute {
-                intervals: Vec::new(),
-                states: Vec::new(),
-            },
-            forbidden_slot_pending: Vec::new(),
-            active_slots: ActiveIntervalSlots::new(0),
-            events: Vec::new(),
-            event_sort_scratch: Vec::new(),
-            event_counts: Vec::new(),
-            states: Vec::new(),
-            event_group_seen: Vec::new(),
-            event_group_generation: 0,
-            touched_old_ids: Vec::new(),
-            crane_pair_cache: Vec::new(),
-            prepared_orient_idx: None,
-        }
-    }
-}
-
-pub(super) struct PlacementXScanner<'pre, 'scratch> {
-    pre: &'pre Precompute,
-    block_id: usize,
-    bay_id: usize,
-    process_t: i64,
-    min_t: i64,
-    max_t: i64,
-    scratch: &'scratch mut Scratch<'pre>,
-}
-
-impl<'pre, 'scratch> PlacementXScanner<'pre, 'scratch> {
+impl<'a> PlacementXScanner<'a> {
     pub(super) fn new(
         problem: &Problem,
-        pre: &'pre Precompute,
-        scratch: &'scratch mut Scratch<'pre>,
-        bay_old_blocks: &[ScheduledBlock],
+        pre: &'a Precompute,
+        schedule: &[ScheduledBlock],
         block_id: usize,
         bay_id: usize,
         min_entry_time: i64,
@@ -285,38 +248,17 @@ impl<'pre, 'scratch> PlacementXScanner<'pre, 'scratch> {
         if min_t > max_t {
             return None;
         }
-
-        scratch.bay_old_blocks.clear();
-        scratch.bay_old_blocks.extend_from_slice(bay_old_blocks);
-        scratch.old_time_infos.clear();
-        scratch.old_time_infos.extend(
-            scratch
-                .bay_old_blocks
-                .iter()
-                .map(|&old| old_time_info(old, process_t, min_t, max_t)),
-        );
-        build_forbidden_slot_precompute(
-            &scratch.old_time_infos,
-            &mut scratch.forbidden_slots,
-            &mut scratch.forbidden_slot_pending,
-        );
-
-        let old_count = scratch.bay_old_blocks.len();
-        scratch
-            .active_slots
-            .reset(scratch.forbidden_slots.intervals.len());
-        scratch.events.clear();
-        scratch.event_sort_scratch.clear();
-        scratch.event_counts.clear();
-        scratch.states.resize(old_count, HitState::default());
-        scratch.states.fill(HitState::default());
-        scratch.event_group_seen.resize(old_count, 0);
-        scratch.event_group_seen.fill(0);
-        scratch.event_group_generation = 0;
-        scratch.touched_old_ids.clear();
-        scratch.crane_pair_cache.clear();
-        scratch.prepared_orient_idx = None;
-
+        let bay_old_blocks: Vec<_> = schedule
+            .iter()
+            .copied()
+            .filter(|old| old.bay_id == bay_id)
+            .collect();
+        let old_time_infos: Vec<_> = bay_old_blocks
+            .iter()
+            .map(|&old| old_time_info(old, process_t, min_t, max_t))
+            .collect();
+        let forbidden_slots = build_forbidden_slot_precompute(&old_time_infos);
+        let old_count = bay_old_blocks.len();
         Some(Self {
             pre,
             block_id,
@@ -324,7 +266,19 @@ impl<'pre, 'scratch> PlacementXScanner<'pre, 'scratch> {
             process_t,
             min_t,
             max_t,
-            scratch,
+            bay_old_blocks,
+            old_time_infos,
+            active_slots: ActiveIntervalSlots::new(forbidden_slots.intervals.len()),
+            forbidden_slots,
+            events: Vec::with_capacity(old_count * 4),
+            event_sort_scratch: Vec::with_capacity(old_count * 4),
+            event_counts: Vec::new(),
+            states: vec![HitState::default(); old_count],
+            event_group_seen: vec![0; old_count],
+            event_group_generation: 0,
+            touched_old_ids: Vec::with_capacity(old_count),
+            crane_pair_cache: Vec::with_capacity(old_count),
+            prepared_orient_idx: None,
         })
     }
 
@@ -379,39 +333,41 @@ impl<'pre, 'scratch> PlacementXScanner<'pre, 'scratch> {
             return false;
         }
 
-        let pre = self.pre;
-        let block_id = self.block_id;
-        let scratch = &mut *self.scratch;
-        if scratch.prepared_orient_idx != Some(orient_idx) {
+        if self.prepared_orient_idx != Some(orient_idx) {
             let new_orient = BlockOrient {
-                block_id,
+                block_id: self.block_id,
                 orient_idx,
             };
-            scratch.crane_pair_cache.clear();
-            for (old_idx, old) in scratch.bay_old_blocks.iter().enumerate() {
-                let pair = if scratch.old_time_infos[old_idx].is_none() {
-                    None
-                } else {
-                    let old_orient = BlockOrient {
-                        block_id: old.block_id,
-                        orient_idx: old.orient_idx,
-                    };
-                    pre.collision
-                        .crane_pairs_both_directions(new_orient, old_orient)
-                };
-                scratch.crane_pair_cache.push(pair);
-            }
-            scratch.prepared_orient_idx = Some(orient_idx);
+            self.crane_pair_cache.clear();
+            self.crane_pair_cache
+                .extend(
+                    self.bay_old_blocks
+                        .iter()
+                        .enumerate()
+                        .map(|(old_idx, old)| {
+                            if self.old_time_infos[old_idx].is_none() {
+                                return None;
+                            }
+                            let old_orient = BlockOrient {
+                                block_id: old.block_id,
+                                orient_idx: old.orient_idx,
+                            };
+                            self.pre
+                                .collision
+                                .crane_pairs_both_directions(new_orient, old_orient)
+                        }),
+                );
+            self.prepared_orient_idx = Some(orient_idx);
         }
 
-        scratch.events.clear();
-        scratch.states.fill(HitState::default());
-        scratch.active_slots.clear();
-        for (old_idx, &old) in scratch.bay_old_blocks.iter().enumerate() {
-            if scratch.old_time_infos[old_idx].is_none() {
+        self.events.clear();
+        self.states.fill(HitState::default());
+        self.active_slots.clear();
+        for (old_idx, &old) in self.bay_old_blocks.iter().enumerate() {
+            if self.old_time_infos[old_idx].is_none() {
                 continue;
             }
-            let Some((new_old_pair, old_new_pair)) = scratch.crane_pair_cache[old_idx] else {
+            let Some((new_old_pair, old_new_pair)) = self.crane_pair_cache[old_idx] else {
                 continue;
             };
             for &(lo, hi) in new_old_pair.crane.dx_intervals(old.y - y) {
@@ -422,7 +378,7 @@ impl<'pre, 'scratch> PlacementXScanner<'pre, 'scratch> {
                     1,
                     min_x,
                     max_x,
-                    &mut scratch.events,
+                    &mut self.events,
                 );
             }
             for &(lo, hi) in old_new_pair.crane.dx_intervals(y - old.y) {
@@ -433,14 +389,14 @@ impl<'pre, 'scratch> PlacementXScanner<'pre, 'scratch> {
                     2,
                     min_x,
                     max_x,
-                    &mut scratch.events,
+                    &mut self.events,
                 );
             }
         }
         counting_sort_x_events(
-            &mut scratch.events,
-            &mut scratch.event_sort_scratch,
-            &mut scratch.event_counts,
+            &mut self.events,
+            &mut self.event_sort_scratch,
+            &mut self.event_counts,
             min_x,
             max_x,
         );
@@ -450,28 +406,25 @@ impl<'pre, 'scratch> PlacementXScanner<'pre, 'scratch> {
         let mut x_offset = 0u32;
         let mut x = min_x;
         loop {
-            scratch.event_group_generation += 1;
-            scratch.touched_old_ids.clear();
-            while event_pos < scratch.events.len() && scratch.events[event_pos].x_offset == x_offset
-            {
-                let event = scratch.events[event_pos];
+            self.event_group_generation += 1;
+            self.touched_old_ids.clear();
+            while event_pos < self.events.len() && self.events[event_pos].x_offset == x_offset {
+                let event = self.events[event_pos];
                 let old_idx = event.old_idx as usize;
-                if scratch.event_group_seen[old_idx] != scratch.event_group_generation {
-                    scratch.event_group_seen[old_idx] = scratch.event_group_generation;
-                    scratch.touched_old_ids.push(old_idx);
-                    scratch.active_slots.set_all(
-                        scratch.forbidden_slots.states[old_idx]
-                            [hit_state_index(scratch.states[old_idx])],
+                if self.event_group_seen[old_idx] != self.event_group_generation {
+                    self.event_group_seen[old_idx] = self.event_group_generation;
+                    self.touched_old_ids.push(old_idx);
+                    self.active_slots.set_all(
+                        self.forbidden_slots.states[old_idx][hit_state_index(self.states[old_idx])],
                         false,
                     );
                 }
-                apply_x_event(event, &mut scratch.states);
+                apply_x_event(event, &mut self.states);
                 event_pos += 1;
             }
-            for &old_idx in &scratch.touched_old_ids {
-                scratch.active_slots.set_all(
-                    scratch.forbidden_slots.states[old_idx]
-                        [hit_state_index(scratch.states[old_idx])],
+            for &old_idx in &self.touched_old_ids {
+                self.active_slots.set_all(
+                    self.forbidden_slots.states[old_idx][hit_state_index(self.states[old_idx])],
                     true,
                 );
             }
@@ -479,15 +432,15 @@ impl<'pre, 'scratch> PlacementXScanner<'pre, 'scratch> {
             accepted |= on_x(
                 x,
                 ForbiddenIntervals {
-                    active: &scratch.active_slots,
-                    intervals: &scratch.forbidden_slots.intervals,
+                    active: &self.active_slots,
+                    intervals: &self.forbidden_slots.intervals,
                 },
             );
 
-            if event_pos >= scratch.events.len() {
+            if event_pos >= self.events.len() {
                 break;
             }
-            x_offset = scratch.events[event_pos].x_offset;
+            x_offset = self.events[event_pos].x_offset;
             x = min_x + x_offset as i64;
             if x > max_x {
                 break;
@@ -650,21 +603,16 @@ fn forbidden_interval_set(info: OldTimeInfo, new_old_hit: bool, old_new_hit: boo
 
 fn build_forbidden_slot_precompute(
     old_time_infos: &[Option<OldTimeInfo>],
-    output: &mut ForbiddenSlotPrecompute,
-    pending: &mut Vec<(Interval, usize, usize, usize)>,
-) {
-    output
-        .states
-        .resize(old_time_infos.len(), [SlotSet::default(); 4]);
-    output.states.fill([SlotSet::default(); 4]);
-    pending.clear();
+) -> ForbiddenSlotPrecompute {
+    let mut states = vec![[SlotSet::default(); 4]; old_time_infos.len()];
+    let mut pending = Vec::new();
     for (old_idx, &info) in old_time_infos.iter().enumerate() {
         let Some(info) = info else {
             continue;
         };
         for state_idx in 0..4 {
             let set = forbidden_interval_set(info, state_idx & 1 != 0, state_idx & 2 != 0);
-            output.states[old_idx][state_idx].len = set.len;
+            states[old_idx][state_idx].len = set.len;
             for (item_idx, &interval) in set.as_slice().iter().enumerate() {
                 pending.push((interval, old_idx, state_idx, item_idx));
             }
@@ -672,9 +620,10 @@ fn build_forbidden_slot_precompute(
     }
     pending.sort_unstable_by_key(|&(interval, _, _, _)| interval);
 
-    output.intervals.clear();
-    for (slot, &(interval, old_idx, state_idx, item_idx)) in pending.iter().enumerate() {
-        output.intervals.push(interval);
-        output.states[old_idx][state_idx].slots[item_idx] = slot as u32;
+    let mut intervals = Vec::with_capacity(pending.len());
+    for (slot, (interval, old_idx, state_idx, item_idx)) in pending.into_iter().enumerate() {
+        intervals.push(interval);
+        states[old_idx][state_idx].slots[item_idx] = slot as u32;
     }
+    ForbiddenSlotPrecompute { intervals, states }
 }

@@ -1,40 +1,13 @@
 use crate::{Boundsf, Problem, ScheduledBlock, params::InsertParams, utils::random::Random};
 
 use super::{
-    objective::normalized_imbalance,
-    placement_scan::{PlacementXScanner, Scratch as PlacementScratch},
-    precompute::Precompute,
+    objective::normalized_imbalance, placement_scan::PlacementXScanner, precompute::Precompute,
 };
 
 struct InsertCandidate {
     scheduled: ScheduledBlock,
     score_delta: f64,
     bbox: Boundsf,
-}
-
-pub(super) enum ScheduleView<'a> {
-    Flat(&'a [ScheduledBlock]),
-    ByBay(&'a [Vec<ScheduledBlock>]),
-}
-
-pub(super) struct Scratch<'a> {
-    scanner: PlacementScratch<'a>,
-    candidates: Vec<InsertCandidate>,
-    ys: Vec<i64>,
-    next_loads: Vec<f64>,
-    bay_blocks: Vec<ScheduledBlock>,
-}
-
-impl<'a> Scratch<'a> {
-    pub(super) fn new() -> Self {
-        Self {
-            scanner: PlacementScratch::new(),
-            candidates: Vec::new(),
-            ys: Vec::new(),
-            next_loads: Vec::new(),
-            bay_blocks: Vec::new(),
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -45,20 +18,19 @@ enum InsertAnchor {
     TopRight,
 }
 
-pub(crate) fn insert_greedy<'a, R: Random>(
+pub(crate) fn insert_greedy<R: Random>(
     problem: &Problem,
-    pre: &'a Precompute,
+    pre: &Precompute,
     original: ScheduledBlock,
     min_entry_time: i64,
     max_entry_time: i64,
-    schedule: ScheduleView<'_>,
+    schedule: &[ScheduledBlock],
     loads: &[f64],
     params: &InsertParams,
     bay_order: &[usize],
     candidate_top_k: usize,
     candidate_select_p: f64,
     rng: &mut R,
-    scratch: &mut Scratch<'a>,
 ) -> Option<ScheduledBlock> {
     fn insert_candidate_cmp(
         a: &InsertCandidate,
@@ -114,16 +86,15 @@ pub(crate) fn insert_greedy<'a, R: Random>(
 
     let current_obj2 = normalized_imbalance(loads, &pre.bay_load_scale);
     let original_tardiness = (original.exit_time - block.due_date).max(0);
-    scratch.candidates.clear();
+    let mut candidates = Vec::new();
     let mut best_score_delta = f64::INFINITY;
 
     for &bay_id in bay_order {
-        scratch.next_loads.clear();
-        scratch.next_loads.extend_from_slice(loads);
-        scratch.next_loads[bay_id] += block.workload as f64;
+        let mut next_loads = loads.to_vec();
+        next_loads[bay_id] += block.workload as f64;
 
         let delta_obj23 = problem.weights.w2
-            * (normalized_imbalance(&scratch.next_loads, &pre.bay_load_scale) - current_obj2)
+            * (normalized_imbalance(&next_loads, &pre.bay_load_scale) - current_obj2)
             + problem.weights.w3 * pre.pref_penalty[block_id][bay_id] as f64;
         let min_tardiness = min_t
             .saturating_add(process_t)
@@ -134,26 +105,8 @@ pub(crate) fn insert_greedy<'a, R: Random>(
             continue;
         }
 
-        let bay_blocks = match schedule {
-            ScheduleView::Flat(schedule) => {
-                scratch.bay_blocks.clear();
-                scratch
-                    .bay_blocks
-                    .extend(schedule.iter().copied().filter(|old| old.bay_id == bay_id));
-                &scratch.bay_blocks
-            }
-            ScheduleView::ByBay(bay_members) => &bay_members[bay_id],
-        };
-        let mut scanner = PlacementXScanner::new(
-            problem,
-            pre,
-            &mut scratch.scanner,
-            bay_blocks,
-            block_id,
-            bay_id,
-            min_t,
-            max_t,
-        )?;
+        let mut scanner =
+            PlacementXScanner::new(problem, pre, schedule, block_id, bay_id, min_t, max_t)?;
 
         for &orient_idx in &pre.orientation_order_by_bbox[block_id] {
             let Some(range) = pre.collision.fit_range(bay_id, block_id, orient_idx) else {
@@ -162,12 +115,11 @@ pub(crate) fn insert_greedy<'a, R: Random>(
             let bounds = pre.orientation_bbox_bounds[block_id][orient_idx];
             let mut group_best: Option<InsertCandidate> = None;
 
-            scratch.ys.clear();
-            scratch.ys.extend(range.min_y..=range.max_y);
-            rng.shuffle(&mut scratch.ys);
+            let mut ys: Vec<i64> = (range.min_y..=range.max_y).collect();
+            rng.shuffle(&mut ys);
             let mut remaining_y_buffer = None;
 
-            for &y in &scratch.ys {
+            for y in ys {
                 if remaining_y_buffer == Some(0) {
                     break;
                 }
@@ -203,25 +155,20 @@ pub(crate) fn insert_greedy<'a, R: Random>(
             }
 
             if let Some(candidate) = group_best {
-                scratch.candidates.push(candidate);
+                candidates.push(candidate);
             }
         }
     }
 
-    scratch
-        .candidates
-        .retain(|candidate| candidate.score_delta <= best_score_delta + 1e-9);
-    if scratch.candidates.is_empty() {
+    candidates.retain(|candidate| candidate.score_delta <= best_score_delta + 1e-9);
+    if candidates.is_empty() {
         return None;
     }
-    scratch
-        .candidates
-        .sort_by(|a, b| insert_candidate_cmp(a, b, anchor));
-    scratch.candidates.truncate(candidate_top_k);
-    let selected = scratch
-        .candidates
+    candidates.sort_by(|a, b| insert_candidate_cmp(a, b, anchor));
+    candidates.truncate(candidate_top_k);
+    let selected = candidates
         .iter()
         .position(|_| rng.next_f64() < candidate_select_p)
         .unwrap_or(0);
-    Some(scratch.candidates.swap_remove(selected).scheduled)
+    Some(candidates.swap_remove(selected).scheduled)
 }
