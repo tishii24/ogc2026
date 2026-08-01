@@ -1,5 +1,8 @@
 todo:
+- 根本的な改善
+- スコアが離れすぎたら、bestをもらってくる
 - preopt
+- initial-build
 - refactor
 - 高速化
 - report
