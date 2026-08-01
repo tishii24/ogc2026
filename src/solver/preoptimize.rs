@@ -11,7 +11,7 @@ use crate::{
             build_bay_load_scale, build_pref_penalty, build_pref_spread, orientation_bounds,
             orientation_union,
         },
-        reconstruct::{RemoveCandidate, choose_removed_blocks, sort_default_reconstruct_order},
+        reconstruct::sort_default_reconstruct_order,
     },
     utils::random::{RandPcg64Mcg, Random},
     utils::time::Timer,
@@ -717,6 +717,27 @@ fn sample_large_reconstruct_count(
     params.min_removed_blocks + ((u * span as f64) as usize).min(span - 1)
 }
 
+fn choose_large_reconstruct_blocks(
+    problem: &Problem,
+    context: &PreoptimizeContext<'_>,
+    state: &PreoptimizeAnnealingState,
+    k: usize,
+    rng: &mut impl Random,
+) -> Vec<usize> {
+    if k == 0 {
+        return Vec::new();
+    }
+    let seed = select_block(problem, context, state, rng);
+    let mut remaining: Vec<_> = (0..problem.blocks.len())
+        .filter(|&block_id| block_id != seed)
+        .collect();
+    rng.shuffle(&mut remaining);
+    let mut selected = Vec::with_capacity(k);
+    selected.push(seed);
+    selected.extend(remaining.into_iter().take(k - 1));
+    selected
+}
+
 fn try_large_reconstruct(
     problem: &Problem,
     context: &PreoptimizeContext<'_>,
@@ -727,41 +748,7 @@ fn try_large_reconstruct(
     if k < 2 {
         return false;
     }
-    let heavy_bay = state
-        .loads
-        .iter()
-        .enumerate()
-        .max_by(|&(a, a_load), &(b, b_load)| {
-            (a_load * context.pre.bay_load_scale[a])
-                .total_cmp(&(b_load * context.pre.bay_load_scale[b]))
-        })
-        .map(|(bay_id, _)| bay_id);
-    let mut candidates = vec![None; problem.blocks.len()];
-    for (block_id, &selected) in state.schedule.iter().enumerate() {
-        let badness = problem.weights.w1 * block_z1(problem, block_id, selected)
-            + problem.weights.w3 * block_z3(context, block_id, selected)
-            + if Some(selected.bay_id) == heavy_bay {
-                problem.weights.w2
-            } else {
-                0.0
-            };
-        candidates[block_id] = Some(RemoveCandidate {
-            bay_id: selected.bay_id,
-            entry_time: selected.entry_time,
-            center: None,
-            badness,
-        });
-    }
-    let Some(mut removed_ids) = choose_removed_blocks(
-        problem,
-        &context.pre.pref_spread,
-        &candidates,
-        k,
-        rng,
-        context.reconstruct_order_params,
-    ) else {
-        return false;
-    };
+    let mut removed_ids = choose_large_reconstruct_blocks(problem, context, state, k, rng);
     for &block_id in &removed_ids {
         let selected = state.schedule[block_id];
         add_used_area(
