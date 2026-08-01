@@ -98,7 +98,7 @@ def main() -> int:
                 ).returncode
             else:
                 returncode = 0
-        except Exception as exc:
+        except Exception as exc: # noqa
             status["error"] = "".join(
                 traceback.format_exception_only(type(exc), exc)
             ).strip()
@@ -116,7 +116,7 @@ def main() -> int:
                 bucket.blob(f"{output_prefix}/task-status.json").upload_from_filename(
                     status_path
                 )
-            except Exception as exc:
+            except Exception as exc: # noqa
                 print(f"failed to upload task output: {exc}", file=sys.stderr)
                 returncode = 1
 

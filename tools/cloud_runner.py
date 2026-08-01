@@ -97,7 +97,7 @@ def load_config(root: Path) -> dict[str, Any]:
     with config_path.open(encoding="utf-8") as f:
         config = yaml.safe_load(f)
     if not isinstance(config, dict):
-        raise ValueError("cloud/config.yaml must be a mapping")
+        raise ValueError("cloud/config.yaml must be a mapping")# noqa
 
     local_path = root / "cloud" / "config.local.yaml"
     if local_path.is_file():
@@ -398,7 +398,7 @@ def collect_suite_cases(root: Path, suite_path: Path) -> list[Path]:
     with suite_path.open(encoding="utf-8") as f:
         suite = json.load(f)
     if not isinstance(suite, dict):
-        raise ValueError("suite must be a JSON object")
+        raise ValueError("suite must be a JSON object") # noqa
     patterns = suite.get("cases")
     if not isinstance(patterns, list) or not all(
         isinstance(pattern, str) for pattern in patterns

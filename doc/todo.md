@@ -6,6 +6,7 @@ todo:
 
 nits:
 - global-cはtardiness=0になったら終了する
+- moveを全てのblockを対象にする
 
 tuning:
 - caseに応じてtimelimitを設定する
