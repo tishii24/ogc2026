@@ -831,10 +831,13 @@ struct PreoptimizeAnnealingDelegate<'a> {
 impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
     type State = PreoptimizeAnnealingState;
     type Output = PreoptimizeState;
+    type Scratch = ();
 
     fn initial_state(&self) -> Self::State {
         self.initial.clone()
     }
+
+    fn new_scratch(&self) -> Self::Scratch {}
 
     fn name(&self) -> &'static str {
         "preopt"
@@ -849,6 +852,7 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
         current: &Self::State,
         _accept_threshold: f64,
         rng: &mut RandPcg64Mcg,
+        _scratch: &mut (),
     ) -> AnnealingAttempt<Self::State> {
         let mut candidate = current.clone();
         let probabilities = &self.context.params.neighbor_probabilities;

@@ -14,7 +14,10 @@ use super::{
     objective::{ScheduleScore, score_schedule},
     output::CandidateEmitter,
     precompute::Precompute,
-    reconstruct::{HeuristicPrecedence, build_heuristic_precedence, try_large_reconstruct},
+    reconstruct::{
+        HeuristicPrecedence, Scratch as ReconstructScratch, build_heuristic_precedence,
+        try_large_reconstruct,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -104,9 +107,14 @@ struct GlobalAnnealingDelegate<'a> {
     candidate_emitter: &'a CandidateEmitter,
 }
 
-impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
+impl<'a> AnnealingDelegate for GlobalAnnealingDelegate<'a> {
     type State = OptimizeState;
     type Output = OptimizeState;
+    type Scratch = ReconstructScratch<'a>;
+
+    fn new_scratch(&self) -> Self::Scratch {
+        ReconstructScratch::new()
+    }
 
     fn initial_state(&self) -> Self::State {
         self.initial.clone()
@@ -129,6 +137,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
         current: &Self::State,
         accept_threshold: f64,
         rng: &mut RandPcg64Mcg,
+        scratch: &mut Self::Scratch,
     ) -> AnnealingAttempt<Self::State> {
         let precedence = self.precedence;
         let params = self.params;
@@ -144,6 +153,7 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 accept_threshold,
                 &params.reconstruct,
                 self.insert_params,
+                scratch,
             ),
 
             NeighborKind::Shift => try_shift_neighbor(

@@ -17,7 +17,7 @@ use crate::{
 
 use super::{
     PreoptimizeState,
-    insert::insert_greedy,
+    insert::{ScheduleView, Scratch as InsertScratch, insert_greedy},
     objective::{ScheduleScore, schedule_tardiness, score_schedule, score13_block},
     optimize::OptimizeState,
     precompute::Precompute,
@@ -34,6 +34,94 @@ enum RemoveSeedMethod {
 struct RemoveSeed {
     block_id: usize,
     remove_count: usize,
+}
+
+struct RemoveScratch {
+    badness: Vec<i64>,
+    fluidity: Vec<f64>,
+    bad_pool: Vec<usize>,
+    fluid_pool: Vec<usize>,
+    seed_sizes: Vec<usize>,
+    seed_methods: Vec<RemoveSeedMethod>,
+    used: Vec<bool>,
+    seeds: Vec<RemoveSeed>,
+    entry_bases: Vec<usize>,
+    seed_pool: Vec<usize>,
+    selected: Vec<usize>,
+    neighbors: Vec<(f64, usize)>,
+    fill_pool: Vec<usize>,
+}
+
+impl RemoveScratch {
+    fn new() -> Self {
+        Self {
+            badness: Vec::new(),
+            fluidity: Vec::new(),
+            bad_pool: Vec::new(),
+            fluid_pool: Vec::new(),
+            seed_sizes: Vec::new(),
+            seed_methods: Vec::new(),
+            used: Vec::new(),
+            seeds: Vec::new(),
+            entry_bases: Vec::new(),
+            seed_pool: Vec::new(),
+            selected: Vec::new(),
+            neighbors: Vec::new(),
+            fill_pool: Vec::new(),
+        }
+    }
+}
+
+struct OrderScratch {
+    random_scores: Vec<f64>,
+    priority_order: Vec<usize>,
+    priority_rank: Vec<usize>,
+    included: Vec<bool>,
+    indegree: Vec<usize>,
+    ready: BinaryHeap<Reverse<(usize, usize)>>,
+    order: Vec<usize>,
+}
+
+impl OrderScratch {
+    fn new() -> Self {
+        Self {
+            random_scores: Vec::new(),
+            priority_order: Vec::new(),
+            priority_rank: Vec::new(),
+            included: Vec::new(),
+            indegree: Vec::new(),
+            ready: BinaryHeap::new(),
+            order: Vec::new(),
+        }
+    }
+}
+
+pub(super) struct Scratch<'a> {
+    insert: InsertScratch<'a>,
+    remove: RemoveScratch,
+    order: OrderScratch,
+    bay_members: Vec<Vec<ScheduledBlock>>,
+    removed: Vec<bool>,
+    loads: Vec<f64>,
+    current_penalties: Vec<f64>,
+    original_by_id: Vec<Option<ScheduledBlock>>,
+    current_by_id: Vec<Option<ScheduledBlock>>,
+}
+
+impl<'a> Scratch<'a> {
+    pub(super) fn new() -> Self {
+        Self {
+            insert: InsertScratch::new(),
+            remove: RemoveScratch::new(),
+            order: OrderScratch::new(),
+            bay_members: Vec::new(),
+            removed: Vec::new(),
+            loads: Vec::new(),
+            current_penalties: Vec::new(),
+            original_by_id: Vec::new(),
+            current_by_id: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -142,13 +230,18 @@ pub(super) fn build_optimize_state(
                 RandPcg64Mcg::new(seed.wrapping_add(1 << 16).wrapping_add(worker_id as u64));
             let mut turn = worker_id;
             let mut trials = 0usize;
+            let mut order_scratch = OrderScratch::new();
+            let mut insert_scratch = InsertScratch::new();
+            let mut schedule = Vec::new();
+            let mut scheduled_by_id = Vec::new();
+            let mut loads = Vec::new();
 
             while timer.elapsed_seconds() < build_deadline {
                 let bay_id = active_bays[turn % active_bays.len()];
                 turn += 1;
 
                 let weights = sample_reconstruct_order_weights(&mut rng, neighbor_params);
-                let order = build_topological_order(
+                fill_topological_order(
                     problem,
                     pre,
                     &blocks_by_bay[bay_id],
@@ -157,23 +250,28 @@ pub(super) fn build_optimize_state(
                     None,
                     0.0,
                     &mut rng,
+                    &mut order_scratch,
                 );
-                let order_hash = hash_order(&order);
+                let order_hash = hash_order(&order_scratch.order);
                 if !seen_order_hashes[bay_id].lock().unwrap().insert(order_hash) {
                     continue;
                 }
 
-                let Some(schedule) = build_bay_schedule(
+                if !build_bay_schedule(
                     problem,
                     pre,
                     bay_id,
-                    &order,
+                    &order_scratch.order,
                     &constraints,
                     insert_params,
                     &mut rng,
-                ) else {
+                    &mut schedule,
+                    &mut scheduled_by_id,
+                    &mut loads,
+                    &mut insert_scratch,
+                ) {
                     continue;
-                };
+                }
                 trials += 1;
 
                 let tardiness = schedule_tardiness(problem, &schedule);
@@ -182,7 +280,12 @@ pub(super) fn build_optimize_state(
                     .as_ref()
                     .is_none_or(|(best_tardiness, _)| tardiness < *best_tardiness)
                 {
-                    *best = Some((tardiness, schedule));
+                    if let Some((best_tardiness, best_schedule)) = best.as_mut() {
+                        *best_tardiness = tardiness;
+                        best_schedule.clone_from(&schedule);
+                    } else {
+                        *best = Some((tardiness, schedule.clone()));
+                    }
                     log!(
                         "[{:.4}] [build] best: worker={}, bay={}, tardiness={}",
                         timer.elapsed_seconds(),
@@ -246,56 +349,71 @@ fn hash_order(order: &[usize]) -> u64 {
     hash
 }
 
-pub(super) struct ReconstructBase {
-    pub(super) schedule: Vec<ScheduledBlock>,
-    pub(super) loads: Vec<f64>,
-    pub(super) weighted_z1_z3: f64,
-}
-
-pub(super) fn build_reconstruct_base(
+fn build_reconstruct_base(
     problem: &Problem,
     pre: &Precompute,
     schedule: &[ScheduledBlock],
-    removed_ids: &[usize],
-) -> ReconstructBase {
-    let mut removed = vec![false; problem.blocks.len()];
-    for &block_id in removed_ids {
-        removed[block_id] = true;
+    scratch: &mut Scratch<'_>,
+) -> (Vec<ScheduledBlock>, f64) {
+    scratch.removed.resize(problem.blocks.len(), false);
+    scratch.removed.fill(false);
+    for &block_id in &scratch.remove.selected {
+        scratch.removed[block_id] = true;
+    }
+
+    scratch.loads.resize(problem.bays.len(), 0.0);
+    scratch.loads.fill(0.0);
+    scratch
+        .bay_members
+        .resize_with(problem.bays.len(), Vec::new);
+    for members in &mut scratch.bay_members {
+        members.clear();
     }
 
     let mut remaining = Vec::with_capacity(schedule.len());
-    let mut loads = vec![0.0; problem.bays.len()];
     let mut weighted_z1_z3 = 0.0;
     for &scheduled in schedule {
-        if removed[scheduled.block_id] {
+        if scratch.removed[scheduled.block_id] {
             continue;
         }
-        loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
+        scratch.loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
+        scratch.bay_members[scheduled.bay_id].push(scheduled);
         weighted_z1_z3 += score13_block(problem, pre, scheduled);
         remaining.push(scheduled);
     }
 
-    ReconstructBase {
-        schedule: remaining,
-        loads,
-        weighted_z1_z3,
-    }
+    (remaining, weighted_z1_z3)
 }
 
-pub(super) fn try_large_reconstruct<R: Random>(
+pub(super) fn try_large_reconstruct<'a, R: Random>(
     problem: &Problem,
-    pre: &Precompute,
+    pre: &'a Precompute,
     constraints: Option<&HeuristicPrecedence>,
     schedule: &[ScheduledBlock],
     rng: &mut R,
     accept_threshold: f64,
     params: &ReconstructNeighborParams,
     insert_params: &InsertParams,
+    scratch: &mut Scratch<'a>,
 ) -> Option<Vec<ScheduledBlock>> {
     let k = sample_removed_count(rng, params).min(problem.blocks.len());
 
-    let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng, params)?;
-    if removed_ids.is_empty() {
+    scratch.original_by_id.resize(problem.blocks.len(), None);
+    scratch.original_by_id.fill(None);
+    for &scheduled in schedule {
+        scratch.original_by_id[scheduled.block_id] = Some(scheduled);
+    }
+    if !choose_removed_blocks(
+        problem,
+        pre,
+        schedule,
+        &scratch.original_by_id,
+        k,
+        rng,
+        params,
+        &mut scratch.loads,
+        &mut scratch.remove,
+    ) {
         return None;
     }
     let weights = sample_reconstruct_order_weights(rng, params);
@@ -303,58 +421,62 @@ pub(super) fn try_large_reconstruct<R: Random>(
         params.current_penalty_weight_range.0,
         params.current_penalty_weight_range.1,
     );
-    let mut current_penalties = vec![0.0; problem.blocks.len()];
+    scratch.current_penalties.resize(problem.blocks.len(), 0.0);
+    scratch.current_penalties.fill(0.0);
     for &scheduled in schedule {
-        current_penalties[scheduled.block_id] = score13_block(problem, pre, scheduled);
+        scratch.current_penalties[scheduled.block_id] = score13_block(problem, pre, scheduled);
     }
-    let order = if let Some(constraints) = constraints {
-        build_topological_order(
+    if let Some(constraints) = constraints {
+        fill_topological_order(
             problem,
             pre,
-            &removed_ids,
+            &scratch.remove.selected,
             constraints,
             weights,
-            Some(&current_penalties),
+            Some(&scratch.current_penalties),
             current_penalty_weight,
             rng,
-        )
+            &mut scratch.order,
+        );
     } else {
-        sort_block_order(
+        scratch.order.order.clear();
+        scratch
+            .order
+            .order
+            .extend_from_slice(&scratch.remove.selected);
+        sort_block_order_with_scratch(
             problem,
             &pre.max_footprint_area,
             &pre.pref_spread,
-            &mut removed_ids,
+            &mut scratch.order.order,
             weights,
-            Some(&current_penalties),
+            Some(&scratch.current_penalties),
             current_penalty_weight,
             rng,
+            &mut scratch.order.random_scores,
         );
-        removed_ids.clone()
-    };
+    }
 
-    let original_by_id = scheduled_by_id(problem, schedule);
-    let ReconstructBase {
-        schedule: mut cur,
-        mut loads,
-        weighted_z1_z3: mut fixed_score13,
-    } = build_reconstruct_base(problem, pre, schedule, &removed_ids);
-    let mut current_by_id = constraints.map(|_| scheduled_by_id(problem, &cur));
+    let (mut cur, mut fixed_score13) = build_reconstruct_base(problem, pre, schedule, scratch);
+    if constraints.is_some() {
+        scratch.current_by_id.resize(problem.blocks.len(), None);
+        scratch.current_by_id.fill(None);
+        for &scheduled in &cur {
+            scratch.current_by_id[scheduled.block_id] = Some(scheduled);
+        }
+    }
 
-    for block_id in order {
+    for order_index in 0..scratch.order.order.len() {
+        let block_id = scratch.order.order[order_index];
         if fixed_score13 > accept_threshold + 1e-9 {
             return None;
         }
-        let old = original_by_id[block_id]?;
+        let old = scratch.original_by_id[block_id]?;
         let EntryTimeBounds {
             min: min_entry_time,
             max: max_entry_time,
         } = if let Some(constraints) = constraints {
-            precedence_entry_time_bounds(
-                problem,
-                constraints,
-                current_by_id.as_ref().unwrap(),
-                block_id,
-            )?
+            precedence_entry_time_bounds(problem, constraints, &scratch.current_by_id, block_id)?
         } else {
             EntryTimeBounds {
                 min: i64::MIN,
@@ -367,18 +489,20 @@ pub(super) fn try_large_reconstruct<R: Random>(
             old,
             min_entry_time,
             max_entry_time,
-            &cur,
-            &loads,
+            ScheduleView::ByBay(&scratch.bay_members),
+            &scratch.loads,
             insert_params,
             &pre.bay_order_by_pref[old.block_id],
             params.insert_candidate_top_k,
             params.insert_candidate_select_p,
             rng,
+            &mut scratch.insert,
         )?;
-        loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
+        scratch.loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
+        scratch.bay_members[scheduled.bay_id].push(scheduled);
         fixed_score13 += score13_block(problem, pre, scheduled);
-        if let Some(current_by_id) = &mut current_by_id {
-            current_by_id[block_id] = Some(scheduled);
+        if constraints.is_some() {
+            scratch.current_by_id[block_id] = Some(scheduled);
         }
         cur.push(scheduled);
     }
@@ -442,8 +566,15 @@ fn push_removed_block(selected: &mut Vec<usize>, used: &mut [bool], block_id: us
     }
 }
 
-fn remove_badness(problem: &Problem, pre: &Precompute, schedule: &[ScheduledBlock]) -> Vec<i64> {
-    let mut loads = vec![0.0; problem.bays.len()];
+fn fill_remove_badness(
+    problem: &Problem,
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    loads: &mut Vec<f64>,
+    badness: &mut Vec<i64>,
+) {
+    loads.resize(problem.bays.len(), 0.0);
+    loads.fill(0.0);
     for s in schedule {
         loads[s.bay_id] += problem.blocks[s.block_id].workload as f64;
     }
@@ -455,7 +586,8 @@ fn remove_badness(problem: &Problem, pre: &Precompute, schedule: &[ScheduledBloc
         })
         .map(|(bay_id, _)| bay_id);
 
-    let mut badness = vec![0i64; problem.blocks.len()];
+    badness.resize(problem.blocks.len(), 0);
+    badness.fill(0);
     for s in schedule {
         let block = &problem.blocks[s.block_id];
         let tardiness = (s.exit_time - block.due_date).max(0);
@@ -469,7 +601,6 @@ fn remove_badness(problem: &Problem, pre: &Precompute, schedule: &[ScheduledBloc
             };
         badness[s.block_id] = score as i64;
     }
-    badness
 }
 
 fn choose_local_proximity_seeds<R: Random>(
@@ -478,10 +609,10 @@ fn choose_local_proximity_seeds<R: Random>(
     schedule: &[ScheduledBlock],
     by_block: &[Option<ScheduledBlock>],
     k: usize,
-    bad_pool: &[usize],
     rng: &mut R,
     params: &ReconstructNeighborParams,
-) -> Option<Vec<RemoveSeed>> {
+    scratch: &mut RemoveScratch,
+) -> bool {
     let pool_len = (k * params.remove_pool_factor).min(schedule.len()).max(k);
     let slack_weight = rng.gen_range_f64(
         params.remove_fluidity_slack_weight_range.0,
@@ -504,20 +635,26 @@ fn choose_local_proximity_seeds<R: Random>(
         .map(|scheduled| pre.pref_spread[scheduled.block_id] as f64)
         .fold(0.0, f64::max)
         .max(1.0);
-    let mut fluidity = vec![0.0; problem.blocks.len()];
+    scratch.fluidity.resize(problem.blocks.len(), 0.0);
+    scratch.fluidity.fill(0.0);
     for scheduled in schedule {
         let block = &problem.blocks[scheduled.block_id];
         let slack = (block.due_date - block.release_time - block.processing_time).max(0) as f64;
         let pref_spread = pre.pref_spread[scheduled.block_id] as f64;
-        fluidity[scheduled.block_id] = slack_weight * slack / max_slack
+        scratch.fluidity[scheduled.block_id] = slack_weight * slack / max_slack
             + pref_spread_weight * (1.0 - pref_spread / max_pref_spread);
     }
-    let mut fluid_pool: Vec<usize> = schedule.iter().map(|s| s.block_id).collect();
-    rng.shuffle(&mut fluid_pool);
-    fluid_pool.sort_by(|&a, &b| fluidity[b].total_cmp(&fluidity[a]));
-    fluid_pool.truncate(pool_len);
+    scratch.fluid_pool.clear();
+    scratch
+        .fluid_pool
+        .extend(schedule.iter().map(|s| s.block_id));
+    rng.shuffle(&mut scratch.fluid_pool);
+    scratch
+        .fluid_pool
+        .sort_by(|&a, &b| scratch.fluidity[b].total_cmp(&scratch.fluidity[a]));
+    scratch.fluid_pool.truncate(pool_len);
 
-    let mut seed_sizes = Vec::new();
+    scratch.seed_sizes.clear();
     let mut seed_size_sum = 0;
     while seed_size_sum < k {
         let seed_size = rng
@@ -526,82 +663,96 @@ fn choose_local_proximity_seeds<R: Random>(
                 params.remove_seed_per_block.1 + 1,
             )
             .min(k - seed_size_sum);
-        seed_sizes.push(seed_size);
+        scratch.seed_sizes.push(seed_size);
         seed_size_sum += seed_size;
     }
-    let seed_count = seed_sizes.len();
+    let seed_count = scratch.seed_sizes.len();
     let entry_base_interval =
         sample_weighted_index(rng, &params.remove_entry_base_interval_weights) + 1;
     let base_count = (1 + (seed_count - 1) / entry_base_interval).min(seed_count);
     let method_weights = params.remove_seed_method_weights;
     let total_method_weight =
         method_weights.badness + method_weights.fluidity + method_weights.random;
-    let seed_methods: Vec<_> = (0..seed_count)
-        .map(|_| {
-            let value = rng.next_f64() * total_method_weight;
-            if value < method_weights.badness {
-                RemoveSeedMethod::Badness
-            } else if value < method_weights.badness + method_weights.fluidity {
-                RemoveSeedMethod::Fluidity
-            } else {
-                RemoveSeedMethod::Random
-            }
-        })
-        .collect();
+    scratch.seed_methods.clear();
+    scratch.seed_methods.extend((0..seed_count).map(|_| {
+        let value = rng.next_f64() * total_method_weight;
+        if value < method_weights.badness {
+            RemoveSeedMethod::Badness
+        } else if value < method_weights.badness + method_weights.fluidity {
+            RemoveSeedMethod::Fluidity
+        } else {
+            RemoveSeedMethod::Random
+        }
+    }));
 
-    let mut used = vec![false; problem.blocks.len()];
-    let mut seeds = Vec::with_capacity(seed_count);
-    let mut entry_bases = Vec::with_capacity(base_count);
+    scratch.used.resize(problem.blocks.len(), false);
+    scratch.used.fill(false);
+    scratch.seeds.clear();
+    scratch.entry_bases.clear();
 
     for seed_index in 0..base_count {
-        let mut seed_pool: Vec<usize> = match seed_methods[seed_index] {
-            RemoveSeedMethod::Badness => bad_pool.to_vec(),
-            RemoveSeedMethod::Fluidity => fluid_pool.clone(),
-            RemoveSeedMethod::Random => schedule.iter().map(|s| s.block_id).collect(),
+        scratch.seed_pool.clear();
+        match scratch.seed_methods[seed_index] {
+            RemoveSeedMethod::Badness => scratch.seed_pool.extend_from_slice(&scratch.bad_pool),
+            RemoveSeedMethod::Fluidity => scratch.seed_pool.extend_from_slice(&scratch.fluid_pool),
+            RemoveSeedMethod::Random => scratch
+                .seed_pool
+                .extend(schedule.iter().map(|s| s.block_id)),
+        }
+        scratch
+            .seed_pool
+            .retain(|&block_id| !scratch.used[block_id]);
+        rng.shuffle(&mut scratch.seed_pool);
+        let Some(&seed_id) = scratch.seed_pool.first() else {
+            return false;
         };
-        seed_pool.retain(|&block_id| !used[block_id]);
-        rng.shuffle(&mut seed_pool);
-        let seed_id = *seed_pool.get(0)?;
-        used[seed_id] = true;
-        seeds.push(RemoveSeed {
+        scratch.used[seed_id] = true;
+        scratch.seeds.push(RemoveSeed {
             block_id: seed_id,
-            remove_count: seed_sizes[seed_index],
+            remove_count: scratch.seed_sizes[seed_index],
         });
-        entry_bases.push(seed_id);
+        scratch.entry_bases.push(seed_id);
     }
 
     for seed_index in base_count..seed_count {
-        let base_id = entry_bases[rng.gen_range(0, entry_bases.len())];
+        let base_id = scratch.entry_bases[rng.gen_range(0, scratch.entry_bases.len())];
         let base = by_block[base_id].unwrap();
-        let mut seed_pool: Vec<usize> = match seed_methods[seed_index] {
-            RemoveSeedMethod::Badness => bad_pool.to_vec(),
-            RemoveSeedMethod::Fluidity => fluid_pool.clone(),
-            RemoveSeedMethod::Random => schedule.iter().map(|s| s.block_id).collect(),
-        };
-        seed_pool.retain(|&block_id| !used[block_id]);
-        rng.shuffle(&mut seed_pool);
-        seed_pool.sort_by_key(|&block_id| {
+        scratch.seed_pool.clear();
+        match scratch.seed_methods[seed_index] {
+            RemoveSeedMethod::Badness => scratch.seed_pool.extend_from_slice(&scratch.bad_pool),
+            RemoveSeedMethod::Fluidity => scratch.seed_pool.extend_from_slice(&scratch.fluid_pool),
+            RemoveSeedMethod::Random => scratch
+                .seed_pool
+                .extend(schedule.iter().map(|s| s.block_id)),
+        }
+        scratch
+            .seed_pool
+            .retain(|&block_id| !scratch.used[block_id]);
+        rng.shuffle(&mut scratch.seed_pool);
+        scratch.seed_pool.sort_by_key(|&block_id| {
             let candidate = by_block[block_id].unwrap();
             (
                 candidate.entry_time.abs_diff(base.entry_time),
                 candidate.bay_id == base.bay_id,
             )
         });
-        seed_pool.truncate(
+        scratch.seed_pool.truncate(
             params
                 .remove_entry_seed_candidate_count
-                .min(seed_pool.len()),
+                .min(scratch.seed_pool.len()),
         );
-        rng.shuffle(&mut seed_pool);
-        let seed_id = *seed_pool.get(0)?;
-        used[seed_id] = true;
-        seeds.push(RemoveSeed {
+        rng.shuffle(&mut scratch.seed_pool);
+        let Some(&seed_id) = scratch.seed_pool.first() else {
+            return false;
+        };
+        scratch.used[seed_id] = true;
+        scratch.seeds.push(RemoveSeed {
             block_id: seed_id,
-            remove_count: seed_sizes[seed_index],
+            remove_count: scratch.seed_sizes[seed_index],
         });
     }
 
-    Some(seeds)
+    true
 }
 
 fn collect_removed_blocks<R: Random>(
@@ -616,57 +767,67 @@ fn collect_removed_blocks<R: Random>(
     remove_y_distance_weight: f64,
     remove_t_distance_weight: f64,
     rng: &mut R,
-) -> Vec<usize> {
-    let mut selected = Vec::with_capacity(k);
-    let mut used = vec![false; problem.blocks.len()];
+    selected: &mut Vec<usize>,
+    used: &mut Vec<bool>,
+    neighbors: &mut Vec<(f64, usize)>,
+    fill_pool: &mut Vec<usize>,
+) {
+    selected.clear();
+    used.resize(problem.blocks.len(), false);
+    used.fill(false);
     for seed in seeds {
-        push_removed_block(&mut selected, &mut used, seed.block_id, k);
+        push_removed_block(selected, used, seed.block_id, k);
     }
 
     for seed in seeds {
         let scheduled = by_block[seed.block_id].unwrap();
         let (sx, sy) = scheduled_center(pre, scheduled);
         let st = scheduled.entry_time as f64;
-        let mut neighbors: Vec<(f64, usize)> = schedule
-            .iter()
-            .filter(|s| s.bay_id == scheduled.bay_id && !used[s.block_id])
-            .map(|&candidate| {
-                let (x, y) = scheduled_center(pre, candidate);
-                let dx = x - sx;
-                let dy = y - sy;
-                let dt = candidate.entry_time as f64 - st;
-                (
-                    remove_x_distance_weight * dx * dx
-                        + remove_y_distance_weight * dy * dy
-                        + remove_t_distance_weight * dt * dt,
-                    candidate.block_id,
-                )
-            })
-            .collect();
+        neighbors.clear();
+        neighbors.extend(
+            schedule
+                .iter()
+                .filter(|s| s.bay_id == scheduled.bay_id && !used[s.block_id])
+                .map(|&candidate| {
+                    let (x, y) = scheduled_center(pre, candidate);
+                    let dx = x - sx;
+                    let dy = y - sy;
+                    let dt = candidate.entry_time as f64 - st;
+                    (
+                        remove_x_distance_weight * dx * dx
+                            + remove_y_distance_weight * dy * dy
+                            + remove_t_distance_weight * dt * dt,
+                        candidate.block_id,
+                    )
+                }),
+        );
         neighbors.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        for (_, block_id) in neighbors.into_iter().take(seed.remove_count - 1) {
-            push_removed_block(&mut selected, &mut used, block_id, k);
+        for &(_, block_id) in neighbors.iter().take(seed.remove_count - 1) {
+            push_removed_block(selected, used, block_id, k);
         }
     }
 
-    let mut fill_pool = bad_pool.to_vec();
-    rng.shuffle(&mut fill_pool);
-    for block_id in fill_pool {
-        push_removed_block(&mut selected, &mut used, block_id, k);
+    fill_pool.clear();
+    fill_pool.extend_from_slice(bad_pool);
+    rng.shuffle(fill_pool);
+    for &block_id in fill_pool.iter() {
+        push_removed_block(selected, used, block_id, k);
     }
-    selected
 }
 
-pub(super) fn choose_removed_blocks<R: Random>(
+fn choose_removed_blocks<R: Random>(
     problem: &Problem,
     pre: &Precompute,
     schedule: &[ScheduledBlock],
+    by_block: &[Option<ScheduledBlock>],
     k: usize,
     rng: &mut R,
     params: &ReconstructNeighborParams,
-) -> Option<Vec<usize>> {
+    loads: &mut Vec<f64>,
+    scratch: &mut RemoveScratch,
+) -> bool {
     if schedule.is_empty() || k == 0 {
-        return None;
+        return false;
     }
 
     let k = k.min(schedule.len());
@@ -682,34 +843,47 @@ pub(super) fn choose_removed_blocks<R: Random>(
         params.remove_t_distance_weight_range.0,
         params.remove_t_distance_weight_range.1,
     );
-    let badness = remove_badness(problem, pre, schedule);
-    let mut by_block = vec![None; problem.blocks.len()];
-    for &scheduled in schedule {
-        by_block[scheduled.block_id] = Some(scheduled);
-    }
+    fill_remove_badness(problem, pre, schedule, loads, &mut scratch.badness);
 
-    let mut bad_pool: Vec<usize> = schedule.iter().map(|s| s.block_id).collect();
-    rng.shuffle(&mut bad_pool);
-    bad_pool.sort_by_key(|&block_id| Reverse(badness[block_id]));
+    scratch.bad_pool.clear();
+    scratch.bad_pool.extend(schedule.iter().map(|s| s.block_id));
+    rng.shuffle(&mut scratch.bad_pool);
+    scratch
+        .bad_pool
+        .sort_by_key(|&block_id| Reverse(scratch.badness[block_id]));
     let pool_len = (k * params.remove_pool_factor).min(schedule.len()).max(k);
-    bad_pool.truncate(pool_len);
+    scratch.bad_pool.truncate(pool_len);
 
-    let seeds =
-        choose_local_proximity_seeds(problem, pre, schedule, &by_block, k, &bad_pool, rng, params)?;
-    let blocks = collect_removed_blocks(
+    if !choose_local_proximity_seeds(problem, pre, schedule, by_block, k, rng, params, scratch) {
+        return false;
+    }
+    let RemoveScratch {
+        seeds,
+        bad_pool,
+        selected,
+        used,
+        neighbors,
+        fill_pool,
+        ..
+    } = scratch;
+    collect_removed_blocks(
         problem,
         pre,
         schedule,
-        &by_block,
+        by_block,
         k,
-        &seeds,
-        &bad_pool,
+        seeds,
+        bad_pool,
         remove_x_distance_weight,
         remove_y_distance_weight,
         remove_t_distance_weight,
         rng,
+        selected,
+        used,
+        neighbors,
+        fill_pool,
     );
-    Some(blocks)
+    true
 }
 
 fn block_volume(problem: &Problem, block_areas: &[f64], block_id: usize) -> f64 {
@@ -809,7 +983,7 @@ fn block_order_score(
         + current_penalty_weight * current_penalty
 }
 
-pub(super) fn sort_block_order<R: Random>(
+fn sort_block_order_with_scratch<R: Random>(
     problem: &Problem,
     block_areas: &[f64],
     pref_spread: &[i64],
@@ -818,6 +992,7 @@ pub(super) fn sort_block_order<R: Random>(
     current_penalties: Option<&[f64]>,
     current_penalty_weight: f64,
     rng: &mut R,
+    random_scores: &mut Vec<f64>,
 ) {
     let ctx = build_block_order_context(problem, block_areas, pref_spread, order);
     let max_current_penalty = current_penalties
@@ -829,7 +1004,8 @@ pub(super) fn sort_block_order<R: Random>(
                 .max(1.0)
         })
         .unwrap_or(1.0);
-    let mut random_scores = vec![0.0; problem.blocks.len()];
+    random_scores.resize(problem.blocks.len(), 0.0);
+    random_scores.fill(0.0);
     for &block_id in order.iter() {
         random_scores[block_id] = rng.gen_range_f64(0., weights.random);
     }
@@ -870,6 +1046,30 @@ pub(super) fn sort_block_order<R: Random>(
             .then(pref_spread[b].cmp(&pref_spread[a]))
             .then(a.cmp(&b))
     });
+}
+
+pub(super) fn sort_block_order<R: Random>(
+    problem: &Problem,
+    block_areas: &[f64],
+    pref_spread: &[i64],
+    order: &mut [usize],
+    weights: BlockOrderWeights,
+    current_penalties: Option<&[f64]>,
+    current_penalty_weight: f64,
+    rng: &mut R,
+) {
+    let mut random_scores = Vec::new();
+    sort_block_order_with_scratch(
+        problem,
+        block_areas,
+        pref_spread,
+        order,
+        weights,
+        current_penalties,
+        current_penalty_weight,
+        rng,
+        &mut random_scores,
+    );
 }
 
 pub(super) fn sort_default_reconstruct_order<R: Random>(
@@ -942,7 +1142,7 @@ pub(super) fn build_heuristic_precedence(
     }
 }
 
-pub(super) fn build_topological_order<R: Random>(
+fn fill_topological_order<R: Random>(
     problem: &Problem,
     pre: &Precompute,
     bay_block_ids: &[usize],
@@ -951,68 +1151,85 @@ pub(super) fn build_topological_order<R: Random>(
     current_penalties: Option<&[f64]>,
     current_penalty_weight: f64,
     rng: &mut R,
-) -> Vec<usize> {
-    let mut priority_order = bay_block_ids.to_vec();
-    sort_block_order(
+    scratch: &mut OrderScratch,
+) {
+    scratch.priority_order.clear();
+    scratch.priority_order.extend_from_slice(bay_block_ids);
+    sort_block_order_with_scratch(
         problem,
         &pre.max_footprint_area,
         &pre.pref_spread,
-        &mut priority_order,
+        &mut scratch.priority_order,
         weights,
         current_penalties,
         current_penalty_weight,
         rng,
+        &mut scratch.random_scores,
     );
-    let mut priority_rank = vec![usize::MAX; problem.blocks.len()];
-    for (rank, &block_id) in priority_order.iter().enumerate() {
-        priority_rank[block_id] = rank;
+    scratch
+        .priority_rank
+        .resize(problem.blocks.len(), usize::MAX);
+    scratch.priority_rank.fill(usize::MAX);
+    for (rank, &block_id) in scratch.priority_order.iter().enumerate() {
+        scratch.priority_rank[block_id] = rank;
     }
 
-    let mut included = vec![false; problem.blocks.len()];
+    scratch.included.resize(problem.blocks.len(), false);
+    scratch.included.fill(false);
     for &block_id in bay_block_ids {
-        included[block_id] = true;
+        scratch.included[block_id] = true;
     }
-    let mut indegree = vec![0usize; problem.blocks.len()];
-    let mut ready = BinaryHeap::new();
+    scratch.indegree.resize(problem.blocks.len(), 0);
+    scratch.indegree.fill(0);
+    scratch.ready.clear();
     for &block_id in bay_block_ids {
-        indegree[block_id] = constraints.predecessors[block_id]
+        scratch.indegree[block_id] = constraints.predecessors[block_id]
             .iter()
-            .filter(|&&before| included[before])
+            .filter(|&&before| scratch.included[before])
             .count();
-        if indegree[block_id] == 0 {
-            ready.push(Reverse((priority_rank[block_id], block_id)));
+        if scratch.indegree[block_id] == 0 {
+            scratch
+                .ready
+                .push(Reverse((scratch.priority_rank[block_id], block_id)));
         }
     }
 
-    let mut order = Vec::with_capacity(bay_block_ids.len());
-    while let Some(Reverse((_, block_id))) = ready.pop() {
-        order.push(block_id);
+    scratch.order.clear();
+    while let Some(Reverse((_, block_id))) = scratch.ready.pop() {
+        scratch.order.push(block_id);
         for &after in &constraints.successors[block_id] {
-            if !included[after] {
+            if !scratch.included[after] {
                 continue;
             }
-            indegree[after] -= 1;
-            if indegree[after] == 0 {
-                ready.push(Reverse((priority_rank[after], after)));
+            scratch.indegree[after] -= 1;
+            if scratch.indegree[after] == 0 {
+                scratch
+                    .ready
+                    .push(Reverse((scratch.priority_rank[after], after)));
             }
         }
     }
-    debug_assert_eq!(order.len(), bay_block_ids.len());
-    order
+    debug_assert_eq!(scratch.order.len(), bay_block_ids.len());
 }
 
-fn build_bay_schedule<R: Random>(
+fn build_bay_schedule<'a, R: Random>(
     problem: &Problem,
-    pre: &Precompute,
+    pre: &'a Precompute,
     bay_id: usize,
     order: &[usize],
     constraints: &HeuristicPrecedence,
     params: &InsertParams,
     rng: &mut R,
-) -> Option<Vec<ScheduledBlock>> {
-    let mut schedule = Vec::with_capacity(order.len());
-    let mut scheduled_by_id: Vec<Option<ScheduledBlock>> = vec![None; problem.blocks.len()];
-    let mut loads = vec![0.0; problem.bays.len()];
+    schedule: &mut Vec<ScheduledBlock>,
+    scheduled_by_id: &mut Vec<Option<ScheduledBlock>>,
+    loads: &mut Vec<f64>,
+    scratch: &mut InsertScratch<'a>,
+) -> bool {
+    schedule.clear();
+    scheduled_by_id.resize(problem.blocks.len(), None);
+    scheduled_by_id.fill(None);
+    loads.resize(problem.bays.len(), 0.0);
+    loads.fill(0.0);
     let bay_order = [bay_id];
 
     for &block_id in order {
@@ -1030,23 +1247,26 @@ fn build_bay_schedule<R: Random>(
             entry_time: block.release_time,
             exit_time: block.release_time + block.processing_time,
         };
-        let scheduled = insert_greedy(
+        let Some(scheduled) = insert_greedy(
             problem,
             pre,
             original,
             min_entry_time,
             i64::MAX,
-            &schedule,
+            ScheduleView::Flat(schedule),
             &loads,
             params,
             &bay_order,
             1,
             1.0,
             rng,
-        )?;
+            scratch,
+        ) else {
+            return false;
+        };
         loads[bay_id] += block.workload as f64;
         scheduled_by_id[block_id] = Some(scheduled);
         schedule.push(scheduled);
     }
-    Some(schedule)
+    true
 }

@@ -326,8 +326,11 @@ pub(crate) struct WorkerSummary {
 pub(crate) trait AnnealingDelegate: Sync {
     type State: AnnealingState;
     type Output;
+    type Scratch;
 
     fn initial_state(&self) -> Self::State;
+
+    fn new_scratch(&self) -> Self::Scratch;
 
     fn name(&self) -> &'static str;
 
@@ -338,6 +341,7 @@ pub(crate) trait AnnealingDelegate: Sync {
         current: &Self::State,
         accept_threshold: f64,
         rng: &mut RandPcg64Mcg,
+        scratch: &mut Self::Scratch,
     ) -> AnnealingAttempt<Self::State>;
 
     fn on_shared_best(&self, _state: &Self::State, _timer: Timer) {}
@@ -500,6 +504,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
         let mut reheats = 0usize;
         let mut neighbor_stats =
             vec![NeighborStats::default(); self.delegate.neighbor_kinds().len()];
+        let mut scratch = self.delegate.new_scratch();
         let mut next_status_time = (timer.elapsed_seconds() / STATUS_LOG_INTERVAL_SECONDS).floor()
             * STATUS_LOG_INTERVAL_SECONDS
             + STATUS_LOG_INTERVAL_SECONDS;
@@ -559,9 +564,12 @@ impl<D: AnnealingDelegate> Annealer<D> {
             let accept_threshold =
                 acceptance_threshold(current_score, current_temperature, &mut context.rng);
             let neighbor_start = Instant::now();
-            let attempt = self
-                .delegate
-                .propose(&local.current, accept_threshold, &mut context.rng);
+            let attempt = self.delegate.propose(
+                &local.current,
+                accept_threshold,
+                &mut context.rng,
+                &mut scratch,
+            );
             debug_assert!(attempt.neighbor_kind < neighbor_stats.len());
             let stats = &mut neighbor_stats[attempt.neighbor_kind];
             stats.selected += 1;
