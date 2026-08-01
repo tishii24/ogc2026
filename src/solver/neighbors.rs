@@ -9,7 +9,7 @@ use crate::{
 
 use super::{
     insert::insert_greedy,
-    objective::score13_block,
+    objective::{ScoreWeights, score13_block_weighted},
     placement_scan::PlacementXScanner,
     precompute::Precompute,
     reconstruct::{
@@ -324,6 +324,7 @@ pub(super) fn try_move_neighbor<R: Random>(
     constraints: Option<&HeuristicPrecedence>,
     params: &MoveNeighborParams,
     insert_params: &InsertParams,
+    score_weights: ScoreWeights,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.is_empty() {
         return None;
@@ -341,8 +342,8 @@ pub(super) fn try_move_neighbor<R: Random>(
     indices.truncate(params.small_pool_size.min(indices.len()));
 
     let idx = indices.into_iter().max_by(|&a, &b| {
-        let sa = score13_block(problem, pre, schedule[a]);
-        let sb = score13_block(problem, pre, schedule[b]);
+        let sa = score13_block_weighted(problem, pre, schedule[a], score_weights);
+        let sb = score13_block_weighted(problem, pre, schedule[b], score_weights);
         sa.total_cmp(&sb).then(
             pre.max_footprint_area[schedule[b].block_id]
                 .total_cmp(&pre.max_footprint_area[schedule[a].block_id]),
@@ -381,6 +382,7 @@ pub(super) fn try_move_neighbor<R: Random>(
         &base,
         &loads,
         insert_params,
+        score_weights,
         &pre.bay_order_by_pref[old.block_id],
         1,
         1.0,

@@ -1,13 +1,12 @@
 todo:
-- multi-stage optimizeの仮検証
+- multi-stage optimizeの検証・追加
 - adaptive-annealing
   - refactor: trait
   - reheat、温度設定
-- multi-stage optimizeの追加
 - initial-build
   - beam-search
 - preopt
-  - 近似方法の改善
+  - 近似方法・精度の改善
   - チューニング
 - report
 
@@ -17,7 +16,7 @@ nits:
 - seedの選び方を増やす
   - target-bay/time-window remove
 - reconstructはpreserved-loadsを使う
-- preopt、global-cはtardiness=0になったら終了する
+- reconstructでもmulti-stage objectiveで評価する
 
 annealing:
 - adaptive-annealing
