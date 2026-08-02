@@ -24,6 +24,19 @@ bayが多いケースが苦手なのでは？
 最適化時間が長い
 並列性を活かしたい
 
+温度設定
+- preopt
+  - 高温から低温に冷却する
+- globa-c,global
+  - ランダムウォーク的に色々な状態を探索する
+  - ある程度冷却する必要はある
+  - best-scoreが更新されなければ、reheatによる再加熱を行う
+
+- tardiness>0
+  - score/w1
+- tardiness=0
+  - score/w3
+
 ## multi-stage optimize
 
 obj1->obj1+obj2->obj1+obj2+obj3 の順で最適化することを考えたい
