@@ -28,23 +28,22 @@ insert:
 
 annealing:
   sample_window: 256
-  worsening_delta_quantile: 0.05
   preoptimize:
-    worsening_acceptance: [0.05, 0.01]
+    worsening_acceptance: [0.2, 0.01]
     exchange_interval: 1000000
     exchange_threshold:
       w1_scale: 0.5
       w3_scale: 50.0
     tabu_capacity: 4096
   global_constrained:
-    worsening_acceptance: [0.05, 0.01]
+    worsening_acceptance: [0.2, 0.01]
     exchange_interval: 2000
     exchange_threshold:
       w1_scale: 0.5
       w3_scale: 50.0
     tabu_capacity: 4096
   global:
-    worsening_acceptance: [0.05, 0.01]
+    worsening_acceptance: [0.2, 0.01]
     exchange_interval: 2000
     exchange_threshold:
       w1_scale: 0.5

@@ -119,7 +119,6 @@ impl WeightScaleConfig {
 #[serde(deny_unknown_fields)]
 pub struct AnnealingConfigs {
     pub sample_window: usize,
-    pub worsening_delta_quantile: f64,
     pub preoptimize: AnnealingParamsConfig,
     pub global_constrained: AnnealingParamsConfig,
     pub global: AnnealingParamsConfig,
@@ -144,15 +143,9 @@ pub struct AnnealingParamsConfig {
 }
 
 impl AnnealingParamsConfig {
-    pub(crate) fn make(
-        &self,
-        problem: &Problem,
-        sample_window: usize,
-        worsening_delta_quantile: f64,
-    ) -> AnnealingParams {
+    pub(crate) fn make(&self, problem: &Problem, sample_window: usize) -> AnnealingParams {
         AnnealingParams {
             sample_window,
-            worsening_delta_quantile,
             worsening_acceptance: self.worsening_acceptance,
             exchange_interval: self.exchange_interval,
             exchange_threshold: self.exchange_threshold.make(problem),

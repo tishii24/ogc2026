@@ -899,7 +899,6 @@ pub fn preoptimize(
     params: &PreoptimizeSolverParams,
     annealing: &AnnealingParamsConfig,
     sample_window: usize,
-    worsening_delta_quantile: f64,
     reconstruct_order_params: &ReconstructNeighborParams,
     time_limit: f64,
     max_worker_count: usize,
@@ -943,7 +942,7 @@ pub fn preoptimize(
         max_worker_count,
         seed,
     )?;
-    let annealing_params = annealing.make(problem, sample_window, worsening_delta_quantile);
+    let annealing_params = annealing.make(problem, sample_window);
     let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
     let delegate = PreoptimizeAnnealingDelegate {
         problem,
