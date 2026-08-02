@@ -5,6 +5,7 @@ use super::precompute::Precompute;
 #[derive(Clone, Copy, Debug)]
 pub(super) struct ScheduleScore {
     pub(super) objective: f64,
+    pub(super) total_tardiness: i64,
 }
 
 pub(super) fn score13_block(problem: &Problem, pre: &Precompute, scheduled: ScheduledBlock) -> f64 {
@@ -42,6 +43,7 @@ pub(super) fn score_schedule(
         objective: problem.weights.w1 * obj1 as f64
             + problem.weights.w2 * obj2
             + problem.weights.w3 * obj3,
+        total_tardiness: obj1,
     }
 }
 

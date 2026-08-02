@@ -122,6 +122,7 @@ pub(super) fn build_optimize_state(
     if active_bays.is_empty() {
         return Some(OptimizeState {
             objective: 0.0,
+            total_tardiness: 0,
             schedule: Vec::new(),
         });
     }
@@ -220,7 +221,10 @@ pub(super) fn build_optimize_state(
         blocks.extend(schedule);
     }
 
-    let ScheduleScore { objective } = score_schedule(problem, pre, &blocks);
+    let ScheduleScore {
+        objective,
+        total_tardiness,
+    } = score_schedule(problem, pre, &blocks);
     log!(
         "[{:.4}] [build] finished: score={:.3}",
         timer.elapsed_seconds(),
@@ -228,6 +232,7 @@ pub(super) fn build_optimize_state(
     );
     Some(OptimizeState {
         objective,
+        total_tardiness,
         schedule: blocks,
     })
 }

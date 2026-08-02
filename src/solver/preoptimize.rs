@@ -145,6 +145,10 @@ impl AnnealingState for PreoptimizeAnnealingState {
         self.objective
     }
 
+    fn has_tardiness(&self) -> bool {
+        self.z1 > 0.0
+    }
+
     fn tabu_key(&self) -> Option<u64> {
         None
     }
@@ -869,7 +873,6 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
         AnnealingAttempt {
             neighbor_kind,
             candidate: succeeded.then_some(candidate),
-            temperature_sample: neighbor_kind == 2,
         }
     }
 
@@ -898,7 +901,6 @@ pub fn preoptimize(
     pre: &PreoptimizePrecompute,
     params: &PreoptimizeSolverParams,
     annealing: &AnnealingParamsConfig,
-    sample_window: usize,
     reconstruct_order_params: &ReconstructNeighborParams,
     time_limit: f64,
     max_worker_count: usize,
@@ -942,7 +944,7 @@ pub fn preoptimize(
         max_worker_count,
         seed,
     )?;
-    let annealing_params = annealing.make(problem, sample_window);
+    let annealing_params = annealing.make(problem, initial.annealing_score());
     let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
     let delegate = PreoptimizeAnnealingDelegate {
         problem,
