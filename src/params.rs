@@ -5,8 +5,7 @@ use serde::Deserialize;
 use crate::{
     Problem,
     solver::annealing::{
-        AnnealingParams, AnnealingRegimeParams, ObjectiveScaleParams, ReheatParams,
-        TemperatureScheduleKind,
+        AnnealingParams, AnnealingRegimeParams, ReheatParams, TemperatureScheduleKind,
     },
 };
 
@@ -191,19 +190,8 @@ pub struct ReheatConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ObjectiveScaleConfig {
-    pub obj2_start: f64,
-    pub obj2_end: f64,
-    pub obj3_start: f64,
-    pub obj3_end: f64,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct AnnealingParamsConfig {
     pub exchange_interval: usize,
-    #[serde(default)]
-    pub objective_scale: Option<ObjectiveScaleConfig>,
     #[serde(default)]
     pub reheat: Option<ReheatConfig>,
     pub positive_tardiness: AnnealingRegimeConfig,
@@ -216,15 +204,6 @@ impl AnnealingParamsConfig {
     pub(crate) fn make(&self, problem: &Problem, initial_score: f64) -> AnnealingParams {
         AnnealingParams {
             exchange_interval: self.exchange_interval,
-            objective_scale: self
-                .objective_scale
-                .as_ref()
-                .map(|scale| ObjectiveScaleParams {
-                    obj2_start: scale.obj2_start,
-                    obj2_end: scale.obj2_end,
-                    obj3_start: scale.obj3_start,
-                    obj3_end: scale.obj3_end,
-                }),
             reheat: self.reheat.as_ref().map(|reheat| ReheatParams {
                 best_return_interval: reheat.best_return_interval,
                 interval: reheat.interval,

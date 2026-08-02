@@ -1,9 +1,7 @@
 use crate::{Boundsf, Problem, ScheduledBlock, params::InsertParams, utils::random::Random};
 
 use super::{
-    objective::{ScoreWeights, normalized_imbalance},
-    placement_scan::PlacementXScanner,
-    precompute::Precompute,
+    objective::normalized_imbalance, placement_scan::PlacementXScanner, precompute::Precompute,
 };
 
 struct InsertCandidate {
@@ -29,7 +27,6 @@ pub(crate) fn insert_greedy<R: Random>(
     schedule: &[ScheduledBlock],
     loads: &[f64],
     params: &InsertParams,
-    weights: ScoreWeights,
     bay_order: &[usize],
     candidate_top_k: usize,
     candidate_select_p: f64,
@@ -96,14 +93,14 @@ pub(crate) fn insert_greedy<R: Random>(
         let mut next_loads = loads.to_vec();
         next_loads[bay_id] += block.workload as f64;
 
-        let delta_obj23 = weights.w2
+        let delta_obj23 = problem.weights.w2
             * (normalized_imbalance(&next_loads, &pre.bay_load_scale) - current_obj2)
-            + weights.w3 * pre.pref_penalty[block_id][bay_id] as f64;
+            + problem.weights.w3 * pre.pref_penalty[block_id][bay_id] as f64;
         let min_tardiness = min_t
             .saturating_add(process_t)
             .saturating_sub(block.due_date)
             .max(0);
-        let lower_score_delta = weights.w1 * min_tardiness as f64 + delta_obj23;
+        let lower_score_delta = problem.weights.w1 * min_tardiness as f64 + delta_obj23;
         if lower_score_delta > best_score_delta {
             continue;
         }
@@ -129,7 +126,7 @@ pub(crate) fn insert_greedy<R: Random>(
 
                 let valid_y = scanner.scan_y(orient_idx, y, |scheduled| {
                     let tardiness = (scheduled.exit_time - block.due_date).max(0);
-                    let score_delta = weights.w1 * tardiness as f64 + delta_obj23;
+                    let score_delta = problem.weights.w1 * tardiness as f64 + delta_obj23;
                     best_score_delta = best_score_delta.min(score_delta);
                     let candidate = InsertCandidate {
                         scheduled,

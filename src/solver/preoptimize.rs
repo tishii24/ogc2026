@@ -141,6 +141,10 @@ struct PreoptimizeAnnealingState {
 }
 
 impl AnnealingState for PreoptimizeAnnealingState {
+    fn annealing_score(&self) -> f64 {
+        self.objective
+    }
+
     fn has_tardiness(&self) -> bool {
         self.z1 > 0.0
     }
@@ -832,10 +836,6 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
         self.initial.clone()
     }
 
-    fn annealing_score(&self, state: &Self::State, _elapsed: f64) -> f64 {
-        state.objective
-    }
-
     fn name(&self) -> &'static str {
         "preopt"
     }
@@ -848,7 +848,6 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
         &self,
         current: &Self::State,
         _accept_threshold: f64,
-        _elapsed: f64,
         rng: &mut RandPcg64Mcg,
     ) -> AnnealingAttempt<Self::State> {
         let mut candidate = current.clone();
@@ -945,7 +944,7 @@ pub fn preoptimize(
         max_worker_count,
         seed,
     )?;
-    let annealing_params = annealing.make(problem, initial.objective);
+    let annealing_params = annealing.make(problem, initial.annealing_score());
     let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
     let delegate = PreoptimizeAnnealingDelegate {
         problem,

@@ -18,10 +18,7 @@ use crate::{
 use super::{
     PreoptimizeState,
     insert::insert_greedy,
-    objective::{
-        RawScore, ScheduleScore, ScoreWeights, schedule_tardiness, score_schedule,
-        score13_block_weighted,
-    },
+    objective::{ScheduleScore, schedule_tardiness, score_schedule, score13_block},
     optimize::OptimizeState,
     precompute::Precompute,
 };
@@ -125,11 +122,6 @@ pub(super) fn build_optimize_state(
     if active_bays.is_empty() {
         return Some(OptimizeState {
             objective: 0.0,
-            raw_score: RawScore {
-                z1: 0,
-                z2: 0.0,
-                z3: 0.0,
-            },
             total_tardiness: 0,
             schedule: Vec::new(),
         });
@@ -229,7 +221,10 @@ pub(super) fn build_optimize_state(
         blocks.extend(schedule);
     }
 
-    let ScheduleScore { objective, raw } = score_schedule(problem, pre, &blocks);
+    let ScheduleScore {
+        objective,
+        total_tardiness,
+    } = score_schedule(problem, pre, &blocks);
     log!(
         "[{:.4}] [build] finished: score={:.3}",
         timer.elapsed_seconds(),
@@ -237,8 +232,7 @@ pub(super) fn build_optimize_state(
     );
     Some(OptimizeState {
         objective,
-        raw_score: raw,
-        total_tardiness: raw.z1,
+        total_tardiness,
         schedule: blocks,
     })
 }
@@ -263,7 +257,6 @@ pub(super) fn build_reconstruct_base(
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     removed_ids: &[usize],
-    weights: ScoreWeights,
 ) -> ReconstructBase {
     let mut removed = vec![false; problem.blocks.len()];
     for &block_id in removed_ids {
@@ -278,7 +271,7 @@ pub(super) fn build_reconstruct_base(
             continue;
         }
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
-        weighted_z1_z3 += score13_block_weighted(problem, pre, scheduled, weights);
+        weighted_z1_z3 += score13_block(problem, pre, scheduled);
         remaining.push(scheduled);
     }
 
@@ -296,14 +289,12 @@ pub(super) fn try_large_reconstruct<R: Random>(
     schedule: &[ScheduledBlock],
     rng: &mut R,
     accept_threshold: f64,
-    score_weights: ScoreWeights,
     params: &ReconstructNeighborParams,
     insert_params: &InsertParams,
 ) -> Option<Vec<ScheduledBlock>> {
     let k = sample_removed_count(rng, params).min(problem.blocks.len());
 
-    let mut removed_ids =
-        choose_removed_blocks(problem, pre, schedule, k, rng, score_weights, params)?;
+    let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng, params)?;
     if removed_ids.is_empty() {
         return None;
     }
@@ -314,8 +305,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
     );
     let mut current_penalties = vec![0.0; problem.blocks.len()];
     for &scheduled in schedule {
-        current_penalties[scheduled.block_id] =
-            score13_block_weighted(problem, pre, scheduled, score_weights);
+        current_penalties[scheduled.block_id] = score13_block(problem, pre, scheduled);
     }
     let order = if let Some(constraints) = constraints {
         build_topological_order(
@@ -347,7 +337,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
         schedule: mut cur,
         mut loads,
         weighted_z1_z3: mut fixed_score13,
-    } = build_reconstruct_base(problem, pre, schedule, &removed_ids, score_weights);
+    } = build_reconstruct_base(problem, pre, schedule, &removed_ids);
     let mut current_by_id = constraints.map(|_| scheduled_by_id(problem, &cur));
 
     for block_id in order {
@@ -380,14 +370,13 @@ pub(super) fn try_large_reconstruct<R: Random>(
             &cur,
             &loads,
             insert_params,
-            score_weights,
             &pre.bay_order_by_pref[old.block_id],
             params.insert_candidate_top_k,
             params.insert_candidate_select_p,
             rng,
         )?;
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
-        fixed_score13 += score13_block_weighted(problem, pre, scheduled, score_weights);
+        fixed_score13 += score13_block(problem, pre, scheduled);
         if let Some(current_by_id) = &mut current_by_id {
             current_by_id[block_id] = Some(scheduled);
         }
@@ -453,12 +442,7 @@ fn push_removed_block(selected: &mut Vec<usize>, used: &mut [bool], block_id: us
     }
 }
 
-fn remove_badness(
-    problem: &Problem,
-    pre: &Precompute,
-    schedule: &[ScheduledBlock],
-    score_weights: ScoreWeights,
-) -> Vec<f64> {
+fn remove_badness(problem: &Problem, pre: &Precompute, schedule: &[ScheduledBlock]) -> Vec<i64> {
     let mut loads = vec![0.0; problem.bays.len()];
     for s in schedule {
         loads[s.bay_id] += problem.blocks[s.block_id].workload as f64;
@@ -471,19 +455,19 @@ fn remove_badness(
         })
         .map(|(bay_id, _)| bay_id);
 
-    let mut badness = vec![0.0; problem.blocks.len()];
+    let mut badness = vec![0i64; problem.blocks.len()];
     for s in schedule {
         let block = &problem.blocks[s.block_id];
         let tardiness = (s.exit_time - block.due_date).max(0);
         let pref_penalty = pre.pref_penalty[s.block_id][s.bay_id];
-        let score = tardiness as f64 * score_weights.w1
-            + pref_penalty as f64 * score_weights.w3
+        let score = tardiness as f64 * problem.weights.w1
+            + pref_penalty as f64 * problem.weights.w3
             + if Some(s.bay_id) == heavy_bay {
-                score_weights.w2
+                problem.weights.w2
             } else {
                 0.0
             };
-        badness[s.block_id] = score;
+        badness[s.block_id] = score as i64;
     }
     badness
 }
@@ -679,7 +663,6 @@ pub(super) fn choose_removed_blocks<R: Random>(
     schedule: &[ScheduledBlock],
     k: usize,
     rng: &mut R,
-    score_weights: ScoreWeights,
     params: &ReconstructNeighborParams,
 ) -> Option<Vec<usize>> {
     if schedule.is_empty() || k == 0 {
@@ -699,7 +682,7 @@ pub(super) fn choose_removed_blocks<R: Random>(
         params.remove_t_distance_weight_range.0,
         params.remove_t_distance_weight_range.1,
     );
-    let badness = remove_badness(problem, pre, schedule, score_weights);
+    let badness = remove_badness(problem, pre, schedule);
     let mut by_block = vec![None; problem.blocks.len()];
     for &scheduled in schedule {
         by_block[scheduled.block_id] = Some(scheduled);
@@ -707,7 +690,7 @@ pub(super) fn choose_removed_blocks<R: Random>(
 
     let mut bad_pool: Vec<usize> = schedule.iter().map(|s| s.block_id).collect();
     rng.shuffle(&mut bad_pool);
-    bad_pool.sort_by(|&a, &b| badness[b].total_cmp(&badness[a]).then(a.cmp(&b)));
+    bad_pool.sort_by_key(|&block_id| Reverse(badness[block_id]));
     let pool_len = (k * params.remove_pool_factor).min(schedule.len()).max(k);
     bad_pool.truncate(pool_len);
 
@@ -1056,7 +1039,6 @@ fn build_bay_schedule<R: Random>(
             &schedule,
             &loads,
             params,
-            ScoreWeights::official(problem),
             &bay_order,
             1,
             1.0,

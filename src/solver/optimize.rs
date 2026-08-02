@@ -6,14 +6,12 @@ use crate::{
 
 use super::{
     PreoptimizeState,
-    annealing::{
-        Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState, ObjectiveScaleParams,
-    },
+    annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
     neighbors::{
         NeighborKind, sample_neighbor, try_move_neighbor, try_rotate_neighbor, try_shift_neighbor,
         try_swap_neighbor,
     },
-    objective::{RawScore, ScheduleScore, ScoreWeights, score_schedule},
+    objective::{ScheduleScore, score_schedule},
     output::CandidateEmitter,
     precompute::Precompute,
     reconstruct::{HeuristicPrecedence, build_heuristic_precedence, try_large_reconstruct},
@@ -22,12 +20,15 @@ use super::{
 #[derive(Clone, Debug)]
 pub(super) struct OptimizeState {
     pub(super) objective: f64,
-    pub(super) raw_score: RawScore,
     pub(super) total_tardiness: i64,
     pub(super) schedule: Vec<ScheduledBlock>,
 }
 
 impl AnnealingState for OptimizeState {
+    fn annealing_score(&self) -> f64 {
+        self.objective
+    }
+
     fn has_tardiness(&self) -> bool {
         self.total_tardiness > 0
     }
@@ -75,8 +76,7 @@ impl<'a> GlobalAnnealing<'a> {
         max_worker_count: usize,
     ) -> OptimizeState {
         let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
-        let annealing_params = annealing.make(self.problem, initial.objective);
-        let score_start = self.timer.elapsed_seconds();
+        let annealing_params = annealing.make(self.problem, initial.annealing_score());
         let delegate = GlobalAnnealingDelegate {
             problem: self.problem,
             pre: self.pre,
@@ -87,10 +87,6 @@ impl<'a> GlobalAnnealing<'a> {
             insert_params,
             timer: self.timer,
             candidate_emitter: self.candidate_emitter,
-            constrained,
-            objective_scale: annealing_params.objective_scale,
-            score_start,
-            deadline,
         };
         Annealer::new(deadline, worker_count, seed, annealing_params, delegate).run(self.timer)
     }
@@ -106,24 +102,6 @@ struct GlobalAnnealingDelegate<'a> {
     insert_params: &'a InsertParams,
     timer: Timer,
     candidate_emitter: &'a CandidateEmitter,
-    constrained: bool,
-    objective_scale: Option<ObjectiveScaleParams>,
-    score_start: f64,
-    deadline: f64,
-}
-
-impl GlobalAnnealingDelegate<'_> {
-    fn score_weights(&self, state: &OptimizeState, elapsed: f64) -> ScoreWeights {
-        if self.constrained {
-            return ScoreWeights::tardiness_only(self.problem);
-        }
-        let progress = ((elapsed - self.score_start)
-            / (self.deadline - self.score_start).max(1e-4))
-        .clamp(0.0, 1.0);
-        self.objective_scale
-            .map(|scale| scale.weights(self.problem, state.raw_score, progress))
-            .unwrap_or_else(|| ScoreWeights::official(self.problem))
-    }
 }
 
 impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
@@ -132,14 +110,6 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
 
     fn initial_state(&self) -> Self::State {
         self.initial.clone()
-    }
-
-    fn annealing_score(&self, state: &Self::State, elapsed: f64) -> f64 {
-        state.raw_score.weighted(self.score_weights(state, elapsed))
-    }
-
-    fn should_stop(&self, state: &Self::State) -> bool {
-        self.constrained && state.raw_score.z1 == 0
     }
 
     fn name(&self) -> &'static str {
@@ -158,13 +128,11 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
         &self,
         current: &Self::State,
         accept_threshold: f64,
-        elapsed: f64,
         rng: &mut RandPcg64Mcg,
     ) -> AnnealingAttempt<Self::State> {
         let precedence = self.precedence;
         let params = self.params;
         let probabilities = params.probabilities.weights();
-        let score_weights = self.score_weights(current, elapsed);
         let neighbor = sample_neighbor(rng, &probabilities);
         let schedule = match neighbor {
             NeighborKind::LargeReconstruct => try_large_reconstruct(
@@ -174,7 +142,6 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 &current.schedule,
                 rng,
                 accept_threshold,
-                score_weights,
                 &params.reconstruct,
                 self.insert_params,
             ),
@@ -195,7 +162,6 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 precedence,
                 &params.move_block,
                 self.insert_params,
-                score_weights,
             ),
             NeighborKind::Rotate => try_rotate_neighbor(
                 self.problem,
@@ -217,12 +183,13 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
         AnnealingAttempt {
             neighbor_kind: neighbor.index(),
             candidate: schedule.map(|schedule| {
-                let ScheduleScore { objective, raw } =
-                    score_schedule(self.problem, self.pre, &schedule);
+                let ScheduleScore {
+                    objective,
+                    total_tardiness,
+                } = score_schedule(self.problem, self.pre, &schedule);
                 OptimizeState {
                     objective,
-                    raw_score: raw,
-                    total_tardiness: raw.z1,
+                    total_tardiness,
                     schedule,
                 }
             }),

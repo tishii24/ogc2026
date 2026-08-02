@@ -9,19 +9,17 @@ use std::{
 
 use rayon::prelude::*;
 
-use crate::{
-    Problem,
-    solver::objective::{RawScore, ScoreWeights},
-    utils::{
-        random::{RandPcg64Mcg, Random},
-        time::Timer,
-    },
+use crate::utils::{
+    random::{RandPcg64Mcg, Random},
+    time::Timer,
 };
 
 const EPS: f64 = 1e-9;
 const STATUS_LOG_INTERVAL_SECONDS: f64 = 1.0;
 
 pub(crate) trait AnnealingState: Clone + Send + Sync {
+    fn annealing_score(&self) -> f64;
+
     fn has_tardiness(&self) -> bool;
 
     fn tabu_key(&self) -> Option<u64>;
@@ -30,7 +28,6 @@ pub(crate) trait AnnealingState: Clone + Send + Sync {
 pub(crate) struct SharedBest<S: AnnealingState> {
     state: Mutex<S>,
     revision: AtomicU64,
-    stop_requested: std::sync::atomic::AtomicBool,
 }
 
 impl<S: AnnealingState> SharedBest<S> {
@@ -38,16 +35,12 @@ impl<S: AnnealingState> SharedBest<S> {
         Self {
             state: Mutex::new(state),
             revision: AtomicU64::new(0),
-            stop_requested: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
-    pub(crate) fn update<F>(&self, candidate: &S, candidate_score: f64, score: F) -> Option<u64>
-    where
-        F: FnOnce(&S) -> f64,
-    {
+    pub(crate) fn update(&self, candidate: &S) -> Option<u64> {
         let mut best = self.state.lock().unwrap();
-        if candidate_score + EPS >= score(&best) {
+        if candidate.annealing_score() + EPS >= best.annealing_score() {
             return None;
         }
         best.clone_from(candidate);
@@ -63,30 +56,17 @@ impl<S: AnnealingState> SharedBest<S> {
         (best.clone(), self.revision.load(Ordering::Relaxed))
     }
 
-    pub(crate) fn get_if_better<F>(
+    pub(crate) fn get_if_better(
         &self,
         current_score: f64,
         exchange_threshold: f64,
         last_imported_revision: Option<u64>,
-        score: F,
-    ) -> Option<(S, u64, f64)>
-    where
-        F: FnOnce(&S) -> f64,
-    {
+    ) -> Option<(S, u64)> {
         let best = self.state.lock().unwrap();
         let revision = self.revision.load(Ordering::Relaxed);
-        let best_score = score(&best);
         (last_imported_revision != Some(revision)
-            && best_score + exchange_threshold + EPS < current_score)
-            .then(|| (best.clone(), revision, best_score))
-    }
-
-    pub(crate) fn request_stop(&self) {
-        self.stop_requested.store(true, Ordering::Release);
-    }
-
-    pub(crate) fn stop_requested(&self) -> bool {
-        self.stop_requested.load(Ordering::Acquire)
+            && best.annealing_score() + exchange_threshold + EPS < current_score)
+            .then(|| (best.clone(), revision))
     }
 
     pub(crate) fn into_inner(self) -> S {
@@ -260,43 +240,8 @@ pub(crate) struct ReheatParams {
     pub(crate) temperature_scale: f64,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct ObjectiveScaleParams {
-    pub(crate) obj2_start: f64,
-    pub(crate) obj2_end: f64,
-    pub(crate) obj3_start: f64,
-    pub(crate) obj3_end: f64,
-}
-
-impl ObjectiveScaleParams {
-    pub(super) fn weights(self, problem: &Problem, raw: RawScore, progress: f64) -> ScoreWeights {
-        fn scale(progress: f64, start: f64, end: f64) -> f64 {
-            if progress <= start {
-                0.0
-            } else if progress >= end {
-                1.0
-            } else {
-                (progress - start) / (end - start)
-            }
-        }
-
-        let obj2_scale = if raw.z1 == 0 {
-            1.0
-        } else {
-            scale(progress, self.obj2_start, self.obj2_end)
-        };
-        let obj3_scale = scale(progress, self.obj3_start, self.obj3_end);
-        ScoreWeights {
-            w1: problem.weights.w1,
-            w2: problem.weights.w2 * obj2_scale,
-            w3: problem.weights.w3 * obj3_scale,
-        }
-    }
-}
-
 pub(crate) struct AnnealingParams {
     pub(crate) exchange_interval: usize,
-    pub(crate) objective_scale: Option<ObjectiveScaleParams>,
     pub(crate) reheat: Option<ReheatParams>,
     pub(crate) positive_tardiness: AnnealingRegimeParams,
     pub(crate) zero_tardiness: AnnealingRegimeParams,
@@ -384,12 +329,6 @@ pub(crate) trait AnnealingDelegate: Sync {
 
     fn initial_state(&self) -> Self::State;
 
-    fn annealing_score(&self, state: &Self::State, elapsed: f64) -> f64;
-
-    fn should_stop(&self, _state: &Self::State) -> bool {
-        false
-    }
-
     fn name(&self) -> &'static str;
 
     fn neighbor_kinds(&self) -> &'static [&'static str];
@@ -398,7 +337,6 @@ pub(crate) trait AnnealingDelegate: Sync {
         &self,
         current: &Self::State,
         accept_threshold: f64,
-        elapsed: f64,
         rng: &mut RandPcg64Mcg,
     ) -> AnnealingAttempt<Self::State>;
 
@@ -441,28 +379,19 @@ impl TabuList {
 
 struct WorkerState<S> {
     current: S,
-    local_best_state: S,
     local_best_score: f64,
     last_imported_revision: Option<u64>,
     best_exploration_started_iteration: usize,
     tabu: TabuList,
 }
 
-fn apply_shared_best<S: AnnealingState>(
-    local: &mut WorkerState<S>,
-    best: S,
-    revision: u64,
-    score: f64,
-) {
-    let best_for_local = best.clone();
+fn apply_shared_best<S: AnnealingState>(local: &mut WorkerState<S>, best: S, revision: u64) {
+    let score = best.annealing_score();
     if let Some(key) = best.tabu_key() {
         local.tabu.insert(key);
     }
     local.current = best;
-    if score + EPS < local.local_best_score {
-        local.local_best_state = best_for_local;
-        local.local_best_score = score;
-    }
+    local.local_best_score = local.local_best_score.min(score);
     local.last_imported_revision = Some(revision);
 }
 
@@ -497,9 +426,6 @@ impl<D: AnnealingDelegate> Annealer<D> {
         assert!(self.params.exchange_interval > 0);
 
         let shared = SharedBest::new(initial_state.clone());
-        if self.delegate.should_stop(&initial_state) {
-            shared.request_stop();
-        }
         let worker_results: Vec<_> = (0..self.worker_count)
             .into_par_iter()
             .map(|worker_id| self.run_worker(&initial_state, &shared, timer, worker_id))
@@ -530,8 +456,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
             "[{:.4}] [{}] result: best={:.3}",
             timer.elapsed_seconds(),
             self.delegate.name(),
-            self.delegate
-                .annealing_score(&state, timer.elapsed_seconds()),
+            state.annealing_score(),
         );
         self.delegate.finish(state)
     }
@@ -543,17 +468,13 @@ impl<D: AnnealingDelegate> Annealer<D> {
         timer: Timer,
         worker_id: usize,
     ) -> WorkerSummary {
-        let initial_elapsed = timer.elapsed_seconds();
-        let score = self
-            .delegate
-            .annealing_score(initial_state, initial_elapsed);
+        let score = initial_state.annealing_score();
         let mut tabu = TabuList::new(self.params.tabu_capacity);
         if let Some(key) = initial_state.tabu_key() {
             tabu.insert(key);
         }
         let mut local = WorkerState {
             current: initial_state.clone(),
-            local_best_state: initial_state.clone(),
             local_best_score: score,
             last_imported_revision: self.params.reheat.map(|_| 0),
             best_exploration_started_iteration: 1,
@@ -587,12 +508,6 @@ impl<D: AnnealingDelegate> Annealer<D> {
             let Some(elapsed) = context.next(timer) else {
                 break;
             };
-            if shared.stop_requested() {
-                break;
-            }
-            local.local_best_score = self
-                .delegate
-                .annealing_score(&local.local_best_state, elapsed);
             if let Some(reheat) = self.params.reheat {
                 let revision_changed = local.last_imported_revision != Some(shared.revision());
                 let return_due = context
@@ -601,8 +516,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
                     >= reheat.best_return_interval;
                 if revision_changed || return_due {
                     let previous_revision = local.last_imported_revision;
-                    let (revision, score) = self.import_shared_best(&mut local, shared, elapsed);
-                    local.local_best_score = local.local_best_score.min(score);
+                    let revision = self.import_shared_best(&mut local, shared);
                     local.best_exploration_started_iteration = context.iterations();
                     if previous_revision == Some(revision) {
                         best_returns += 1;
@@ -622,12 +536,12 @@ impl<D: AnnealingDelegate> Annealer<D> {
                     }
                 }
             } else if context.should_exchange(self.params.exchange_interval)
-                && self.exchange_shared(&mut local, shared, elapsed)
+                && self.exchange_shared(&mut local, shared)
             {
                 best_imports += 1;
             }
 
-            let current_score = self.delegate.annealing_score(&local.current, elapsed);
+            let current_score = local.current.annealing_score();
             let has_tardiness = local.current.has_tardiness();
             let current_temperature =
                 temperature.current(elapsed, context.iterations(), has_tardiness);
@@ -645,9 +559,9 @@ impl<D: AnnealingDelegate> Annealer<D> {
             let accept_threshold =
                 acceptance_threshold(current_score, current_temperature, &mut context.rng);
             let neighbor_start = Instant::now();
-            let attempt =
-                self.delegate
-                    .propose(&local.current, accept_threshold, elapsed, &mut context.rng);
+            let attempt = self
+                .delegate
+                .propose(&local.current, accept_threshold, &mut context.rng);
             debug_assert!(attempt.neighbor_kind < neighbor_stats.len());
             let stats = &mut neighbor_stats[attempt.neighbor_kind];
             stats.selected += 1;
@@ -657,7 +571,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 continue;
             };
             stats.succeeded += 1;
-            let candidate_score = self.delegate.annealing_score(&candidate, elapsed);
+            let candidate_score = candidate.annealing_score();
             let candidate_tabu_key = candidate.tabu_key();
             let tabu = candidate_tabu_key.is_some_and(|key| local.tabu.contains(key));
             if tabu && candidate_score + EPS >= local.local_best_score {
@@ -675,10 +589,6 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 continue;
             }
 
-            let is_local_best = candidate_score + EPS < local.local_best_score;
-            if is_local_best {
-                local.local_best_state = candidate.clone();
-            }
             local.current = candidate;
             accepted += 1;
             stats.accepted += 1;
@@ -686,7 +596,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 local.tabu.insert(key);
             }
 
-            if is_local_best {
+            if candidate_score + EPS < local.local_best_score {
                 local.local_best_score = candidate_score;
                 improved += 1;
                 log!(
@@ -697,9 +607,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
                     context.iterations(),
                     candidate_score,
                 );
-                if let Some(revision) = shared.update(&local.current, candidate_score, |state| {
-                    self.delegate.annealing_score(state, elapsed)
-                }) {
+                if let Some(revision) = shared.update(&local.current) {
                     if self.params.reheat.is_some() {
                         local.last_imported_revision = Some(revision);
                         local.best_exploration_started_iteration =
@@ -707,18 +615,15 @@ impl<D: AnnealingDelegate> Annealer<D> {
                         temperature.cancel_reheat();
                     }
                     self.delegate.on_shared_best(&local.current, timer);
+                    log!(
+                        "[{:.4}] [{}] shared best: worker={}, iter={:8}, score={:.3}",
+                        timer.elapsed_seconds(),
+                        self.delegate.name(),
+                        worker_id,
+                        context.iterations(),
+                        candidate_score,
+                    );
                 }
-            }
-            if self.delegate.should_stop(&local.current) {
-                shared.request_stop();
-                log!(
-                    "[{:.4}] [{}] stop: worker={}, iter={:8}, score={:.3}",
-                    timer.elapsed_seconds(),
-                    self.delegate.name(),
-                    worker_id,
-                    context.iterations(),
-                    candidate_score,
-                );
             }
             stats.time_sec += neighbor_start.elapsed().as_secs_f64();
         }
@@ -733,12 +638,8 @@ impl<D: AnnealingDelegate> Annealer<D> {
             reheats,
             positive_tardiness_temperature,
             zero_tardiness_temperature,
-            current_score: self
-                .delegate
-                .annealing_score(&local.current, timer.elapsed_seconds()),
-            local_best_score: self
-                .delegate
-                .annealing_score(&local.local_best_state, timer.elapsed_seconds()),
+            current_score: local.current.annealing_score(),
+            local_best_score: local.local_best_score,
             neighbor_stats,
         }
     }
@@ -747,33 +648,28 @@ impl<D: AnnealingDelegate> Annealer<D> {
         &self,
         local: &mut WorkerState<D::State>,
         shared: &SharedBest<D::State>,
-        elapsed: f64,
-    ) -> (u64, f64) {
+    ) -> u64 {
         let (best, revision) = shared.snapshot();
-        let score = self.delegate.annealing_score(&best, elapsed);
-        apply_shared_best(local, best, revision, score);
-        (revision, score)
+        apply_shared_best(local, best, revision);
+        revision
     }
 
     fn exchange_shared(
         &self,
         local: &mut WorkerState<D::State>,
         shared: &SharedBest<D::State>,
-        elapsed: f64,
     ) -> bool {
         let exchange_threshold = if local.current.has_tardiness() {
             self.params.positive_tardiness.exchange_threshold
         } else {
             self.params.zero_tardiness.exchange_threshold
         };
-        let current_score = self.delegate.annealing_score(&local.current, elapsed);
-        if let Some((best, revision, score)) = shared.get_if_better(
-            current_score,
+        if let Some((best, revision)) = shared.get_if_better(
+            local.current.annealing_score(),
             exchange_threshold,
             local.last_imported_revision,
-            |state| self.delegate.annealing_score(state, elapsed),
         ) {
-            apply_shared_best(local, best, revision, score);
+            apply_shared_best(local, best, revision);
             true
         } else {
             false

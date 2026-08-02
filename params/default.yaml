@@ -61,11 +61,6 @@ annealing:
     tabu_capacity: 4096
   global:
     exchange_interval: 2000
-    objective_scale:
-      obj2_start: 0.3
-      obj2_end: 0.7
-      obj3_start: 0.5
-      obj3_end: 0.8
     reheat:
       best_return_interval: 100000
       interval: 50000
