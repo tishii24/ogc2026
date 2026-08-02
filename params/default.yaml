@@ -53,7 +53,7 @@ annealing:
         w3_scale: 50.0
     zero_tardiness:
       type: geometric
-      temperature_w3_scale: [10.0, 1.0]
+      temperature_w3_scale: [5.0, 0.5]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
@@ -73,7 +73,7 @@ annealing:
         w3_scale: 50.0
     zero_tardiness:
       type: geometric
-      temperature_w3_scale: [1.0, 0.9]
+      temperature_w3_scale: [5.0, 0.5]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
@@ -123,8 +123,8 @@ global_neighbor:
       random: 2.0
     remove_fluidity_slack_weight_range: [0.5, 2.0]
     remove_fluidity_pref_spread_weight_range: [0.5, 2.0]
-    remove_x_distance_weight_range: [1.0, 4.0]
-    remove_y_distance_weight_range: [1.0, 4.0]
+    remove_x_distance_weight_range: [0.1, 4.0]
+    remove_y_distance_weight_range: [0.1, 4.0]
     remove_t_distance_weight_range: [0.5, 1.5]
     workload_weight_range: [0.0, 0.3]
     volume_weight_range: [0.5, 2.0]
