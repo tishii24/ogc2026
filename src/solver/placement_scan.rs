@@ -60,7 +60,6 @@ impl SlotSet {
 
 struct ForbiddenSlotPrecompute {
     intervals: Vec<Interval>,
-    owners: Vec<u32>,
     states: Vec<[SlotSet; 4]>,
 }
 
@@ -158,7 +157,6 @@ impl Iterator for ActiveIntervalIter<'_> {
 pub(super) struct ForbiddenIntervals<'a> {
     active: &'a ActiveIntervalSlots,
     intervals: &'a [Interval],
-    owners: &'a [u32],
 }
 
 impl ForbiddenIntervals<'_> {
@@ -209,16 +207,6 @@ impl ForbiddenIntervals<'_> {
             }
         }
     }
-}
-
-pub(super) struct PlacementBlocker {
-    pub block_id: usize,
-    pub overlap_days: i64,
-}
-
-pub(super) struct PlacementTrace {
-    pub earliest_entry: i64,
-    pub blockers: Vec<PlacementBlocker>,
 }
 
 pub(super) struct PlacementXScanner<'a> {
@@ -318,67 +306,6 @@ impl<'a> PlacementXScanner<'a> {
                 entry_time,
                 exit_time: entry_time + process_t,
             })
-        })
-    }
-
-    pub(super) fn trace_fixed_placement(
-        &mut self,
-        orient_idx: usize,
-        x: i64,
-        y: i64,
-        target_entry: i64,
-    ) -> Option<PlacementTrace> {
-        let min_t = self.min_t.max(target_entry);
-        let max_t = self.max_t;
-        if min_t > max_t {
-            return None;
-        }
-
-        let mut earliest_entry = None;
-        let mut overlap_by_owner = vec![0; self.bay_old_blocks.len()];
-        self.scan_y_ranges(orient_idx, y, x, x, |_, forbidden| {
-            let Some(entry) = forbidden.first_feasible_time(&[], min_t, max_t) else {
-                return false;
-            };
-            earliest_entry = Some(entry);
-            if entry == target_entry {
-                return true;
-            }
-
-            let overlap_end = entry - 1;
-            for slot in 0..forbidden.intervals.len() {
-                if forbidden.active.words[slot / 64] & (1u64 << (slot % 64)) == 0 {
-                    continue;
-                }
-                let (left, right) = forbidden.intervals[slot];
-                let overlap_left = left.max(target_entry);
-                let overlap_right = right.min(overlap_end);
-                if overlap_left <= overlap_right {
-                    overlap_by_owner[forbidden.owners[slot] as usize] +=
-                        overlap_right - overlap_left + 1;
-                }
-            }
-            true
-        });
-
-        let earliest_entry = earliest_entry?;
-        let mut blockers: Vec<_> = overlap_by_owner
-            .into_iter()
-            .enumerate()
-            .filter(|&(_, overlap_days)| overlap_days > 0)
-            .map(|(old_idx, overlap_days)| PlacementBlocker {
-                block_id: self.bay_old_blocks[old_idx].block_id,
-                overlap_days,
-            })
-            .collect();
-        blockers.sort_unstable_by(|a, b| {
-            b.overlap_days
-                .cmp(&a.overlap_days)
-                .then_with(|| a.block_id.cmp(&b.block_id))
-        });
-        Some(PlacementTrace {
-            earliest_entry,
-            blockers,
         })
     }
 
@@ -507,7 +434,6 @@ impl<'a> PlacementXScanner<'a> {
                 ForbiddenIntervals {
                     active: &self.active_slots,
                     intervals: &self.forbidden_slots.intervals,
-                    owners: &self.forbidden_slots.owners,
                 },
             );
 
@@ -695,15 +621,9 @@ fn build_forbidden_slot_precompute(
     pending.sort_unstable_by_key(|&(interval, _, _, _)| interval);
 
     let mut intervals = Vec::with_capacity(pending.len());
-    let mut owners = Vec::with_capacity(pending.len());
     for (slot, (interval, old_idx, state_idx, item_idx)) in pending.into_iter().enumerate() {
         intervals.push(interval);
-        owners.push(old_idx as u32);
         states[old_idx][state_idx].slots[item_idx] = slot as u32;
     }
-    ForbiddenSlotPrecompute {
-        intervals,
-        owners,
-        states,
-    }
+    ForbiddenSlotPrecompute { intervals, states }
 }
