@@ -14,6 +14,8 @@
   - bay-assign,entry-tをguideとして評価項に入れる
   - 適切なbay-assignを求める必要があり、幾何制約を無視すると難しそう
 
+bayが多いケースが苦手なのでは？
+
 小さいケースでは、上記に加えて、幾何制約に対するより良い配置を探索する必要がある
 
 ## adaptive-parallel-annealing
