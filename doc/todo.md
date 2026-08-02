@@ -1,13 +1,16 @@
+課題:
+- 長時間の最適化で、より良いスコアを出す
+
 todo:
-- multi-stage optimizeの仮検証
+- multi-stage optimizeの検証・追加
+- 長時間の検証環境
 - adaptive-annealing
   - refactor: trait
   - reheat、温度設定
-- multi-stage optimizeの追加
 - initial-build
   - beam-search
 - preopt
-  - 近似方法の改善
+  - 近似方法・精度の改善
   - チューニング
 - report
 
@@ -17,7 +20,7 @@ nits:
 - seedの選び方を増やす
   - target-bay/time-window remove
 - reconstructはpreserved-loadsを使う
-- preopt、global-cはtardiness=0になったら終了する
+- reconstructでもmulti-stage objectiveで評価する
 
 annealing:
 - adaptive-annealing
@@ -50,3 +53,12 @@ pending:
 - pref/volume, limit-t/volumeの交互作用をorderに入れる
 - beam-reconstructの導入
 - 時刻の優先度だけでなく、bayの優先度を制約に入れて最適化する
+
+- adaptive-annealing
+- multi-stage
+  - tardiness -> pref -> pref + loads
+- preoptimizeの改善
+  - 近似方法・パラメータ
+- initial-build、constraint-optimizeの改善
+  - bay割り当てをもっと重視する
+  - constraint-optimizeはbay割当をしばらく固定する
