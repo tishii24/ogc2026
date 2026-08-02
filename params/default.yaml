@@ -27,57 +27,30 @@ insert:
   anchor_randomness: 0.2
 
 annealing:
+  sample_window: 256
   preoptimize:
+    worsening_acceptance: [0.2, 0.01]
     exchange_interval: 1000000
-    positive_tardiness:
-      type: geometric
-      temperature_initial_score_per_block_scale: [1.0, 0.01]
-      exchange_threshold:
-        w1_scale: 0.5
-        w3_scale: 50.0
-    zero_tardiness:
-      type: geometric
-      temperature_w3_scale: [10.0, 1.0]
-      exchange_threshold:
-        w1_scale: 0.5
-        w3_scale: 50.0
-    worker_temperature_scale: 0.0
+    exchange_threshold:
+      w1_scale: 0.5
+      w3_scale: 50.0
     tabu_capacity: 4096
   global_constrained:
+    worsening_acceptance: [0.2, 0.01]
     exchange_interval: 2000
-    positive_tardiness:
-      type: geometric
-      temperature_initial_score_per_block_scale: [0.2, 0.02]
-      exchange_threshold:
-        w1_scale: 0.5
-        w3_scale: 50.0
-    zero_tardiness:
-      type: geometric
-      temperature_w3_scale: [10.0, 1.0]
-      exchange_threshold:
-        w1_scale: 0.5
-        w3_scale: 50.0
-    worker_temperature_scale: 0.0
+    exchange_threshold:
+      w1_scale: 0.5
+      w3_scale: 50.0
     tabu_capacity: 4096
   global:
+    worsening_acceptance: [0.2, 0.01]
     exchange_interval: 2000
+    exchange_threshold:
+      w1_scale: 0.5
+      w3_scale: 50.0
     reheat:
-      best_return_interval: 100000
-      interval: 50000
-      temperature_scale: 2.0
-    positive_tardiness:
-      type: geometric
-      temperature_initial_score_per_block_scale: [0.2, 0.02]
-      exchange_threshold:
-        w1_scale: 0.5
-        w3_scale: 50.0
-    zero_tardiness:
-      type: geometric
-      temperature_w3_scale: [1.0, 0.9]
-      exchange_threshold:
-        w1_scale: 0.5
-        w3_scale: 50.0
-    worker_temperature_scale: 0.0
+      stagnation_time_ratio: 0.05
+      worsening_acceptance: 0.3
     tabu_capacity: 4096
 
 preoptimize:

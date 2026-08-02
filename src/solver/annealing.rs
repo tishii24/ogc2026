@@ -20,8 +20,6 @@ const STATUS_LOG_INTERVAL_SECONDS: f64 = 1.0;
 pub(crate) trait AnnealingState: Clone + Send + Sync {
     fn annealing_score(&self) -> f64;
 
-    fn has_tardiness(&self) -> bool;
-
     fn tabu_key(&self) -> Option<u64>;
 }
 
@@ -74,107 +72,128 @@ impl<S: AnnealingState> SharedBest<S> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum TemperatureScheduleKind {
-    Linear,
-    Cosine,
-    Geometric,
+struct DeltaWindow {
+    capacity: usize,
+    values: VecDeque<f64>,
+    scratch: Vec<f64>,
+    median: Option<f64>,
 }
 
-#[derive(Clone, Copy)]
-struct TemperatureRegime {
-    schedule: TemperatureScheduleKind,
-    range: (f64, f64),
-}
-
-impl TemperatureRegime {
-    fn current(&self, progress: f64) -> f64 {
-        match self.schedule {
-            TemperatureScheduleKind::Linear => {
-                self.range.0 + (self.range.1 - self.range.0) * progress
-            }
-            TemperatureScheduleKind::Cosine => {
-                let ratio = 0.5 * (1.0 + (std::f64::consts::PI * progress).cos());
-                self.range.1 + (self.range.0 - self.range.1) * ratio
-            }
-            TemperatureScheduleKind::Geometric => {
-                self.range.0 * (self.range.1 / self.range.0).powf(progress)
-            }
+impl DeltaWindow {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            values: VecDeque::with_capacity(capacity),
+            scratch: Vec::with_capacity(capacity),
+            median: None,
         }
+    }
+
+    fn push(&mut self, delta: f64) {
+        if self.values.len() == self.capacity {
+            self.values.pop_front();
+        }
+        self.values.push_back(delta);
+        self.scratch.clear();
+        self.scratch.extend(self.values.iter().copied());
+        let middle = self.scratch.len() / 2;
+        self.scratch
+            .select_nth_unstable_by(middle, |a, b| a.total_cmp(b));
+        self.median = Some(self.scratch[middle]);
     }
 }
 
 struct AnnealingTemperature {
     start_time: f64,
     deadline: f64,
-    positive_tardiness: TemperatureRegime,
-    zero_tardiness: TemperatureRegime,
+    worsening_acceptance: (f64, f64),
+    deltas: DeltaWindow,
     reheat: Option<ReheatParams>,
-    reheat_started_iteration: Option<usize>,
+    reheat_started_at: Option<f64>,
+    last_improvement_at: f64,
+    last_temperature: f64,
+    last_target_acceptance: f64,
 }
 
 impl AnnealingTemperature {
-    fn new(
-        timer: Timer,
-        deadline: f64,
-        params: &AnnealingParams,
-        worker_id: usize,
-        worker_count: usize,
-    ) -> Self {
-        let scale =
-            worker_temperature_scale(worker_id, worker_count, params.worker_temperature_scale);
+    fn new(timer: Timer, deadline: f64, params: &AnnealingParams) -> Self {
+        let start_time = timer.elapsed_seconds();
         Self {
-            start_time: timer.elapsed_seconds(),
+            start_time,
             deadline,
-            positive_tardiness: TemperatureRegime {
-                schedule: params.positive_tardiness.temperature_schedule,
-                range: (
-                    params.positive_tardiness.temperature.0 * scale,
-                    params.positive_tardiness.temperature.1 * scale,
-                ),
-            },
-            zero_tardiness: TemperatureRegime {
-                schedule: params.zero_tardiness.temperature_schedule,
-                range: (
-                    params.zero_tardiness.temperature.0 * scale,
-                    params.zero_tardiness.temperature.1 * scale,
-                ),
-            },
+            worsening_acceptance: params.worsening_acceptance,
+            deltas: DeltaWindow::new(params.sample_window),
             reheat: params.reheat,
-            reheat_started_iteration: None,
+            reheat_started_at: None,
+            last_improvement_at: start_time,
+            last_temperature: 0.0,
+            last_target_acceptance: params.worsening_acceptance.0,
         }
     }
 
-    fn current(&self, elapsed: f64, iteration: usize, has_tardiness: bool) -> f64 {
-        let progress = ((elapsed - self.start_time) / (self.deadline - self.start_time).max(1e-4))
-            .clamp(0.0, 1.0);
-        let regime = if has_tardiness {
-            self.positive_tardiness
-        } else {
-            self.zero_tardiness
-        };
-        let scheduled = regime.current(progress);
-        let reheat_scale = match (self.reheat, self.reheat_started_iteration) {
-            (Some(reheat), Some(start)) => {
-                let reheat_elapsed = iteration.saturating_sub(start);
-                if reheat_elapsed < reheat.interval {
-                    let remaining = 1.0 - reheat_elapsed as f64 / reheat.interval as f64;
-                    1.0 + (reheat.temperature_scale - 1.0) * remaining
+    fn progress(&self, elapsed: f64) -> f64 {
+        ((elapsed - self.start_time) / (self.deadline - self.start_time).max(1e-4)).clamp(0.0, 1.0)
+    }
+
+    fn normal_acceptance(&self, elapsed: f64) -> f64 {
+        let progress = self.progress(elapsed);
+        let (start, end) = self.worsening_acceptance;
+        start * (end / start).powf(progress)
+    }
+
+    fn reheat_duration(&self) -> f64 {
+        let ratio = self
+            .reheat
+            .map(|reheat| reheat.stagnation_time_ratio)
+            .unwrap_or(0.0);
+        ((self.deadline - self.start_time) * ratio).max(1e-4)
+    }
+
+    fn current(&mut self, elapsed: f64) -> f64 {
+        let normal_acceptance = self.normal_acceptance(elapsed);
+        let target_acceptance = match (self.reheat, self.reheat_started_at) {
+            (Some(reheat), Some(started_at)) => {
+                let progress = (elapsed - started_at) / self.reheat_duration();
+                if progress >= 1.0 {
+                    self.reheat_started_at = None;
+                    self.last_improvement_at = elapsed;
+                    normal_acceptance
                 } else {
-                    1.0
+                    reheat.worsening_acceptance
+                        * (normal_acceptance / reheat.worsening_acceptance)
+                            .powf(progress.clamp(0.0, 1.0))
                 }
             }
-            _ => 1.0,
+            _ => normal_acceptance,
         };
-        scheduled * reheat_scale
+        let temperature = self
+            .deltas
+            .median
+            .map(|median| -median / target_acceptance.ln())
+            .unwrap_or(0.0);
+        self.last_temperature = temperature;
+        self.last_target_acceptance = target_acceptance;
+        temperature
     }
 
-    fn start_reheat(&mut self, iteration: usize) {
-        self.reheat_started_iteration = Some(iteration);
+    fn observe(&mut self, delta: f64) {
+        self.deltas.push(delta);
     }
 
-    fn cancel_reheat(&mut self) {
-        self.reheat_started_iteration = None;
+    fn should_reheat(&self, elapsed: f64) -> bool {
+        self.reheat.is_some()
+            && self.reheat_started_at.is_none()
+            && elapsed - self.last_improvement_at >= self.reheat_duration()
+    }
+
+    fn start_reheat(&mut self, elapsed: f64) {
+        self.reheat_started_at = Some(elapsed);
+        self.last_improvement_at = elapsed;
+    }
+
+    fn mark_improvement(&mut self, elapsed: f64) {
+        self.reheat_started_at = None;
+        self.last_improvement_at = elapsed;
     }
 }
 
@@ -216,42 +235,31 @@ pub(crate) fn acceptance_threshold(
     temperature: f64,
     rng: &mut impl Random,
 ) -> f64 {
-    current_score - temperature * rng.next_f64().ln()
-}
-
-pub(crate) fn worker_temperature_scale(worker_id: usize, worker_count: usize, scale: f64) -> f64 {
-    if worker_count <= 1 {
-        return 1.0;
+    if temperature <= 0.0 {
+        return current_score;
     }
-    let ratio = worker_id as f64 / (worker_count - 1) as f64;
-    1.0 + scale * ratio.powf(2.0)
-}
-
-pub(crate) struct AnnealingRegimeParams {
-    pub(crate) temperature_schedule: TemperatureScheduleKind,
-    pub(crate) temperature: (f64, f64),
-    pub(crate) exchange_threshold: f64,
+    current_score - temperature * rng.next_f64().ln()
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct ReheatParams {
-    pub(crate) best_return_interval: usize,
-    pub(crate) interval: usize,
-    pub(crate) temperature_scale: f64,
+    pub(crate) stagnation_time_ratio: f64,
+    pub(crate) worsening_acceptance: f64,
 }
 
 pub(crate) struct AnnealingParams {
+    pub(crate) sample_window: usize,
+    pub(crate) worsening_acceptance: (f64, f64),
     pub(crate) exchange_interval: usize,
+    pub(crate) exchange_threshold: f64,
     pub(crate) reheat: Option<ReheatParams>,
-    pub(crate) positive_tardiness: AnnealingRegimeParams,
-    pub(crate) zero_tardiness: AnnealingRegimeParams,
-    pub(crate) worker_temperature_scale: f64,
     pub(crate) tabu_capacity: usize,
 }
 
 pub(crate) struct AnnealingAttempt<S> {
     pub(crate) neighbor_kind: usize,
     pub(crate) candidate: Option<S>,
+    pub(crate) temperature_sample: bool,
 }
 
 #[derive(Clone, Default)]
@@ -316,8 +324,10 @@ pub(crate) struct WorkerSummary {
     pub(crate) best_imports: usize,
     pub(crate) best_returns: usize,
     pub(crate) reheats: usize,
-    pub(crate) positive_tardiness_temperature: (f64, f64),
-    pub(crate) zero_tardiness_temperature: (f64, f64),
+    pub(crate) temperature: f64,
+    pub(crate) delta_samples: usize,
+    pub(crate) delta_median: Option<f64>,
+    pub(crate) target_acceptance: f64,
     pub(crate) current_score: f64,
     pub(crate) local_best_score: f64,
     pub(crate) neighbor_stats: Vec<NeighborStats>,
@@ -381,7 +391,6 @@ struct WorkerState<S> {
     current: S,
     local_best_score: f64,
     last_imported_revision: Option<u64>,
-    best_exploration_started_iteration: usize,
     tabu: TabuList,
 }
 
@@ -433,7 +442,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
         let state = shared.into_inner();
         for worker in &worker_results {
             log!(
-                "[{:.4}] [{:8} worker={}] iter={:8}, accepted={:8}, improved={:8}, best_imports={:5}, best_returns={:5}, reheats={:5}, current={:.3}, local_best={:.3}, temp(z1>0)={:.6}->{:.6}, temp(z1=0)={:.6}->{:.6}\nneighbor stats:\n{}",
+                "[{:.4}] [{:8} worker={}] iter={:8}, accepted={:8}, improved={:8}, best_imports={:5}, best_returns={:5}, reheats={:5}, current={:.3}, local_best={:.3}, temperature={:.6}, delta_samples={}, delta_median={:?}, target_acceptance={:.4}\nneighbor stats:\n{}",
                 timer.elapsed_seconds(),
                 self.delegate.name(),
                 worker.worker_id,
@@ -445,10 +454,10 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 worker.reheats,
                 worker.current_score,
                 worker.local_best_score,
-                worker.positive_tardiness_temperature.0,
-                worker.positive_tardiness_temperature.1,
-                worker.zero_tardiness_temperature.0,
-                worker.zero_tardiness_temperature.1,
+                worker.temperature,
+                worker.delta_samples,
+                worker.delta_median,
+                worker.target_acceptance,
                 format_neighbor_stats(&worker.neighbor_stats, self.delegate.neighbor_kinds()),
             );
         }
@@ -477,18 +486,9 @@ impl<D: AnnealingDelegate> Annealer<D> {
             current: initial_state.clone(),
             local_best_score: score,
             last_imported_revision: self.params.reheat.map(|_| 0),
-            best_exploration_started_iteration: 1,
             tabu,
         };
-        let mut temperature = AnnealingTemperature::new(
-            timer,
-            self.deadline,
-            &self.params,
-            worker_id,
-            self.worker_count,
-        );
-        let positive_tardiness_temperature = temperature.positive_tardiness.range;
-        let zero_tardiness_temperature = temperature.zero_tardiness.range;
+        let mut temperature = AnnealingTemperature::new(timer, self.deadline, &self.params);
         let mut context = AnnealingWorkerContext::new(
             self.deadline,
             self.rng_seed.wrapping_add(worker_id as u64),
@@ -508,32 +508,22 @@ impl<D: AnnealingDelegate> Annealer<D> {
             let Some(elapsed) = context.next(timer) else {
                 break;
             };
-            if let Some(reheat) = self.params.reheat {
-                let revision_changed = local.last_imported_revision != Some(shared.revision());
-                let return_due = context
-                    .iterations()
-                    .saturating_sub(local.best_exploration_started_iteration)
-                    >= reheat.best_return_interval;
-                if revision_changed || return_due {
-                    let previous_revision = local.last_imported_revision;
+            if self.params.reheat.is_some() {
+                if local.last_imported_revision != Some(shared.revision()) {
+                    self.import_shared_best(&mut local, shared);
+                    best_imports += 1;
+                    temperature.mark_improvement(elapsed);
+                } else if temperature.should_reheat(elapsed) {
                     let revision = self.import_shared_best(&mut local, shared);
-                    local.best_exploration_started_iteration = context.iterations();
-                    if previous_revision == Some(revision) {
-                        best_returns += 1;
-                        reheats += 1;
-                        temperature.start_reheat(context.iterations());
-                        log!(
-                            "[{:.4}] [{} worker={worker_id}] reheat: revision={revision}, iter={}, interval={}, temperature_scale={:.3}",
-                            timer.elapsed_seconds(),
-                            self.delegate.name(),
-                            context.iterations(),
-                            reheat.interval,
-                            reheat.temperature_scale,
-                        );
-                    } else {
-                        best_imports += 1;
-                        temperature.cancel_reheat();
-                    }
+                    best_returns += 1;
+                    reheats += 1;
+                    temperature.start_reheat(elapsed);
+                    log!(
+                        "[{elapsed:.4}] [{} worker={worker_id}] reheat: revision={revision}, iter={}, target_acceptance={:.4}",
+                        self.delegate.name(),
+                        context.iterations(),
+                        self.params.reheat.unwrap().worsening_acceptance,
+                    );
                 }
             } else if context.should_exchange(self.params.exchange_interval)
                 && self.exchange_shared(&mut local, shared)
@@ -542,15 +532,16 @@ impl<D: AnnealingDelegate> Annealer<D> {
             }
 
             let current_score = local.current.annealing_score();
-            let has_tardiness = local.current.has_tardiness();
-            let current_temperature =
-                temperature.current(elapsed, context.iterations(), has_tardiness);
+            let current_temperature = temperature.current(elapsed);
             if elapsed >= next_status_time {
                 log!(
-                    "[{elapsed:.4}] [{} worker={worker_id}] iter={:8}, current={current_score:.3}, temperature={current_temperature:.6}, regime={}",
+                    "[{elapsed:.4}] [{} worker={worker_id}] iter={:8}, current={current_score:.3}, temperature={current_temperature:.6}, delta_samples={}, delta_median={:?}, target_acceptance={:.4}, reheating={}",
                     self.delegate.name(),
                     context.iterations(),
-                    if has_tardiness { "T>0" } else { "T=0" },
+                    temperature.deltas.values.len(),
+                    temperature.deltas.median,
+                    temperature.last_target_acceptance,
+                    temperature.reheat_started_at.is_some(),
                 );
                 next_status_time = (elapsed / STATUS_LOG_INTERVAL_SECONDS).floor()
                     * STATUS_LOG_INTERVAL_SECONDS
@@ -574,12 +565,15 @@ impl<D: AnnealingDelegate> Annealer<D> {
             let candidate_score = candidate.annealing_score();
             let candidate_tabu_key = candidate.tabu_key();
             let tabu = candidate_tabu_key.is_some_and(|key| local.tabu.contains(key));
+            let delta = candidate_score - current_score;
+            if !tabu && attempt.temperature_sample && delta > EPS {
+                temperature.observe(delta);
+            }
             if tabu && candidate_score + EPS >= local.local_best_score {
                 stats.time_sec += neighbor_start.elapsed().as_secs_f64();
                 continue;
             }
 
-            let delta = candidate_score - current_score;
             if delta < -EPS {
                 stats.improved += 1;
                 stats.improved_delta_sum += -delta;
@@ -599,6 +593,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
             if candidate_score + EPS < local.local_best_score {
                 local.local_best_score = candidate_score;
                 improved += 1;
+                temperature.mark_improvement(elapsed);
                 log!(
                     "[{:.4}] [{}]  local best: worker={}, iter={:8}, score={:.3}",
                     timer.elapsed_seconds(),
@@ -610,9 +605,6 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 if let Some(revision) = shared.update(&local.current) {
                     if self.params.reheat.is_some() {
                         local.last_imported_revision = Some(revision);
-                        local.best_exploration_started_iteration =
-                            context.iterations().saturating_add(1);
-                        temperature.cancel_reheat();
                     }
                     self.delegate.on_shared_best(&local.current, timer);
                     log!(
@@ -628,6 +620,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
             stats.time_sec += neighbor_start.elapsed().as_secs_f64();
         }
 
+        let final_temperature = temperature.current(timer.elapsed_seconds());
         WorkerSummary {
             worker_id,
             iterations: context.iterations(),
@@ -636,8 +629,10 @@ impl<D: AnnealingDelegate> Annealer<D> {
             best_imports,
             best_returns,
             reheats,
-            positive_tardiness_temperature,
-            zero_tardiness_temperature,
+            temperature: final_temperature,
+            delta_samples: temperature.deltas.values.len(),
+            delta_median: temperature.deltas.median,
+            target_acceptance: temperature.last_target_acceptance,
             current_score: local.current.annealing_score(),
             local_best_score: local.local_best_score,
             neighbor_stats,
@@ -659,14 +654,9 @@ impl<D: AnnealingDelegate> Annealer<D> {
         local: &mut WorkerState<D::State>,
         shared: &SharedBest<D::State>,
     ) -> bool {
-        let exchange_threshold = if local.current.has_tardiness() {
-            self.params.positive_tardiness.exchange_threshold
-        } else {
-            self.params.zero_tardiness.exchange_threshold
-        };
         if let Some((best, revision)) = shared.get_if_better(
             local.current.annealing_score(),
-            exchange_threshold,
+            self.params.exchange_threshold,
             local.last_imported_revision,
         ) {
             apply_shared_best(local, best, revision);

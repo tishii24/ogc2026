@@ -4,9 +4,7 @@ use serde::Deserialize;
 
 use crate::{
     Problem,
-    solver::annealing::{
-        AnnealingParams, AnnealingRegimeParams, ReheatParams, TemperatureScheduleKind,
-    },
+    solver::annealing::{AnnealingParams, ReheatParams},
 };
 
 #[derive(Clone, Debug, Deserialize)]
@@ -117,64 +115,10 @@ impl WeightScaleConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TemperatureScheduleConfig {
-    Linear,
-    Cosine,
-    Geometric,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AnnealingRegimeConfig {
-    #[serde(rename = "type")]
-    pub schedule_type: TemperatureScheduleConfig,
-    pub temperature_w1_scale: Option<(f64, f64)>,
-    pub temperature_w3_scale: Option<(f64, f64)>,
-    pub temperature_initial_score_per_block_scale: Option<(f64, f64)>,
-    pub exchange_threshold: WeightScaleConfig,
-}
-
-impl AnnealingRegimeConfig {
-    fn make(&self, problem: &Problem, initial_score: f64) -> AnnealingRegimeParams {
-        let initial_score_per_block = initial_score / problem.blocks.len() as f64;
-        let candidates = [
-            self.temperature_w1_scale
-                .map(|scale| [scale.0 * problem.weights.w1, scale.1 * problem.weights.w1]),
-            self.temperature_w3_scale
-                .map(|scale| [scale.0 * problem.weights.w3, scale.1 * problem.weights.w3]),
-            self.temperature_initial_score_per_block_scale.map(|scale| {
-                [
-                    scale.0 * initial_score_per_block,
-                    scale.1 * initial_score_per_block,
-                ]
-            }),
-        ];
-        let temperature = [0, 1].map(|index| {
-            candidates
-                .iter()
-                .flatten()
-                .map(|range| range[index])
-                .reduce(f64::min)
-                .unwrap()
-        });
-        let temperature_schedule = match self.schedule_type {
-            TemperatureScheduleConfig::Linear => TemperatureScheduleKind::Linear,
-            TemperatureScheduleConfig::Cosine => TemperatureScheduleKind::Cosine,
-            TemperatureScheduleConfig::Geometric => TemperatureScheduleKind::Geometric,
-        };
-        AnnealingRegimeParams {
-            temperature_schedule,
-            temperature: (temperature[0], temperature[1]),
-            exchange_threshold: self.exchange_threshold.make(problem),
-        }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnnealingConfigs {
+    pub sample_window: usize,
     pub preoptimize: AnnealingParamsConfig,
     pub global_constrained: AnnealingParamsConfig,
     pub global: AnnealingParamsConfig,
@@ -183,35 +127,32 @@ pub struct AnnealingConfigs {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReheatConfig {
-    pub best_return_interval: usize,
-    pub interval: usize,
-    pub temperature_scale: f64,
+    pub stagnation_time_ratio: f64,
+    pub worsening_acceptance: f64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnnealingParamsConfig {
+    pub worsening_acceptance: (f64, f64),
     pub exchange_interval: usize,
+    pub exchange_threshold: WeightScaleConfig,
     #[serde(default)]
     pub reheat: Option<ReheatConfig>,
-    pub positive_tardiness: AnnealingRegimeConfig,
-    pub zero_tardiness: AnnealingRegimeConfig,
-    pub worker_temperature_scale: f64,
     pub tabu_capacity: usize,
 }
 
 impl AnnealingParamsConfig {
-    pub(crate) fn make(&self, problem: &Problem, initial_score: f64) -> AnnealingParams {
+    pub(crate) fn make(&self, problem: &Problem, sample_window: usize) -> AnnealingParams {
         AnnealingParams {
+            sample_window,
+            worsening_acceptance: self.worsening_acceptance,
             exchange_interval: self.exchange_interval,
+            exchange_threshold: self.exchange_threshold.make(problem),
             reheat: self.reheat.as_ref().map(|reheat| ReheatParams {
-                best_return_interval: reheat.best_return_interval,
-                interval: reheat.interval,
-                temperature_scale: reheat.temperature_scale,
+                stagnation_time_ratio: reheat.stagnation_time_ratio,
+                worsening_acceptance: reheat.worsening_acceptance,
             }),
-            positive_tardiness: self.positive_tardiness.make(problem, initial_score),
-            zero_tardiness: self.zero_tardiness.make(problem, initial_score),
-            worker_temperature_scale: self.worker_temperature_scale,
             tabu_capacity: self.tabu_capacity,
         }
     }
