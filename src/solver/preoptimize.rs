@@ -873,6 +873,8 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
         AnnealingAttempt {
             neighbor_kind,
             candidate: succeeded.then_some(candidate),
+            #[cfg(feature = "anneal-visualizer")]
+            selected_block_ids: None,
         }
     }
 

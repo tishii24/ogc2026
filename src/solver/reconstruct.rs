@@ -282,6 +282,12 @@ pub(super) fn build_reconstruct_base(
     }
 }
 
+pub(super) struct LargeReconstructResult {
+    pub(super) schedule: Vec<ScheduledBlock>,
+    #[cfg(feature = "anneal-visualizer")]
+    pub(super) selected_block_ids: Vec<usize>,
+}
+
 pub(super) fn try_large_reconstruct<R: Random>(
     problem: &Problem,
     pre: &Precompute,
@@ -291,7 +297,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
     accept_threshold: f64,
     params: &ReconstructNeighborParams,
     insert_params: &InsertParams,
-) -> Option<Vec<ScheduledBlock>> {
+) -> Option<LargeReconstructResult> {
     let k = sample_removed_count(rng, params).min(problem.blocks.len());
 
     let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng, params)?;
@@ -383,7 +389,11 @@ pub(super) fn try_large_reconstruct<R: Random>(
         cur.push(scheduled);
     }
 
-    Some(cur)
+    Some(LargeReconstructResult {
+        schedule: cur,
+        #[cfg(feature = "anneal-visualizer")]
+        selected_block_ids: removed_ids,
+    })
 }
 
 pub(super) fn scheduled_by_id(

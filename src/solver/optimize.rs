@@ -124,6 +124,16 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
         self.candidate_emitter.emit(state, self.timer, false);
     }
 
+    #[cfg(feature = "anneal-visualizer")]
+    fn visualizer_schedule<'a>(&self, state: &'a Self::State) -> Option<&'a [ScheduledBlock]> {
+        Some(&state.schedule)
+    }
+
+    #[cfg(feature = "anneal-visualizer")]
+    fn visualizer_problem(&self) -> Option<&Problem> {
+        Some(self.problem)
+    }
+
     fn propose(
         &self,
         current: &Self::State,
@@ -134,6 +144,8 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
         let params = self.params;
         let probabilities = params.probabilities.weights();
         let neighbor = sample_neighbor(rng, &probabilities);
+        #[cfg(feature = "anneal-visualizer")]
+        let mut selected_block_ids = None;
         let schedule = match neighbor {
             NeighborKind::LargeReconstruct => try_large_reconstruct(
                 self.problem,
@@ -144,7 +156,14 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                 accept_threshold,
                 &params.reconstruct,
                 self.insert_params,
-            ),
+            )
+            .map(|result| {
+                #[cfg(feature = "anneal-visualizer")]
+                {
+                    selected_block_ids = Some(result.selected_block_ids);
+                }
+                result.schedule
+            }),
 
             NeighborKind::Shift => try_shift_neighbor(
                 self.problem,
@@ -193,6 +212,8 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
                     schedule,
                 }
             }),
+            #[cfg(feature = "anneal-visualizer")]
+            selected_block_ids,
         }
     }
 

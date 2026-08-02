@@ -13,6 +13,11 @@ use crate::utils::{
     random::{RandPcg64Mcg, Random},
     time::Timer,
 };
+#[cfg(feature = "anneal-visualizer")]
+use crate::{
+    Problem, ScheduledBlock,
+    utils::anneal_visualizer::{AnnealVisualizer, SnapshotMeta},
+};
 
 const EPS: f64 = 1e-9;
 const STATUS_LOG_INTERVAL_SECONDS: f64 = 1.0;
@@ -252,6 +257,8 @@ pub(crate) struct AnnealingParams {
 pub(crate) struct AnnealingAttempt<S> {
     pub(crate) neighbor_kind: usize,
     pub(crate) candidate: Option<S>,
+    #[cfg(feature = "anneal-visualizer")]
+    pub(crate) selected_block_ids: Option<Vec<usize>>,
 }
 
 #[derive(Clone, Default)]
@@ -341,6 +348,16 @@ pub(crate) trait AnnealingDelegate: Sync {
     ) -> AnnealingAttempt<Self::State>;
 
     fn on_shared_best(&self, _state: &Self::State, _timer: Timer) {}
+
+    #[cfg(feature = "anneal-visualizer")]
+    fn visualizer_schedule<'a>(&self, _state: &'a Self::State) -> Option<&'a [ScheduledBlock]> {
+        None
+    }
+
+    #[cfg(feature = "anneal-visualizer")]
+    fn visualizer_problem(&self) -> Option<&Problem> {
+        None
+    }
 
     fn finish(&self, state: Self::State) -> Self::Output;
 }
@@ -493,6 +510,12 @@ impl<D: AnnealingDelegate> Annealer<D> {
             self.deadline,
             self.rng_seed.wrapping_add(worker_id as u64),
         );
+        #[cfg(feature = "anneal-visualizer")]
+        let mut visualizer = self
+            .delegate
+            .visualizer_schedule(&local.current)
+            .and_then(|_| AnnealVisualizer::new(self.delegate.name(), worker_id));
+
         let mut accepted = 0usize;
         let mut improved = 0usize;
         let mut best_imports = 0usize;
@@ -563,7 +586,8 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 .delegate
                 .propose(&local.current, accept_threshold, &mut context.rng);
             debug_assert!(attempt.neighbor_kind < neighbor_stats.len());
-            let stats = &mut neighbor_stats[attempt.neighbor_kind];
+            let neighbor_kind = attempt.neighbor_kind;
+            let stats = &mut neighbor_stats[neighbor_kind];
             stats.selected += 1;
 
             let Some(candidate) = attempt.candidate else {
@@ -574,17 +598,54 @@ impl<D: AnnealingDelegate> Annealer<D> {
             let candidate_score = candidate.annealing_score();
             let candidate_tabu_key = candidate.tabu_key();
             let tabu = candidate_tabu_key.is_some_and(|key| local.tabu.contains(key));
-            if tabu && candidate_score + EPS >= local.local_best_score {
+            let tabu_rejected = tabu && candidate_score + EPS >= local.local_best_score;
+            let delta = candidate_score - current_score;
+            let accepted_candidate = !tabu_rejected && candidate_score <= accept_threshold;
+            let improved_best =
+                accepted_candidate && candidate_score + EPS < local.local_best_score;
+            #[cfg(feature = "anneal-visualizer")]
+            if let Some(selected_block_ids) = attempt.selected_block_ids.as_deref() {
+                self.visualize_snapshot(
+                    &mut visualizer,
+                    &local.current,
+                    &candidate,
+                    SnapshotMeta {
+                        worker: worker_id,
+                        iter: context.iterations(),
+                        elapsed,
+                        reason: if tabu_rejected {
+                            "tabu"
+                        } else if accepted_candidate {
+                            "accepted"
+                        } else {
+                            "rejected"
+                        },
+                        neighbor: Some(self.delegate.neighbor_kinds()[neighbor_kind]),
+                        accepted: accepted_candidate,
+                        improved_current: delta < -EPS,
+                        improved_best,
+                        score: candidate_score,
+                        current_score,
+                        best_score: if improved_best {
+                            candidate_score
+                        } else {
+                            local.local_best_score
+                        },
+                        delta,
+                        selected_block_ids,
+                    },
+                );
+            }
+            if tabu_rejected {
                 stats.time_sec += neighbor_start.elapsed().as_secs_f64();
                 continue;
             }
 
-            let delta = candidate_score - current_score;
             if delta < -EPS {
                 stats.improved += 1;
                 stats.improved_delta_sum += -delta;
             }
-            if candidate_score > accept_threshold {
+            if !accepted_candidate {
                 stats.time_sec += neighbor_start.elapsed().as_secs_f64();
                 continue;
             }
@@ -596,7 +657,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 local.tabu.insert(key);
             }
 
-            if candidate_score + EPS < local.local_best_score {
+            if improved_best {
                 local.local_best_score = candidate_score;
                 improved += 1;
                 log!(
@@ -625,6 +686,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
                     );
                 }
             }
+
             stats.time_sec += neighbor_start.elapsed().as_secs_f64();
         }
 
@@ -641,6 +703,24 @@ impl<D: AnnealingDelegate> Annealer<D> {
             current_score: local.current.annealing_score(),
             local_best_score: local.local_best_score,
             neighbor_stats,
+        }
+    }
+
+    #[cfg(feature = "anneal-visualizer")]
+    fn visualize_snapshot(
+        &self,
+        visualizer: &mut Option<AnnealVisualizer>,
+        current: &D::State,
+        candidate: &D::State,
+        meta: SnapshotMeta<'_>,
+    ) {
+        if let (Some(visualizer), Some(problem), Some(current_schedule), Some(candidate_schedule)) = (
+            visualizer,
+            self.delegate.visualizer_problem(),
+            self.delegate.visualizer_schedule(current),
+            self.delegate.visualizer_schedule(candidate),
+        ) {
+            visualizer.snapshot(meta, problem, current_schedule, candidate_schedule);
         }
     }
 

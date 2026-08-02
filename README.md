@@ -76,3 +76,19 @@ docker run --rm \
 (cd "solutions/$VERSION" && zip -r "../../$VERSION.zip" .)
 zipinfo "$VERSION.zip"
 ```
+
+## 可視化
+
+```bash
+PROB=in/preliminary_test/prob_5.json
+cargo run --bin ogc2026 --release --features anneal-visualizer -- \
+  --input $PROB \
+  --params params/default.yaml \
+  --timelimit 300 \
+  --visualize tmp/anneal > /dev/null
+
+python3 tools/anneal_visualizer.py \
+  $PROB \
+  tmp/anneal/global \
+  --worker-id 0
+```

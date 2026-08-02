@@ -58,14 +58,15 @@ def annotate_changed_blocks(snapshots: list[dict[str, Any]]) -> None:
             int(block.get("block_id", -1)): schedule_signature(block)
             for block in snapshot.get("schedule", [])
         }
-        if prev_by_block is None:
-            snapshot["changed_block_ids"] = []
-        else:
-            snapshot["changed_block_ids"] = sorted(
-                block_id
-                for block_id, signature in cur_by_block.items()
-                if prev_by_block.get(block_id) != signature
-            )
+        if "changed_block_ids" not in snapshot:
+            if prev_by_block is None:
+                snapshot["changed_block_ids"] = []
+            else:
+                snapshot["changed_block_ids"] = sorted(
+                    block_id
+                    for block_id, signature in cur_by_block.items()
+                    if prev_by_block.get(block_id) != signature
+                )
         prev_by_block = cur_by_block
 
 
@@ -118,6 +119,9 @@ HTML_TEMPLATE = r"""<!doctype html>
   .bay-title { font-weight: 600; font-size: 14px; margin-bottom: 6px; display: flex; justify-content: space-between; }
   canvas { width: 100%; display: block; background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; }
   .phase-title { margin: 8px 0 4px 0; font-family: Menlo, Consolas, monospace; font-size: 12px; color: #475569; }
+  .improvement-table { width: 100%; border-collapse: collapse; font-family: Menlo, Consolas, monospace; font-size: 12px; }
+  .improvement-table th, .improvement-table td { padding: 5px 8px; border-bottom: 1px solid #e5e7eb; text-align: right; }
+  .improvement-table th:first-child, .improvement-table td:first-child, .improvement-table th:nth-child(3), .improvement-table td:nth-child(3) { text-align: left; }
   .muted { color: #6b7280; }
 </style>
 </head>
@@ -134,6 +138,13 @@ HTML_TEMPLATE = r"""<!doctype html>
           <option value="20">20x</option>
         </select>
       </label>
+      <label>Neighbor
+        <select id="neighborSelect"></select>
+      </label>
+      <label>
+        <input id="improvedCurrentOnly" type="checkbox">
+        Improved current only
+      </label>
       <span id="snapLabel"></span>
     </div>
     <div class="topbar" style="margin-top:10px;">
@@ -141,12 +152,15 @@ HTML_TEMPLATE = r"""<!doctype html>
     </div>
     <div id="summary" style="margin-top:10px;"></div>
     <div class="legend" style="margin-top:10px;">
-      <span class="chip"><span class="swatch" style="background:#d1fae5"></span>T=0</span>
-      <span class="chip"><span class="swatch" style="background:#fef3c7"></span>T≤10</span>
-      <span class="chip"><span class="swatch" style="background:#fcd34d"></span>T≤30</span>
-      <span class="chip"><span class="swatch" style="background:#fb923c"></span>T≤60</span>
-      <span class="chip"><span class="swatch" style="background:#f87171"></span>T&gt;60</span>
-      <span class="chip"><span class="swatch" style="background:#fff;border:3px solid #2563eb"></span>changed</span>
+      <span class="chip"><span class="swatch" style="background:#d1fae5"></span>P=0</span>
+      <span class="chip"><span class="swatch" style="background:#fef3c7"></span>P≤10</span>
+      <span class="chip"><span class="swatch" style="background:#fcd34d"></span>P≤30</span>
+      <span class="chip"><span class="swatch" style="background:#fb923c"></span>P≤60</span>
+      <span class="chip"><span class="swatch" style="background:#f87171"></span>P&gt;60</span>
+      <span class="chip"><span class="swatch" style="background:#fff;border:3px solid #dc2626"></span>tardiness &gt; 0</span>
+      <span class="chip"><span class="swatch" style="background:rgba(86,125,145,0.5)"></span>changed</span>
+      <span class="chip"><span class="swatch" style="background:#fff;border:3px solid #766b8f"></span>selected by reconstruct</span>
+      <span class="chip"><span class="swatch" style="background:#6f917f"></span>score-improved ID</span>
     </div>
   </div>
 
@@ -157,18 +171,27 @@ HTML_TEMPLATE = r"""<!doctype html>
     <div id="blockInfo" class="muted">Hover a block.</div>
   </div>
 
+  <div class="panel">
+    <h3 style="margin:0 0 8px 0;font-size:16px;">Improved blocks</h3>
+    <div id="improvedBlocks" class="muted">No block score improvements.</div>
+  </div>
+
 <script id="viewer-data" type="application/json">__VIEWER_DATA__</script>
 <script>
 'use strict';
 
 const viewerData = JSON.parse(document.getElementById('viewer-data').textContent);
 const problem = viewerData.problem;
-const snapshots = viewerData.snapshots || [];
+const allSnapshots = viewerData.snapshots || [];
+let snapshots = allSnapshots;
 const playButton = document.getElementById('playButton');
 const speedSelect = document.getElementById('speedSelect');
+const neighborSelect = document.getElementById('neighborSelect');
+const improvedCurrentOnly = document.getElementById('improvedCurrentOnly');
 const snapSlider = document.getElementById('snapSlider');
 const snapLabel = document.getElementById('snapLabel');
 const summary = document.getElementById('summary');
+const improvedBlocks = document.getElementById('improvedBlocks');
 const baysRoot = document.getElementById('bays');
 const blockInfo = document.getElementById('blockInfo');
 let currentIndex = 0;
@@ -184,12 +207,20 @@ function formatNumber(value, digits = 3) {
   return Number.isInteger(num) ? String(num) : num.toFixed(digits);
 }
 
-function tardinessColor(t) {
-  if (t <= 0) return '#d1fae5';
-  if (t <= 10) return '#fef3c7';
-  if (t <= 30) return '#fcd34d';
-  if (t <= 60) return '#fb923c';
+function penaltyColor(p) {
+  if (p <= 0) return '#d1fae5';
+  if (p <= 10) return '#fef3c7';
+  if (p <= 30) return '#fcd34d';
+  if (p <= 60) return '#fb923c';
   return '#f87171';
+}
+
+function blockPreferencePenalty(s) {
+  const block = problem.blocks[s.block_id] || {};
+  const prefs = block.bay_preferences || [];
+  const assignedPref = Number(prefs[s.bay_id] || 0);
+  const maxPref = Math.max(assignedPref, ...prefs.map(Number));
+  return maxPref - assignedPref;
 }
 
 function currentSnapshot() { return snapshots[currentIndex] || { schedule: [] }; }
@@ -215,15 +246,55 @@ function changedBlockSet() {
   return new Set((currentSnapshot().changed_block_ids || []).map(Number));
 }
 
+function selectedBlockSet() {
+  return new Set((currentSnapshot().selected_block_ids || []).map(Number));
+}
+
+function blockImprovementMap() {
+  return new Map(
+    (currentSnapshot().block_improvements || []).map(item => [Number(item.block_id), item])
+  );
+}
+
 function setup() {
-  snapSlider.max = String(Math.max(0, snapshots.length - 1));
+  const neighbors = [...new Set(
+    allSnapshots.map(snapshot => snapshot.neighbor).filter(neighbor => neighbor)
+  )].sort();
+  neighborSelect.appendChild(new Option('All', ''));
+  neighbors.forEach(neighbor => neighborSelect.appendChild(new Option(neighbor, neighbor)));
   renderBays();
+  applyFilters();
+}
+
+function applyFilters() {
+  const neighbor = neighborSelect.value;
+  snapshots = allSnapshots.filter(snapshot =>
+    (!neighbor || snapshot.neighbor === neighbor)
+      && (!improvedCurrentOnly.checked || snapshot.improved_current === true)
+  );
+  currentIndex = 0;
+  currentIndexFloat = 0;
+  playing = false;
+  lastFrameTime = null;
+  playButton.textContent = 'Play';
+  playButton.disabled = snapshots.length === 0;
+  snapSlider.disabled = snapshots.length === 0;
+  snapSlider.max = String(Math.max(0, snapshots.length - 1));
   updateAll();
 }
 
 function renderBays() {
   baysRoot.innerHTML = '';
   canvases = [];
+  const commonAspect = Math.max(
+    ...(problem.bays || []).map(bay =>
+      Number(bay.height || 1) / Math.max(1, Number(bay.width || 1))
+    )
+  );
+  const commonCanvasHeight = Math.max(
+    120,
+    Math.min(260, Math.round(360 * commonAspect + 50))
+  );
   (problem.bays || []).forEach((bay, bayId) => {
     const card = document.createElement('div');
     card.className = 'bay-card';
@@ -231,7 +302,6 @@ function renderBays() {
     title.className = 'bay-title';
     title.innerHTML = `<span>Bay ${bayId}</span><span class="muted">${bay.width} × ${bay.height}</span>`;
     card.appendChild(title);
-    const aspect = Number(bay.height || 1) / Math.max(1, Number(bay.width || 1));
     for (let phaseIndex = 0; phaseIndex < 4; phaseIndex++) {
       const phaseTitle = document.createElement('div');
       phaseTitle.className = 'phase-title';
@@ -242,7 +312,7 @@ function renderBays() {
       const canvas = document.createElement('canvas');
       canvas.dataset.bayId = String(bayId);
       canvas.dataset.phaseIndex = String(phaseIndex);
-      canvas.style.height = `${Math.max(120, Math.min(260, Math.round(360 * aspect + 50)))}px`;
+      canvas.style.height = `${commonCanvasHeight}px`;
       canvas.addEventListener('mousemove', onCanvasMouseMove);
       canvas.addEventListener('mouseleave', () => {
         blockInfo.textContent = 'Hover a block.';
@@ -288,6 +358,7 @@ function drawAll() {
   updatePhaseTitles();
   canvases.forEach(drawBay);
   updateSummary();
+  updateImprovedBlocks();
 }
 
 function updatePhaseTitles() {
@@ -316,17 +387,31 @@ function drawBay(canvas) {
   const phaseIndex = Number(canvas.dataset.phaseIndex || 0);
   const blocks = activeBlocksForBayAtPhase(bayId, phaseIndex);
   const changed = changedBlockSet();
+  const selected = selectedBlockSet();
+  const improvements = blockImprovementMap();
   blocks.sort((a, b) => Number(a.block_id) - Number(b.block_id));
-  for (const s of blocks) drawBlock(ctx, width, height, bay, s, changed.has(Number(s.block_id)));
+  for (const s of blocks) {
+    const blockId = Number(s.block_id);
+    drawBlock(
+      ctx,
+      width,
+      height,
+      bay,
+      s,
+      changed.has(blockId),
+      selected.has(blockId),
+      improvements.has(blockId),
+    );
+  }
 }
 
-function drawBlock(ctx, width, height, bay, s, isChanged) {
+function drawBlock(ctx, width, height, bay, s, isChanged, isSelected, isImproved) {
   const block = problem.blocks[s.block_id];
   if (!block) return;
   const orient = (block.shape || [])[s.orient_idx];
   if (!orient) return;
   const layers = orient.layers || [];
-  const color = tardinessColor(blockTardiness(s));
+  const color = penaltyColor(blockPreferencePenalty(s));
   layers.forEach((poly, layerIndex) => {
     if (!poly.length) return;
     ctx.beginPath();
@@ -336,19 +421,25 @@ function drawBlock(ctx, width, height, bay, s, isChanged) {
     });
     ctx.closePath();
     ctx.fillStyle = color;
-    ctx.globalAlpha = Math.max(0.18, 0.72 - layerIndex * 0.08);
+    ctx.globalAlpha = Math.max(0.35, 0.68 - layerIndex * 0.08);
     ctx.fill();
     ctx.globalAlpha = 1;
     ctx.strokeStyle = blockTardiness(s) > 0 ? '#dc2626' : '#334155';
     ctx.lineWidth = blockTardiness(s) > 0 ? 2 : 1;
     ctx.stroke();
     if (isChanged) {
-      ctx.strokeStyle = 'rgba(37,99,235,0.35)';
-      ctx.lineWidth = 8;
+      ctx.save();
+      ctx.fillStyle = 'rgba(86,125,145,0.5)';
+      ctx.fill();
+      ctx.restore();
+    }
+    if (isSelected) {
+      ctx.save();
+      ctx.strokeStyle = '#766b8f';
+      ctx.lineWidth = 4;
+      ctx.lineJoin = 'round';
       ctx.stroke();
-      ctx.strokeStyle = '#2563eb';
-      ctx.lineWidth = 3;
-      ctx.stroke();
+      ctx.restore();
     }
   });
 
@@ -357,8 +448,8 @@ function drawBlock(ctx, width, height, bay, s, isChanged) {
     const xs = first.map(pt => Number(s.x) + Number(pt[0]));
     const ys = first.map(pt => Number(s.y) + Number(pt[1]));
     const [cx, cy] = transformPoint((Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2, bay, width, height);
-    ctx.fillStyle = '#111827';
-    ctx.font = isChanged ? 'bold 12px Menlo, Consolas, monospace' : '11px Menlo, Consolas, monospace';
+    ctx.fillStyle = isImproved ? '#527262' : '#111827';
+    ctx.font = isChanged || isSelected || isImproved ? 'bold 12px Menlo, Consolas, monospace' : '11px Menlo, Consolas, monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(String(s.block_id), cx, cy);
@@ -398,6 +489,8 @@ function onCanvasMouseMove(event) {
   const phaseTime = currentPhaseTimes()[phaseIndex] ?? 0;
   const [x, y] = canvasToBay(canvas, event);
   const changed = changedBlockSet();
+  const selected = selectedBlockSet();
+  const improvements = blockImprovementMap();
   const blocks = activeBlocksForBayAtPhase(bayId, phaseIndex);
   for (let k = blocks.length - 1; k >= 0; k--) {
     const s = blocks[k];
@@ -408,12 +501,16 @@ function onCanvasMouseMove(event) {
       const shifted = poly.map(pt => [Number(s.x) + Number(pt[0]), Number(s.y) + Number(pt[1])]);
       if (pointInPolygon(x, y, shifted)) {
         const tardy = blockTardiness(s);
-        const prefs = block.bay_preferences || [];
-        const pref = Number(prefs[s.bay_id] || 0);
-        const maxPref = Math.max(pref, ...prefs.map(Number));
+        const prefPenalty = blockPreferencePenalty(s);
         blockInfo.classList.remove('muted');
-        const isChanged = changed.has(Number(s.block_id));
-        blockInfo.textContent = `phase=${phaseIndex + 1} t=${phaseTime} changed=${isChanged}  B${s.block_id} bay=${s.bay_id} orient=${s.orient_idx} x=${s.x} y=${s.y} entry=${s.entry_time} exit=${s.exit_time} due=${block.due_date} tardiness=${tardy} pref_penalty=${maxPref - pref}`;
+        const blockId = Number(s.block_id);
+        const isChanged = changed.has(blockId);
+        const isSelected = selected.has(blockId);
+        const improvement = improvements.get(blockId);
+        const improvementText = improvement
+          ? ` score_improvement=${formatNumber(improvement.score_improvement)} reason=${(improvement.reasons || []).join(',')}`
+          : '';
+        blockInfo.textContent = `phase=${phaseIndex + 1} t=${phaseTime} changed=${isChanged} selected=${isSelected}  B${s.block_id} bay=${s.bay_id} orient=${s.orient_idx} x=${s.x} y=${s.y} entry=${s.entry_time} exit=${s.exit_time} due=${block.due_date} tardiness=${tardy} pref_penalty=${prefPenalty}${improvementText}`;
         return;
       }
     }
@@ -424,11 +521,15 @@ function onCanvasMouseMove(event) {
 
 function updateSummary() {
   const snap = currentSnapshot();
-  snapLabel.textContent = `snapshot ${currentIndex + 1} / ${snapshots.length}`;
+  const selectedNeighbor = neighborSelect.value || 'All';
+  const snapshotNumber = snapshots.length === 0 ? 0 : currentIndex + 1;
+  snapLabel.textContent = `snapshot ${snapshotNumber} / ${snapshots.length}  neighbor=${selectedNeighbor}  improved_current=${improvedCurrentOnly.checked ? 'true' : 'All'}  total=${allSnapshots.length}`;
   snapSlider.value = String(currentIndex);
   const phaseTimes = currentPhaseTimes();
   const changedIds = (snap.changed_block_ids || []).map(Number);
   const changedPreview = changedIds.slice(0, 20).join(',');
+  const selectedIds = (snap.selected_block_ids || []).map(Number);
+  const selectedPreview = selectedIds.slice(0, 20).join(',');
   summary.textContent = [
     `worker=${snap.worker ?? viewerData.worker_id}`,
     `iter=${snap.iter ?? '-'}`,
@@ -442,14 +543,46 @@ function updateSummary() {
     `current=${formatNumber(snap.current_score)}`,
     `best=${formatNumber(snap.best_score)}`,
     `delta=${formatNumber(snap.delta)}`,
+    `score13_delta=${formatNumber(snap.score13_delta)}`,
+    `obj2_delta=${formatNumber(snap.obj2_delta)}`,
     `changed=${changedIds.length}${changedPreview ? ` [${changedPreview}${changedIds.length > 20 ? ',...' : ''}]` : ''}`,
+    `selected=${selectedIds.length}${selectedPreview ? ` [${selectedPreview}${selectedIds.length > 20 ? ',...' : ''}]` : ''}`,
     `phases=[${phaseTimes.join(',')}]`,
   ].join('  ');
+}
+
+function updateImprovedBlocks() {
+  const items = currentSnapshot().block_improvements || [];
+  if (!items.length) {
+    improvedBlocks.classList.add('muted');
+    improvedBlocks.textContent = 'No block score improvements.';
+    return;
+  }
+  improvedBlocks.classList.remove('muted');
+  const rows = items.map(item => {
+    const tardiness = item.tardiness || {};
+    const preference = item.preference_penalty || {};
+    return `<tr>
+      <td>B${item.block_id}</td>
+      <td>${formatNumber(item.score_improvement)}</td>
+      <td>${(item.reasons || []).join(', ')}</td>
+      <td>${tardiness.before} → ${tardiness.after} (${formatNumber(tardiness.improvement)})</td>
+      <td>${preference.before} → ${preference.after} (${formatNumber(preference.improvement)})</td>
+    </tr>`;
+  }).join('');
+  improvedBlocks.innerHTML = `<table class="improvement-table">
+    <thead><tr><th>Block</th><th>Improvement</th><th>Reason</th><th>Tardiness</th><th>Preference</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
 }
 
 function updateAll() { drawAll(); }
 
 function setSnapshot(index, keepFloat = false) {
+  if (snapshots.length === 0) {
+    updateAll();
+    return;
+  }
   currentIndex = Math.max(0, Math.min(snapshots.length - 1, Math.floor(index)));
   if (!keepFloat) currentIndexFloat = currentIndex;
   updateAll();
@@ -477,6 +610,8 @@ playButton.addEventListener('click', () => {
   if (playing) requestAnimationFrame(animate);
 });
 snapSlider.addEventListener('input', () => setSnapshot(Number(snapSlider.value)));
+neighborSelect.addEventListener('change', applyFilters);
+improvedCurrentOnly.addEventListener('change', applyFilters);
 window.addEventListener('resize', drawAll);
 
 setup();

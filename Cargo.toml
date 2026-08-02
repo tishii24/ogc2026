@@ -5,6 +5,7 @@ edition = "2024"
 
 [features]
 local = []
+anneal-visualizer = []
 
 [dependencies]
 geo = "0.30"

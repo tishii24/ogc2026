@@ -11,6 +11,8 @@ struct Args {
     input_path: String,
     params_path: String,
     timelimit: f64,
+    #[cfg(feature = "anneal-visualizer")]
+    visualize_dir: Option<String>,
 }
 
 fn main() {
@@ -25,6 +27,10 @@ fn main() {
 
 fn run(timer: Timer) -> Result<(), String> {
     let args = parse_args(env::args().skip(1).collect())?;
+    #[cfg(feature = "anneal-visualizer")]
+    if let Some(dir) = &args.visualize_dir {
+        ogc2026::utils::anneal_visualizer::init(Path::new(dir))?;
+    }
     let params = SolverParams::load(Path::new(&args.params_path))?;
     rayon::ThreadPoolBuilder::new()
         .num_threads(params.runtime.worker_count)
@@ -57,6 +63,8 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
     let mut input_path: Option<String> = None;
     let mut params_path: Option<String> = None;
     let mut timelimit = 60.0;
+    #[cfg(feature = "anneal-visualizer")]
+    let mut visualize_dir = None;
     let mut positional = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -88,6 +96,14 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
                 i += 1;
                 if i >= args.len() {
                     return Err("--visualize requires a directory".to_string());
+                }
+                #[cfg(feature = "anneal-visualizer")]
+                {
+                    visualize_dir = Some(args[i].clone());
+                }
+                #[cfg(not(feature = "anneal-visualizer"))]
+                {
+                    return Err("--visualize requires the anneal-visualizer feature".to_string());
                 }
             }
             "--help" | "-h" => {
@@ -123,5 +139,7 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
         input_path,
         params_path,
         timelimit,
+        #[cfg(feature = "anneal-visualizer")]
+        visualize_dir,
     })
 }

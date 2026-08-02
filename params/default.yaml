@@ -118,8 +118,8 @@ global_neighbor:
     remove_entry_base_interval_weights: [0.0, 0.0, 0.0, 0.2, 0.2, 0.2, 0.2, 0.2]
     remove_entry_seed_candidate_count: 10
     remove_seed_method_weights:
-      badness: 1.0
-      fluidity: 1.0
+      badness: 0.0
+      fluidity: 0.0
       random: 2.0
     remove_fluidity_slack_weight_range: [0.5, 2.0]
     remove_fluidity_pref_spread_weight_range: [0.5, 2.0]
