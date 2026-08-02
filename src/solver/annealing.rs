@@ -74,18 +74,20 @@ impl<S: AnnealingState> SharedBest<S> {
 
 struct DeltaWindow {
     capacity: usize,
+    quantile: f64,
     values: VecDeque<f64>,
     scratch: Vec<f64>,
-    median: Option<f64>,
+    quantile_value: Option<f64>,
 }
 
 impl DeltaWindow {
-    fn new(capacity: usize) -> Self {
+    fn new(capacity: usize, quantile: f64) -> Self {
         Self {
             capacity,
+            quantile,
             values: VecDeque::with_capacity(capacity),
             scratch: Vec::with_capacity(capacity),
-            median: None,
+            quantile_value: None,
         }
     }
 
@@ -96,10 +98,10 @@ impl DeltaWindow {
         self.values.push_back(delta);
         self.scratch.clear();
         self.scratch.extend(self.values.iter().copied());
-        let middle = self.scratch.len() / 2;
+        let index = ((self.scratch.len() - 1) as f64 * self.quantile).round() as usize;
         self.scratch
-            .select_nth_unstable_by(middle, |a, b| a.total_cmp(b));
-        self.median = Some(self.scratch[middle]);
+            .select_nth_unstable_by(index, |a, b| a.total_cmp(b));
+        self.quantile_value = Some(self.scratch[index]);
     }
 }
 
@@ -122,7 +124,7 @@ impl AnnealingTemperature {
             start_time,
             deadline,
             worsening_acceptance: params.worsening_acceptance,
-            deltas: DeltaWindow::new(params.sample_window),
+            deltas: DeltaWindow::new(params.sample_window, params.worsening_delta_quantile),
             reheat: params.reheat,
             reheat_started_at: None,
             last_improvement_at: start_time,
@@ -168,8 +170,8 @@ impl AnnealingTemperature {
         };
         let temperature = self
             .deltas
-            .median
-            .map(|median| -median / target_acceptance.ln())
+            .quantile_value
+            .map(|delta| -delta / target_acceptance.ln())
             .unwrap_or(0.0);
         self.last_temperature = temperature;
         self.last_target_acceptance = target_acceptance;
@@ -249,6 +251,7 @@ pub(crate) struct ReheatParams {
 
 pub(crate) struct AnnealingParams {
     pub(crate) sample_window: usize,
+    pub(crate) worsening_delta_quantile: f64,
     pub(crate) worsening_acceptance: (f64, f64),
     pub(crate) exchange_interval: usize,
     pub(crate) exchange_threshold: f64,
@@ -325,9 +328,6 @@ pub(crate) struct WorkerSummary {
     pub(crate) best_returns: usize,
     pub(crate) reheats: usize,
     pub(crate) temperature: f64,
-    pub(crate) delta_samples: usize,
-    pub(crate) delta_median: Option<f64>,
-    pub(crate) target_acceptance: f64,
     pub(crate) current_score: f64,
     pub(crate) local_best_score: f64,
     pub(crate) neighbor_stats: Vec<NeighborStats>,
@@ -442,7 +442,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
         let state = shared.into_inner();
         for worker in &worker_results {
             log!(
-                "[{:.4}] [{:8} worker={}] iter={:8}, accepted={:8}, improved={:8}, best_imports={:5}, best_returns={:5}, reheats={:5}, current={:.3}, local_best={:.3}, temperature={:.6}, delta_samples={}, delta_median={:?}, target_acceptance={:.4}\nneighbor stats:\n{}",
+                "[{:.4}] [{:8} worker={}] iter={:8}, accepted={:8}, improved={:8}, best_imports={:5}, best_returns={:5}, reheats={:5}, current={:.3}, local_best={:.3}, temperature={:.6}, neighbor stats:\n{}",
                 timer.elapsed_seconds(),
                 self.delegate.name(),
                 worker.worker_id,
@@ -455,9 +455,6 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 worker.current_score,
                 worker.local_best_score,
                 worker.temperature,
-                worker.delta_samples,
-                worker.delta_median,
-                worker.target_acceptance,
                 format_neighbor_stats(&worker.neighbor_stats, self.delegate.neighbor_kinds()),
             );
         }
@@ -535,12 +532,9 @@ impl<D: AnnealingDelegate> Annealer<D> {
             let current_temperature = temperature.current(elapsed);
             if elapsed >= next_status_time {
                 log!(
-                    "[{elapsed:.4}] [{} worker={worker_id}] iter={:8}, current={current_score:.3}, temperature={current_temperature:.6}, delta_samples={}, delta_median={:?}, target_acceptance={:.4}, reheating={}",
+                    "[{elapsed:.4}] [{} worker={worker_id}] iter={:8}, current={current_score:.3}, temperature={current_temperature:.6}, reheating={}",
                     self.delegate.name(),
                     context.iterations(),
-                    temperature.deltas.values.len(),
-                    temperature.deltas.median,
-                    temperature.last_target_acceptance,
                     temperature.reheat_started_at.is_some(),
                 );
                 next_status_time = (elapsed / STATUS_LOG_INTERVAL_SECONDS).floor()
@@ -630,9 +624,6 @@ impl<D: AnnealingDelegate> Annealer<D> {
             best_returns,
             reheats,
             temperature: final_temperature,
-            delta_samples: temperature.deltas.values.len(),
-            delta_median: temperature.deltas.median,
-            target_acceptance: temperature.last_target_acceptance,
             current_score: local.current.annealing_score(),
             local_best_score: local.local_best_score,
             neighbor_stats,

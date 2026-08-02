@@ -24,6 +24,22 @@ bayが多いケースが苦手なのでは？
 最適化時間が長い
 並列性を活かしたい
 
+温度設定
+- 長時間のアニーリング
+- preopt
+  - 高温から低温に冷却する
+- global
+  - ランダムウォーク的に色々な状態を探索する
+  - ある程度冷却する必要はある
+  - best-scoreが更新されなければ、reheatによる再加熱を行う
+
+- score-per-block-scale := `score/blocks.len()` を使用する
+- scale-schedule := [start, end] を phase ごとに設定する
+- exchange-threshold も　score-per-block-scale にする
+- p(t) \in [0, 1] := progress
+- reheat := p(t)=0に戻して、一定iterationをかけて元に戻す
+- 
+
 ## multi-stage optimize
 
 obj1->obj1+obj2->obj1+obj2+obj3 の順で最適化することを考えたい

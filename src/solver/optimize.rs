@@ -65,6 +65,7 @@ impl<'a> GlobalAnnealing<'a> {
         deadline: f64,
         annealing: &AnnealingParamsConfig,
         sample_window: usize,
+        worsening_delta_quantile: f64,
         neighbor_params: &NeighborParams,
         insert_params: &InsertParams,
         constrained: bool,
@@ -72,7 +73,8 @@ impl<'a> GlobalAnnealing<'a> {
         max_worker_count: usize,
     ) -> OptimizeState {
         let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
-        let annealing_params = annealing.make(self.problem, sample_window);
+        let annealing_params =
+            annealing.make(self.problem, sample_window, worsening_delta_quantile);
         let delegate = GlobalAnnealingDelegate {
             problem: self.problem,
             pre: self.pre,
