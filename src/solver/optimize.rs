@@ -20,12 +20,17 @@ use super::{
 #[derive(Clone, Debug)]
 pub(super) struct OptimizeState {
     pub(super) objective: f64,
+    pub(super) total_tardiness: i64,
     pub(super) schedule: Vec<ScheduledBlock>,
 }
 
 impl AnnealingState for OptimizeState {
     fn annealing_score(&self) -> f64 {
         self.objective
+    }
+
+    fn has_tardiness(&self) -> bool {
+        self.total_tardiness > 0
     }
 
     fn tabu_key(&self) -> Option<u64> {
@@ -178,9 +183,13 @@ impl AnnealingDelegate for GlobalAnnealingDelegate<'_> {
         AnnealingAttempt {
             neighbor_kind: neighbor.index(),
             candidate: schedule.map(|schedule| {
-                let ScheduleScore { objective } = score_schedule(self.problem, self.pre, &schedule);
+                let ScheduleScore {
+                    objective,
+                    total_tardiness,
+                } = score_schedule(self.problem, self.pre, &schedule);
                 OptimizeState {
                     objective,
+                    total_tardiness,
                     schedule,
                 }
             }),

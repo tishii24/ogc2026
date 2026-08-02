@@ -145,6 +145,10 @@ impl AnnealingState for PreoptimizeAnnealingState {
         self.objective
     }
 
+    fn has_tardiness(&self) -> bool {
+        self.z1 > 0.0
+    }
+
     fn tabu_key(&self) -> Option<u64> {
         None
     }
