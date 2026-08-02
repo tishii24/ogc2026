@@ -47,7 +47,7 @@ annealing:
     exchange_interval: 2000
     positive_tardiness:
       type: geometric
-      temperature_w1_scale: [10.0, 1.0]
+      temperature_initial_score_per_block_scale: [0.2, 0.02]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
@@ -67,7 +67,7 @@ annealing:
       temperature_scale: 2.0
     positive_tardiness:
       type: geometric
-      temperature_w1_scale: [1.0, 0.9]
+      temperature_initial_score_per_block_scale: [0.2, 0.02]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
