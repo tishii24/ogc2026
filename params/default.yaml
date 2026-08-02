@@ -47,7 +47,7 @@ annealing:
     exchange_interval: 2000
     positive_tardiness:
       type: geometric
-      temperature_initial_score_per_block_scale: [1.0, 0.01]
+      temperature_initial_score_per_block_scale: [0.2, 0.02]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
@@ -67,7 +67,7 @@ annealing:
       temperature_scale: 2.0
     positive_tardiness:
       type: geometric
-      temperature_initial_score_per_block_scale: [0.5, 0.01]
+      temperature_initial_score_per_block_scale: [0.2, 0.02]
       exchange_threshold:
         w1_scale: 0.5
         w3_scale: 50.0
@@ -111,27 +111,27 @@ global_neighbor:
     swap: 3.0
   reconstruct:
     min_removed_blocks: 7
-    max_removed_blocks: 20
+    max_removed_blocks: 13
     remove_pool_factor: 4
     remove_count_sample_power: 2.0
-    remove_seed_per_block: [1, 10]
+    remove_seed_per_block: [1, 4]
     remove_entry_base_interval_weights: [0.0, 0.0, 0.0, 0.2, 0.2, 0.2, 0.2, 0.2]
     remove_entry_seed_candidate_count: 10
     remove_seed_method_weights:
       badness: 1.0
       fluidity: 1.0
-      random: 0.5
+      random: 2.0
     remove_fluidity_slack_weight_range: [0.5, 2.0]
     remove_fluidity_pref_spread_weight_range: [0.5, 2.0]
-    remove_x_distance_weight_range: [0.75, 1.25]
-    remove_y_distance_weight_range: [0.75, 1.25]
-    remove_t_distance_weight_range: [0.75, 1.25]
+    remove_x_distance_weight_range: [1.0, 4.0]
+    remove_y_distance_weight_range: [1.0, 4.0]
+    remove_t_distance_weight_range: [0.5, 1.5]
     workload_weight_range: [0.0, 0.3]
     volume_weight_range: [0.5, 2.0]
     pref_spread_weight_range: [0.0, 0.3]
     limit_time_urgency_weight_range: [0.5, 2.0]
     slack_tightness_weight_range: [0.0, 0.3]
-    current_penalty_weight_range: [0.0, 0.5]
+    current_penalty_weight_range: [0.0, 2.0]
     order_random_weight_range: [0.0, 0.3]
     insert_candidate_top_k: 4
     insert_candidate_select_p: 0.7
