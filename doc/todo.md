@@ -1,6 +1,5 @@
 todo:
 - multi-stage optimizeの検証・追加
-- 長時間の検証環境
 - adaptive-annealing
   - refactor: trait
   - reheat、温度設定
