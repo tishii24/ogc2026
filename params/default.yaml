@@ -114,6 +114,7 @@ global_neighbor:
     max_removed_blocks: 20
     remove_pool_factor: 4
     remove_count_sample_power: 2.0
+    blocker_remove_probability: 0.5
     remove_seed_per_block: [1, 10]
     remove_entry_base_interval_weights: [0.0, 0.0, 0.0, 0.2, 0.2, 0.2, 0.2, 0.2]
     remove_entry_seed_candidate_count: 10

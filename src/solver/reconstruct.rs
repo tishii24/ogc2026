@@ -20,6 +20,7 @@ use super::{
     insert::insert_greedy,
     objective::{ScheduleScore, schedule_tardiness, score_schedule, score13_block},
     optimize::OptimizeState,
+    placement_scan::PlacementXScanner,
     precompute::Precompute,
 };
 
@@ -34,6 +35,11 @@ enum RemoveSeedMethod {
 struct RemoveSeed {
     block_id: usize,
     remove_count: usize,
+}
+
+struct RemovePlan {
+    removed_ids: Vec<usize>,
+    target_id: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -293,8 +299,21 @@ pub(super) fn try_large_reconstruct<R: Random>(
     insert_params: &InsertParams,
 ) -> Option<Vec<ScheduledBlock>> {
     let k = sample_removed_count(rng, params).min(problem.blocks.len());
-
-    let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng, params)?;
+    let has_tardiness = schedule
+        .iter()
+        .any(|scheduled| scheduled.exit_time > problem.blocks[scheduled.block_id].due_date);
+    let plan = if constraints.is_none()
+        && has_tardiness
+        && rng.next_f64() < params.blocker_remove_probability
+    {
+        choose_blocker_removed_blocks(problem, pre, schedule, k, rng)?
+    } else {
+        RemovePlan {
+            removed_ids: choose_removed_blocks(problem, pre, schedule, k, rng, params)?,
+            target_id: None,
+        }
+    };
+    let mut removed_ids = plan.removed_ids;
     if removed_ids.is_empty() {
         return None;
     }
@@ -307,7 +326,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
     for &scheduled in schedule {
         current_penalties[scheduled.block_id] = score13_block(problem, pre, scheduled);
     }
-    let order = if let Some(constraints) = constraints {
+    let mut order = if let Some(constraints) = constraints {
         build_topological_order(
             problem,
             pre,
@@ -331,6 +350,11 @@ pub(super) fn try_large_reconstruct<R: Random>(
         );
         removed_ids.clone()
     };
+    if let Some(target_id) = plan.target_id
+        && let Some(target_pos) = order.iter().position(|&block_id| block_id == target_id)
+    {
+        order[..=target_pos].rotate_right(1);
+    }
 
     let original_by_id = scheduled_by_id(problem, schedule);
     let ReconstructBase {
@@ -655,6 +679,104 @@ fn collect_removed_blocks<R: Random>(
         push_removed_block(&mut selected, &mut used, block_id, k);
     }
     selected
+}
+
+fn choose_blocker_removed_blocks<R: Random>(
+    problem: &Problem,
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    k: usize,
+    rng: &mut R,
+) -> Option<RemovePlan> {
+    let mut targets = Vec::new();
+    let mut target_weights = Vec::new();
+    for &scheduled in schedule {
+        let block = &problem.blocks[scheduled.block_id];
+        let tardiness = (scheduled.exit_time - block.due_date).max(0);
+        if tardiness > 0 {
+            targets.push(scheduled);
+            target_weights.push(tardiness as f64);
+        }
+    }
+    if targets.is_empty() {
+        return None;
+    }
+
+    let target = targets[sample_weighted_index(rng, &target_weights)];
+    let target_block = &problem.blocks[target.block_id];
+    let target_entry = target_block
+        .release_time
+        .max(target_block.due_date - target_block.processing_time);
+    let mut scanner = PlacementXScanner::new(
+        problem,
+        pre,
+        schedule,
+        target.block_id,
+        target.bay_id,
+        target_entry,
+        target.entry_time,
+    )?;
+    let trace =
+        scanner.trace_fixed_placement(target.orient_idx, target.x, target.y, target_entry)?;
+    if trace.earliest_entry <= target_entry || trace.blockers.is_empty() {
+        return None;
+    }
+
+    let k = k.min(schedule.len());
+    let mut removed_ids = Vec::with_capacity(k);
+    let mut used = vec![false; problem.blocks.len()];
+    push_removed_block(&mut removed_ids, &mut used, target.block_id, k);
+    for blocker in trace.blockers {
+        push_removed_block(&mut removed_ids, &mut used, blocker.block_id, k);
+    }
+
+    let (target_x, target_y) = scheduled_center(pre, target);
+    let mut flexible: Vec<_> = schedule
+        .iter()
+        .copied()
+        .filter(|scheduled| scheduled.bay_id == target.bay_id && !used[scheduled.block_id])
+        .collect();
+    flexible.sort_by(|a, b| {
+        let block_a = &problem.blocks[a.block_id];
+        let block_b = &problem.blocks[b.block_id];
+        let headroom_a = (block_a.due_date - a.exit_time).max(0);
+        let headroom_b = (block_b.due_date - b.exit_time).max(0);
+        let entry_distance_a = a.entry_time.abs_diff(target.entry_time);
+        let entry_distance_b = b.entry_time.abs_diff(target.entry_time);
+        let (ax, ay) = scheduled_center(pre, *a);
+        let (bx, by) = scheduled_center(pre, *b);
+        let spatial_distance_a = (ax - target_x).powi(2) + (ay - target_y).powi(2);
+        let spatial_distance_b = (bx - target_x).powi(2) + (by - target_y).powi(2);
+        headroom_b
+            .cmp(&headroom_a)
+            .then(entry_distance_a.cmp(&entry_distance_b))
+            .then(spatial_distance_a.total_cmp(&spatial_distance_b))
+            .then(pre.pref_spread[a.block_id].cmp(&pre.pref_spread[b.block_id]))
+            .then(pre.max_footprint_area[a.block_id].total_cmp(&pre.max_footprint_area[b.block_id]))
+            .then(a.block_id.cmp(&b.block_id))
+    });
+    for scheduled in flexible {
+        push_removed_block(&mut removed_ids, &mut used, scheduled.block_id, k);
+    }
+
+    if removed_ids.len() < k {
+        let badness = remove_badness(problem, pre, schedule);
+        let mut fill_pool: Vec<_> = schedule
+            .iter()
+            .map(|scheduled| scheduled.block_id)
+            .filter(|&block_id| !used[block_id])
+            .collect();
+        rng.shuffle(&mut fill_pool);
+        fill_pool.sort_by_key(|&block_id| Reverse(badness[block_id]));
+        for block_id in fill_pool {
+            push_removed_block(&mut removed_ids, &mut used, block_id, k);
+        }
+    }
+
+    Some(RemovePlan {
+        removed_ids,
+        target_id: Some(target.block_id),
+    })
 }
 
 pub(super) fn choose_removed_blocks<R: Random>(

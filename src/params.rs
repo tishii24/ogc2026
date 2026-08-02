@@ -236,6 +236,7 @@ pub struct ReconstructNeighborParams {
     pub max_removed_blocks: usize,
     pub remove_pool_factor: usize,
     pub remove_count_sample_power: f64,
+    pub blocker_remove_probability: f64,
     pub remove_seed_per_block: (usize, usize),
     pub remove_entry_base_interval_weights: Vec<f64>,
     pub remove_entry_seed_candidate_count: usize,
