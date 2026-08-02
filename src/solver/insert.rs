@@ -32,6 +32,63 @@ pub(crate) fn insert_greedy<R: Random>(
     candidate_select_p: f64,
     rng: &mut R,
 ) -> Option<ScheduledBlock> {
+    insert_greedy_with_bounds(
+        problem,
+        pre,
+        original,
+        |_| (min_entry_time, max_entry_time),
+        schedule,
+        loads,
+        params,
+        bay_order,
+        candidate_top_k,
+        candidate_select_p,
+        rng,
+    )
+}
+
+pub(crate) fn insert_greedy_by_bay_min<R: Random>(
+    problem: &Problem,
+    pre: &Precompute,
+    original: ScheduledBlock,
+    min_entry_times: &[i64],
+    max_entry_time: i64,
+    schedule: &[ScheduledBlock],
+    loads: &[f64],
+    params: &InsertParams,
+    bay_order: &[usize],
+    candidate_top_k: usize,
+    candidate_select_p: f64,
+    rng: &mut R,
+) -> Option<ScheduledBlock> {
+    insert_greedy_with_bounds(
+        problem,
+        pre,
+        original,
+        |bay_id| (min_entry_times[bay_id], max_entry_time),
+        schedule,
+        loads,
+        params,
+        bay_order,
+        candidate_top_k,
+        candidate_select_p,
+        rng,
+    )
+}
+
+fn insert_greedy_with_bounds<R: Random>(
+    problem: &Problem,
+    pre: &Precompute,
+    original: ScheduledBlock,
+    entry_time_bounds: impl Fn(usize) -> (i64, i64),
+    schedule: &[ScheduledBlock],
+    loads: &[f64],
+    params: &InsertParams,
+    bay_order: &[usize],
+    candidate_top_k: usize,
+    candidate_select_p: f64,
+    rng: &mut R,
+) -> Option<ScheduledBlock> {
     fn insert_candidate_cmp(
         a: &InsertCandidate,
         b: &InsertCandidate,
@@ -78,11 +135,6 @@ pub(crate) fn insert_greedy<R: Random>(
     let block_id = original.block_id;
     let block = &problem.blocks[block_id];
     let process_t = block.processing_time;
-    let min_t = block.release_time.max(min_entry_time);
-    let max_t = max_entry_time;
-    if min_t > max_t {
-        return None;
-    }
 
     let current_obj2 = normalized_imbalance(loads, &pre.bay_load_scale);
     let original_tardiness = (original.exit_time - block.due_date).max(0);
@@ -90,6 +142,13 @@ pub(crate) fn insert_greedy<R: Random>(
     let mut best_score_delta = f64::INFINITY;
 
     for &bay_id in bay_order {
+        let (min_entry_time, max_entry_time) = entry_time_bounds(bay_id);
+        let min_t = block.release_time.max(min_entry_time);
+        let max_t = max_entry_time;
+        if min_t > max_t {
+            continue;
+        }
+
         let mut next_loads = loads.to_vec();
         next_loads[bay_id] += block.workload as f64;
 

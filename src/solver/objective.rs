@@ -15,13 +15,6 @@ pub(super) fn score13_block(problem: &Problem, pre: &Precompute, scheduled: Sche
     problem.weights.w1 * tardiness as f64 + problem.weights.w3 * pref_penalty as f64
 }
 
-pub(super) fn schedule_tardiness(problem: &Problem, schedule: &[ScheduledBlock]) -> i64 {
-    schedule
-        .iter()
-        .map(|scheduled| (scheduled.exit_time - problem.blocks[scheduled.block_id].due_date).max(0))
-        .sum()
-}
-
 pub(super) fn score_schedule(
     problem: &Problem,
     pre: &Precompute,
