@@ -107,13 +107,22 @@ pub struct PreoptimizeNeighborParams {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WeightScaleConfig {
-    pub w1_scale: f64,
-    pub w3_scale: f64,
+    #[serde(default)]
+    pub w1_scale: Option<f64>,
+    #[serde(default)]
+    pub w3_scale: Option<f64>,
 }
 
 impl WeightScaleConfig {
     fn make(&self, problem: &Problem) -> f64 {
-        (self.w1_scale * problem.weights.w1).min(self.w3_scale * problem.weights.w3)
+        [
+            self.w1_scale.map(|scale| scale * problem.weights.w1),
+            self.w3_scale.map(|scale| scale * problem.weights.w3),
+        ]
+        .into_iter()
+        .flatten()
+        .reduce(f64::min)
+        .unwrap_or(0.0)
     }
 }
 
@@ -133,7 +142,8 @@ pub struct AnnealingRegimeConfig {
     pub temperature_w1_scale: Option<(f64, f64)>,
     pub temperature_w3_scale: Option<(f64, f64)>,
     pub temperature_initial_score_per_block_scale: Option<(f64, f64)>,
-    pub exchange_threshold: WeightScaleConfig,
+    #[serde(default)]
+    pub exchange_threshold: Option<WeightScaleConfig>,
 }
 
 impl AnnealingRegimeConfig {
@@ -167,7 +177,10 @@ impl AnnealingRegimeConfig {
         AnnealingRegimeParams {
             temperature_schedule,
             temperature: (temperature[0], temperature[1]),
-            exchange_threshold: self.exchange_threshold.make(problem),
+            exchange_threshold: self
+                .exchange_threshold
+                .as_ref()
+                .map_or(0.0, |scale| scale.make(problem)),
         }
     }
 }
