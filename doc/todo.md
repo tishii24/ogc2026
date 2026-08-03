@@ -1,5 +1,6 @@
 todo:
 - report
+- build.txtを追加
 - horizonの改善
 - stderrからscoreの遷移を見る
 - 焼きなまし過程を見る
