@@ -6,7 +6,7 @@ use crate::{
     solver::{
         PreoptimizeState, PreoptimizedBlock,
         annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
-        objective::normalized_imbalance,
+        objective::score_z2,
         precompute::{
             build_bay_load_scale, build_pref_penalty, build_pref_spread, orientation_bounds,
             orientation_union,
@@ -169,7 +169,7 @@ fn evaluate_schedule(
         z3 += pref_penalty[block_id][selected.bay_id] as f64;
         loads[selected.bay_id] += block.workload as f64;
     }
-    let z2 = normalized_imbalance(&loads, bay_load_scale);
+    let z2 = score_z2(&loads, bay_load_scale);
     let objective = problem.weights.w1 * z1 + problem.weights.w2 * z2 + problem.weights.w3 * z3;
     (objective, z1, z2, z3)
 }
@@ -260,7 +260,7 @@ fn try_build_initial_state(
 
     for &block_id in order {
         let block = &problem.blocks[block_id];
-        let current_imbalance = normalized_imbalance(&loads, &context.pre.bay_load_scale);
+        let current_imbalance = score_z2(&loads, &context.pre.bay_load_scale);
         let mut best: Option<(f64, i64, usize)> = None;
         for (bay_id, occupied_area) in context.occupancy[block_id].iter().copied().enumerate() {
             let Some(occupied_area) = occupied_area else {
@@ -289,8 +289,7 @@ fn try_build_initial_state(
                 .sum::<f64>();
             let score = problem.weights.w1 * tardiness as f64
                 + problem.weights.w2
-                    * (normalized_imbalance(&next_loads, &context.pre.bay_load_scale)
-                        - current_imbalance)
+                    * (score_z2(&next_loads, &context.pre.bay_load_scale) - current_imbalance)
                 + problem.weights.w3 * context.pre.pref_penalty[block_id][bay_id] as f64
                 + problem.weights.w1 * context.params.congestion_weight * congestion_delta;
             let candidate = (score, entry_time, bay_id);
@@ -580,7 +579,7 @@ fn try_relocate(
     let workload = problem.blocks[block_id].workload as f64;
     next_loads[old.bay_id] -= workload;
     next_loads[selected.bay_id] += workload;
-    let new_z2 = normalized_imbalance(&next_loads, &context.pre.bay_load_scale);
+    let new_z2 = score_z2(&next_loads, &context.pre.bay_load_scale);
     let raw_delta = problem.weights.w1 * (new_z1 - old_z1)
         + problem.weights.w2 * (new_z2 - state.z2)
         + problem.weights.w3 * (new_z3 - old_z3);
@@ -690,7 +689,7 @@ fn try_swap(
     next_loads[old_b.bay_id] -= problem.blocks[b].workload as f64;
     next_loads[new_a.bay_id] += problem.blocks[a].workload as f64;
     next_loads[new_b.bay_id] += problem.blocks[b].workload as f64;
-    let new_z2 = normalized_imbalance(&next_loads, &context.pre.bay_load_scale);
+    let new_z2 = score_z2(&next_loads, &context.pre.bay_load_scale);
     let raw_delta = problem.weights.w1 * (new_z1 - old_z1)
         + problem.weights.w2 * (new_z2 - state.z2)
         + problem.weights.w3 * (new_z3 - old_z3);

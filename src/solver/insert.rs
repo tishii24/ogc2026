@@ -1,8 +1,6 @@
 use crate::{Boundsf, Problem, ScheduledBlock, params::InsertParams, utils::random::Random};
 
-use super::{
-    objective::normalized_imbalance, placement_scan::PlacementXScanner, precompute::Precompute,
-};
+use super::{objective::score_z2, placement_scan::PlacementXScanner, precompute::Precompute};
 
 struct InsertCandidate {
     scheduled: ScheduledBlock,
@@ -88,7 +86,7 @@ pub(crate) fn insert_greedy<R: Random>(
     let current_obj2 = if w2 == 0.0 {
         0.0
     } else {
-        normalized_imbalance(loads, &pre.bay_load_scale)
+        score_z2(loads, &pre.bay_load_scale)
     };
     let original_tardiness = (original.exit_time - block.due_date).max(0);
     let mut candidates = Vec::new();
@@ -100,7 +98,7 @@ pub(crate) fn insert_greedy<R: Random>(
         } else {
             let mut next_loads = loads.to_vec();
             next_loads[bay_id] += block.workload as f64;
-            w2 * (normalized_imbalance(&next_loads, &pre.bay_load_scale) - current_obj2)
+            w2 * (score_z2(&next_loads, &pre.bay_load_scale) - current_obj2)
         };
         let delta_obj23 =
             delta_obj2 + problem.weights.w3 * pre.pref_penalty[block_id][bay_id] as f64;

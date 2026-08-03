@@ -32,14 +32,14 @@ pub(super) fn score_schedule(
         obj3 += pre.pref_penalty[scheduled.block_id][scheduled.bay_id] as f64;
     }
 
-    let obj2 = normalized_imbalance(&loads, &pre.bay_load_scale);
+    let obj2 = score_z2(&loads, &pre.bay_load_scale);
     ScheduleScore {
         objective: problem.weights.w1 * obj1 as f64 + w2 * obj2 + problem.weights.w3 * obj3,
         total_tardiness: obj1,
     }
 }
 
-pub(super) fn normalized_imbalance(loads: &[f64], bay_load_scale: &[f64]) -> f64 {
+pub(super) fn score_z2(loads: &[f64], bay_load_scale: &[f64]) -> f64 {
     if loads.len() < 2 {
         return 0.0;
     }
