@@ -1,4 +1,5 @@
 pub const INF: i64 = 1 << 40;
+pub const EPS: f64 = 1e-9;
 
 pub const LOCAL: bool = cfg!(feature = "local");
 

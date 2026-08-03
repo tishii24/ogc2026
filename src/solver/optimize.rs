@@ -1,5 +1,5 @@
 use crate::{
-    Problem, ScheduledBlock,
+    EPS, Problem, ScheduledBlock,
     params::{AnnealingParamsConfig, InsertParams, NeighborParams},
     utils::{random::RandPcg64Mcg, time::Timer},
 };
@@ -15,8 +15,6 @@ use super::{
     precompute::Precompute,
     reconstruct::try_large_reconstruct,
 };
-
-const EPS: f64 = 1e-9;
 
 #[derive(Clone, Debug)]
 pub(super) struct OptimizeState {

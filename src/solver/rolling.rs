@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::{
-    INF, Problem, ScheduledBlock,
+    EPS, INF, Problem, ScheduledBlock,
     params::{AnnealingParamsConfig, InsertParams, NeighborParams, RollingPhaseParams},
     utils::{random::RandPcg64Mcg, time::Timer},
 };
@@ -12,8 +12,6 @@ use super::{
     optimize::{OptimizeAnnealing, OptimizeMode, OptimizeState, make_optimize_state},
     precompute::Precompute,
 };
-
-const EPS: f64 = 1e-9;
 
 fn build_admission_order(problem: &Problem, preopt: &PreoptimizeState) -> Vec<usize> {
     let mut order: Vec<_> = (0..problem.blocks.len()).collect();

@@ -8,7 +8,6 @@ todo:
 - report
 
 nits:
-- epsを共通化する
 - moveを全てのblockを対象にする
 - remove-blockはL^aで削除する
 - tardiness>0ならtを大きく、tardiness=0ならtは小さくする

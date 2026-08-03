@@ -9,9 +9,12 @@ use std::{
 
 use rayon::prelude::*;
 
-use crate::utils::{
-    random::{RandPcg64Mcg, Random},
-    time::Timer,
+use crate::{
+    EPS,
+    utils::{
+        random::{RandPcg64Mcg, Random},
+        time::Timer,
+    },
 };
 #[cfg(feature = "anneal-visualizer")]
 use crate::{
@@ -19,7 +22,6 @@ use crate::{
     utils::anneal_visualizer::{AnnealVisualizer, SnapshotMeta},
 };
 
-const EPS: f64 = 1e-9;
 const STATUS_LOG_INTERVAL_SECONDS: f64 = 1.0;
 
 pub(crate) trait AnnealingState: Clone + Send + Sync {
