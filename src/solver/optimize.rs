@@ -223,29 +223,43 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
     }
 }
 
-fn build_admission_order(problem: &Problem, preopt: &PreoptimizeState) -> Vec<usize> {
+fn build_admission_order(
+    problem: &Problem,
+    preopt: &PreoptimizeState,
+    use_due_date_order: bool,
+) -> Vec<usize> {
     let mut order: Vec<_> = (0..problem.blocks.len()).collect();
-    order.sort_by_key(|&block_id| {
-        (
-            preopt.blocks[block_id].entry_time,
-            problem.blocks[block_id].due_date,
-            block_id,
-        )
-    });
+    if use_due_date_order {
+        order.sort_by_key(|&block_id| (problem.blocks[block_id].due_date, block_id));
+    } else {
+        order.sort_by_key(|&block_id| {
+            (
+                preopt.blocks[block_id].entry_time,
+                problem.blocks[block_id].due_date,
+                block_id,
+            )
+        });
+    }
     order
 }
 
 fn build_horizons(
+    problem: &Problem,
     order: &[usize],
     preopt: &PreoptimizeState,
     horizon_size: usize,
+    use_due_date_order: bool,
 ) -> Vec<Range<usize>> {
     let mut horizons = Vec::new();
     let mut start = 0;
     while start < order.len() {
         let mut end = (start + horizon_size).min(order.len());
         while end < order.len()
-            && preopt.blocks[order[end - 1]].entry_time == preopt.blocks[order[end]].entry_time
+            && if use_due_date_order {
+                problem.blocks[order[end - 1]].due_date == problem.blocks[order[end]].due_date
+            } else {
+                preopt.blocks[order[end - 1]].entry_time == preopt.blocks[order[end]].entry_time
+            }
         {
             end += 1;
         }
@@ -324,8 +338,14 @@ pub(super) fn optimize(
     max_worker_count: usize,
     seed: u64,
 ) -> OptimizeState {
-    let order = build_admission_order(problem, preopt);
-    let horizons = build_horizons(&order, preopt, phase_params.horizon_size);
+    let order = build_admission_order(problem, preopt, phase_params.use_due_date_order);
+    let horizons = build_horizons(
+        problem,
+        &order,
+        preopt,
+        phase_params.horizon_size,
+        phase_params.use_due_date_order,
+    );
     let mut state = make_optimize_state(problem, pre, Vec::new(), 0.0);
     let mut rng = RandPcg64Mcg::new(seed);
     let annealer = OptimizeAnnealing::new(problem, pre, timer);

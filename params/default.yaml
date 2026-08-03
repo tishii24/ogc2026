@@ -13,6 +13,7 @@ phases:
   optimize:
     horizon_size: 20
     time_allocation_power: 1.5
+    use_due_date_order: false
 
 precompute:
   orientation_neighbor_limit: 100

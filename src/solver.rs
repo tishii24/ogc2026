@@ -45,31 +45,45 @@ pub fn solve(
     let pre = Precompute::build(problem, &params.precompute);
     log!("[{:.4}] precompute built", timer.elapsed_seconds());
 
-    log!(
-        "[{:.4}] building preoptimize precompute...",
-        timer.elapsed_seconds()
-    );
-    let preoptimize_pre = PreoptimizePrecompute::build(problem)?;
-    log!(
-        "[{:.4}] preoptimize precompute built",
-        timer.elapsed_seconds()
-    );
-    let preoptimize_time_limit = phase_time_limit(
-        timelimit,
-        params.phases.initial_preoptimize.time_ratio,
-        params.phases.initial_preoptimize.max_seconds,
-    )
-    .min((deadline - timer.elapsed_seconds()).max(1e-4));
-    let preoptimized = preoptimize(
-        problem,
-        &preoptimize_pre,
-        &params.preoptimize,
-        &params.annealing.preoptimize,
-        &params.neighbor.reconstruct,
-        preoptimize_time_limit,
-        params.runtime.worker_count,
-        params.runtime.preoptimize_seed,
-    )?;
+    let preoptimized = if params.phases.optimize.use_due_date_order {
+        PreoptimizeState {
+            score: 0.0,
+            blocks: problem
+                .blocks
+                .iter()
+                .map(|block| PreoptimizedBlock {
+                    bay_id: 0,
+                    entry_time: (block.due_date - block.processing_time).max(block.release_time),
+                })
+                .collect(),
+        }
+    } else {
+        log!(
+            "[{:.4}] building preoptimize precompute...",
+            timer.elapsed_seconds()
+        );
+        let preoptimize_pre = PreoptimizePrecompute::build(problem)?;
+        log!(
+            "[{:.4}] preoptimize precompute built",
+            timer.elapsed_seconds()
+        );
+        let preoptimize_time_limit = phase_time_limit(
+            timelimit,
+            params.phases.initial_preoptimize.time_ratio,
+            params.phases.initial_preoptimize.max_seconds,
+        )
+        .min((deadline - timer.elapsed_seconds()).max(1e-4));
+        preoptimize(
+            problem,
+            &preoptimize_pre,
+            &params.preoptimize,
+            &params.annealing.preoptimize,
+            &params.neighbor.reconstruct,
+            preoptimize_time_limit,
+            params.runtime.worker_count,
+            params.runtime.preoptimize_seed,
+        )?
+    };
     log!(
         "[{:.4}] initial abstract score: {:.3}",
         timer.elapsed_seconds(),
