@@ -58,8 +58,6 @@ pub struct LimitedPhaseParams {
 pub struct OptimizePhaseParams {
     pub horizon_size: usize,
     pub time_allocation_power: f64,
-    #[serde(default)]
-    pub use_due_date_order: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
