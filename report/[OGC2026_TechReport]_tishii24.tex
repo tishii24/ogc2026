@@ -12,9 +12,6 @@
 \usepackage[most]{tcolorbox}
 \usepackage{comment}
 \usepackage{iftex}
-\ifLuaTeX
-    \usepackage{luatexja}
-\fi
 
 \urlstyle{rm}
 
@@ -39,40 +36,40 @@
 \maketitle
 
 \begin{abstract}
-本稿では，時間制約と多層ポリゴンの幾何制約を同時に扱うブロックスケジューリング問題に対するヒューリスティックを提案する．本問題では各ブロックのベイ，向き，座標，搬入時刻，搬出時刻を決定する必要があり，特にクレーンによる搬入・搬出可能性が配置と時間の強い結合を生む．提案法の中心は，実幾何制約を時刻別の面積容量制約へ緩和する抽象事前最適化と，そこで得た搬入順序に従ってブロックを追加する rolling-horizon 最適化である．各 horizon では，空間走査と禁止搬入時刻区間を統合した貪欲挿入により実行可能解を構築し，複数ブロックを除去・再挿入する large reconstruction を含む並列焼きなましで改善する．密なパッキングでは局所操作のみで別の配置構造へ移ることが難しいため，良い挿入順序を先に求め，全ブロックが一度はスケジュール末尾に位置するよう逐次最適化することを重視した．
+This report presents a heuristic for a block scheduling problem that simultaneously involves temporal constraints and geometric constraints on multilayer polygons. For each block, the problem requires determining its bay, orientation, coordinates, entry time, and exit time; in particular, crane accessibility for entry and exit strongly couples placement and time. The core of the proposed method consists of abstract preoptimization, which relaxes the exact geometric constraints into time-indexed area-capacity constraints, and rolling-horizon optimization following the admission order obtained from the abstract solution. In each horizon, a feasible solution is constructed by greedy insertion that integrates a spatial sweep with forbidden entry-time intervals, and is improved by parallel simulated annealing with several neighborhoods, including large reconstruction that removes and reinserts multiple blocks. Because it is difficult to move from a dense packing to a structurally different arrangement using local changes alone, the method emphasizes obtaining a good admission order in advance and optimizing every block at least once while it is near the end of the partial schedule.
 \end{abstract}
 
 \section{Introduction}
 
 \subsection{Challenge Problem \& Main Difficulties}
 
-ブロック $i$ に対して，割当ベイ $b_i$，向き $o_i$，座標 $(x_i,y_i)$，搬入時刻 $e_i$，搬出時刻 $q_i$ を決定する．時間制約は
+For every block $i$, we determine its assigned bay $b_i$, orientation $o_i$, coordinates $(x_i,y_i)$, entry time $e_i$, and exit time $q_i$. The temporal constraints are
 \begin{equation}
-e_i\ge R_i,\qquad q_i-e_i\ge P_i
+e_i\ge R_i,\qquad q_i-e_i\ge P_i.
 \end{equation}
-である．同じ時刻に同じベイを占有するブロックは，同じ高さのレイヤーで重なってはならない．さらに ENTRY と EXIT の際には，対象ブロックを鉛直方向へ移動したときに，対象レイヤーより同じ高さ以上にある他ブロックのレイヤーと衝突しないことが要求される．したがって，ある配置が静的には非衝突であっても，クレーン操作が不可能となる場合がある．
+Blocks occupying the same bay at the same time must not overlap at layers of the same height. Moreover, during an ENTRY or EXIT operation, vertically moving the target block must not collide with layers of other blocks at the same or a greater height than each target layer. Consequently, even a statically non-overlapping placement may be infeasible for crane operations.
 
-目的関数は，総遅れ $Z_1$，ベイ間の作業量不均衡 $Z_2$，ベイ選好ペナルティ $Z_3$ の重み付き和
+The objective is the weighted sum of total tardiness $Z_1$, workload imbalance among bays $Z_2$, and bay-preference penalty $Z_3$:
 \begin{equation}
-F=w_1Z_1+w_2Z_2+w_3Z_3
+F=w_1Z_1+w_2Z_2+w_3Z_3.
 \end{equation}
-である．ここで
+In particular,
 \begin{equation}
 Z_1=\sum_i\max(0,q_i-D_i),\qquad
-Z_3=\sum_i(S_i^{\max}-S_{i,b_i})
+Z_3=\sum_i(S_i^{\max}-S_{i,b_i}),
 \end{equation}
-であり，$Z_1$ と $Z_3$ はブロックごとの寄与へ分解できる．一方で，その値を実現できるかどうかは他ブロックの配置と滞在区間に依存する．
+so $Z_1$ and $Z_3$ decompose into block-wise contributions. Whether these values can be realized, however, depends on the placements and residence intervals of other blocks.
 
-本問題の主な難しさは探索空間の硬直性にある．ベイが密に埋まると，一つのブロックを移動して生じた空きだけでは別のブロックを改善できず，配置構造を変更するには複数ブロックを協調して動かす必要がある．また，早い時刻のブロックを変更すると多数の後続ブロックとの衝突関係とクレーン順序が変わる．このため，局所探索の性能は初期解，特にブロックを実配置へ追加する順序に強く依存する．
+The primary difficulty is the rigidity of the search space. Once a bay becomes densely packed, the space created by moving a single block is often insufficient to improve another block; changing the packing structure requires coordinated changes to several blocks. Furthermore, moving an early block changes its collision relationships and crane ordering with many later blocks. Search performance therefore depends strongly on the initial solution, especially the order in which blocks are admitted to the geometric schedule.
 
 \subsection{Contributions}
 
-本稿の主な貢献は以下の通りである．
+The main contributions of this report are as follows.
 \begin{itemize}
-    \item 多層ポリゴンの幾何制約を時刻別の面積容量制約へ緩和し，全ブロックのベイ割当と搬入時刻から挿入順序を求める抽象事前最適化を導入した．
-    \item 抽象解の搬入順序に従って部分問題を拡大する rolling-horizon 最適化により，各ブロックを自由度の高いスケジュール末尾で一度最適化する枠組みを構築した．
-    \item Minkowski difference に基づく多層衝突の $x$ 方向走査と，クレーン制約から導かれる禁止搬入時刻区間を統合した貪欲挿入法を実装した．
-    \item 時間・空間的に関連する複数ブロックを構造的に選択して再挿入する large reconstruction と，小規模近傍を組み合わせた並列焼きなましを構築した．
+    \item We introduce abstract preoptimization that relaxes multilayer polygon constraints into time-indexed area-capacity constraints and obtains an admission order from the bay assignment and entry time of every block.
+    \item We construct a rolling-horizon framework that expands partial problems according to the abstract admission order, allowing every block to be optimized once while it is at the flexible end of the partial schedule.
+    \item We develop greedy insertion that jointly searches space and time by combining an $x$-direction sweep for multilayer collisions, based on Minkowski differences, with forbidden entry-time intervals induced by crane constraints.
+    \item We combine small neighborhoods with large reconstruction, which structurally selects and reinserts multiple related blocks, within parallel simulated annealing.
 \end{itemize}
 
 \section{Algorithm Description}
@@ -80,123 +77,122 @@ Z_3=\sum_i(S_i^{\max}-S_{i,b_i})
 \subsection{Overall Algorithm Framework}
 
 \subsubsection{Key findings and design rationale.}
-総遅れではブロックの大きさによらず，各ブロックの遅れが同じ重みで加算される．同様の ENTRY/EXIT 条件を持つ大ブロック一つと小ブロック複数のいずれかを遅らせる場合，小ブロック群を先に処理する方が $Z_1$ を抑えやすい．一方，大ブロックは空き領域が広い段階で配置した方が挿入しやすい．したがって，tardiness に有利な順序と packability に有利な順序は必ずしも一致しない．単純な release-time 順や due-date 順では，サイズ，処理時間，ベイ容量，ベイ選好，および他ブロックとの競合を同時に考慮できない．
+In total tardiness, every unit of block tardiness has the same weight regardless of block size. Given one large block and several small blocks with similar ENTRY/EXIT conditions, processing the small blocks first may therefore reduce $Z_1$. In contrast, large blocks are easier to insert while ample free space remains. Thus, an order favorable for tardiness does not necessarily coincide with one favorable for packability. A simple release-time or due-date order cannot simultaneously account for block size, processing time, bay capacity, bay preference, and competition with other blocks.
 
-Rolling horizon を用いるためには，ブロックを部分問題へ追加する順序を事前に決める必要がある．そこで本手法では，正確な座標を一旦捨象した事前最適化により，全体の tardiness にとって望ましい搬入時刻 $\hat e_i$ を求め，その昇順を admission order とする．すなわち，抽象事前最適化は「何を先に挿入するか」を大域的に決め，rolling horizon はその順序を「どのように実配置へ変換するか」を扱う．
+Rolling-horizon optimization requires an order in which blocks are introduced into its partial problems. We first solve a preoptimization problem that omits exact coordinates, obtaining globally desirable entry times $\hat e_i$, and use their ascending order as the admission order. Abstract preoptimization therefore determines which blocks should be admitted first, whereas rolling-horizon optimization determines how that order is converted into an exact geometric schedule.
 
-Rolling horizon 自体にも四つの利点がある．第一に，配置済みブロック数を限定した部分問題となる．第二に，多くのケースで支配的な $Z_1$ と $Z_3$ はブロックごとに加法的であり，部分問題の改善が全体目的の改善と整合しやすい．第三に，末尾のブロックには後続ブロックがないため，搬入時刻と配置を変更しやすい．各ブロックは追加された horizon で一度は末尾に位置するため，全ブロックに自由度の高い探索機会を与えられる．第四に，近傍評価の計算量は配置済みブロック数とともに増加するため，前半の小さな部分問題では単位時間当たりの反復数を増やせる．なお，過去の horizon は固定せず，追加済みの全ブロックを探索対象に残す．
+Rolling-horizon optimization itself has four advantages. First, each stage is a partial problem with a limited number of admitted blocks. Second, $Z_1$ and $Z_3$, which are dominant in many cases, are block-wise additive; improving them in a partial problem is therefore aligned with improving the full objective. Third, blocks near the end of a schedule have no later blocks and are consequently easier to move in time and space. Because each block is once newly admitted at the end of a horizon, every block receives an opportunity to be optimized with relatively high freedom. Fourth, neighborhood evaluation becomes more expensive as the number of admitted blocks grows, so the smaller early problems allow more iterations per unit time. Blocks from previous horizons are not frozen; all admitted blocks remain in the search to permit corrections after later blocks are added.
 
-密な配置では Shift や Move のような一ブロック近傍だけでは構造を変えにくい．そこで，関連する複数ブロックを除去し，異なる順序で挿入し直す large reconstruction を用いる．以上より，本手法では，抽象事前最適化が大域的な挿入順序を与え，rolling horizon が小さく可動性の高い部分問題を作り，large reconstruction が部分問題内の配置構造を大きく組み替える．
+In a dense schedule, single-block neighborhoods such as Shift and Move are insufficient to change the packing structure. We therefore use large reconstruction, which removes several related blocks and reinserts them in a different order. The three key ideas consequently have complementary roles: abstract preoptimization supplies a global admission order, rolling-horizon optimization creates small and flexible subproblems, and large reconstruction makes substantial structural changes within each subproblem.
 
 \subsubsection{Solution procedure.}
-全体の処理は次の通りである．
+The complete procedure is as follows.
 \begin{enumerate}
-    \item 各向きの境界矩形，ベイ内の配置可能範囲，向き近傍，交換候補，および衝突情報を事前計算する．
-    \item 面積容量に緩和した抽象問題を解き，各ブロックのベイ $\hat b_i$ と搬入時刻 $\hat e_i$ を求める．
-    \item $(\hat e_i,D_i,i)$ の辞書順でブロックを並べ，同じ $\hat e_i$ を分断しないよう horizon を構成する．
-    \item 新しい horizon のブロックを実幾何制約下で貪欲に挿入し，追加済みの全ブロックを焼きなましで改善する．
-    \item 全ブロックを追加した最後の horizon で，$Z_1,Z_2,Z_3$ を含む完全な目的関数により最終改善を行う．
+    \item Precompute the bounding box of every orientation, feasible placement ranges in each bay, neighboring orientations, swap candidates, and collision information.
+    \item Solve the area-capacity relaxation and obtain a bay $\hat b_i$ and entry time $\hat e_i$ for every block.
+    \item Sort the blocks lexicographically by $(\hat e_i,D_i,i)$ and construct horizons without splitting blocks having the same $\hat e_i$.
+    \item Greedily insert the newly admitted blocks under the exact geometric constraints and improve all admitted blocks by simulated annealing.
+    \item In the final horizon, after all blocks have been admitted, perform final improvement using the complete objective containing $Z_1$, $Z_2$, and $Z_3$.
 \end{enumerate}
 
 \subsection{Key Ideas that Succeeded}
 
 \subsubsection{Abstract preoptimization.}
-ブロック $i$ の向き $o$ について，全レイヤーの和領域面積を $A^{\mathrm{union}}_{io}$，その境界矩形面積を $A^{\mathrm{bbox}}_{io}$，和領域の外周長を $L_{io}$ とする．向き $o$ でベイ $j$ に収まる場合の近似占有量を
+For orientation $o$ of block $i$, let $A^{\mathrm{union}}_{io}$ be the area of the union of all layers, $A^{\mathrm{bbox}}_{io}$ be the area of its bounding box, and $L_{io}$ be the perimeter of the union. If orientation $o$ fits in bay $j$, its approximate occupancy is
 \begin{equation}
 a_{ijo}=A^{\mathrm{union}}_{io}
 +\alpha\left(A^{\mathrm{bbox}}_{io}-A^{\mathrm{union}}_{io}\right)
-+\beta L_{io}
++\beta L_{io}.
 \end{equation}
-とし，収容可能な向きの最小値を $a_{ij}$ とする．第一項は実際の占有面積，第二項は凹形状や細長い形状の周囲に生じる利用しづらい空間，第三項は複雑な輪郭によるパッキング困難性を近似する．
+We define $a_{ij}$ as the minimum value over orientations that fit in bay $j$. The first term represents the actual occupied area, the second approximates unusable space around concave or elongated shapes, and the third compensates for packing difficulty caused by a complex boundary.
 
-ベイ $j$ の有効容量を $C_j$ とし，各時刻に
+Let $C_j$ be the effective capacity of bay $j$. The abstract schedule must satisfy
 \begin{equation}
 \sum_{i:\,\hat e_i\le t<\hat e_i+P_i,\,\hat b_i=j}a_{ij}\le C_j
 \end{equation}
-を課す．抽象状態は各ブロックの $(\hat b_i,\hat e_i)$ のみを持ち，正確な向きと座標は持たない．目的関数は抽象状態から計算した $Z_1,Z_2,Z_3$ に congestion penalty を加えたものとする．実装では同時滞在する二ブロックの占有率の積を時刻ごとに加算し，面積上は収まっても実配置へ変換しにくい高密度状態を避ける．
+at every time. An abstract state stores only $(\hat b_i,\hat e_i)$ for each block and does not store its exact orientation or coordinates. Its objective consists of $Z_1$, $Z_2$, and $Z_3$ evaluated on the abstract schedule, plus a congestion penalty. The implementation sums products of the occupancy ratios of simultaneously resident block pairs over time. This discourages highly congested abstract schedules that satisfy the area capacity but are difficult to convert into exact placements.
 
-初期状態は，ブロックの workload，面積と処理時間の積，ベイ選好の幅，due date から処理時間を引いた限界時刻，slack，および乱数を組み合わせた複数の順序から貪欲に構築する．各ブロックについて，容量制約を満たす最早時刻をベイごとに調べ，$Z_1,Z_2,Z_3$ と congestion の増分が最小の候補を採用する．その後，relocate，swap，複数ブロックの再配置を近傍とする焼きなましで改善する．
+Initial states are built greedily from multiple randomized block orders. Each order combines workload, the product of area and processing time, the spread of bay preferences, the limit time defined as due date minus processing time, slack, and a random component. For each block, the earliest capacity-feasible time is found in every eligible bay, and the candidate minimizing the incremental $Z_1$, $Z_2$, $Z_3$, and congestion is selected. The state is then improved by simulated annealing using relocate, swap, and multi-block reconstruction neighborhoods.
 
 \subsubsection{Rolling-horizon geometric optimization.}
-抽象解を $(\hat e_i,D_i,i)$ でソートし，規定個数ごとに horizon を作る．境界で $\hat e_i$ が同じブロックは同一 horizon に含める．各 horizon では，まず新規ブロックを $\hat e_i$ 以降を基準として貪欲挿入する．その後，新規ブロックだけでなく，それまでに追加した全ブロックを焼きなましの対象とする．このため，前段の決定を完全に固定する通常の freeze 型 rolling horizon と異なり，後続ブロックの追加による修正が可能である．Rolling-horizon decomposition は大規模 tardiness scheduling にも用いられている\cite{singer2001}．
+Blocks are sorted by $(\hat e_i,D_i,i)$, and horizons are formed with a prescribed block count. Blocks with the same $\hat e_i$ at a horizon boundary are included in the same horizon. At each horizon, newly admitted blocks are first inserted using $\hat e_i$ as their reference entry time. Simulated annealing is then applied not only to the new blocks but to all blocks admitted so far. Unlike a freezing-type rolling horizon, earlier decisions can therefore be revised in response to later admissions. Rolling-horizon decomposition has also been applied to large tardiness scheduling problems\cite{singer2001}.
 
-$Z_2$ は全ブロックのベイ割当が揃う前には意味が安定しないため，中間 horizon ではその重みをゼロとする．最後の horizon のみ公式の $w_2$ を用いる．各 horizon への探索時間は，追加済みブロック数のべき乗に比例する重みで配分し，規模の大きい後半へより多くの時間を残す．
+Because $Z_2$ is not meaningful until the bay assignments of all blocks are present, its weight is set to zero in intermediate horizons. The official $w_2$ is enabled only in the final horizon. Search time is allocated with weights proportional to a power of the number of admitted blocks, reserving more time for the larger late-stage problems.
 
 \subsubsection{Greedy geometric insertion and collision detection.}
-貪欲挿入では，ベイ，向き，整数 $y$ を列挙し，$x$ 方向をイベント走査する．候補 $s$ は主に
+Greedy insertion enumerates bays, orientations, and integer $y$ coordinates, while sweeping in the $x$ direction through collision events. A candidate $s$ is compared primarily by
 \begin{equation}
 \Delta F(s)=w_1T_i(s)+w_2\Delta Z_2(s)
-+w_3(S_i^{\max}-S_{i,b_i(s)})
++w_3(S_i^{\max}-S_{i,b_i(s)}).
 \end{equation}
-で比較する．最良値と同等の候補では，早い搬入時刻とベイの隅へ寄せる配置を優先する．通常は左下をアンカーとするが，一定確率で他の三隅を選び，異なるパッキング構造を生成する．
+Among candidates tied with the best objective value, an earlier entry time and placement near a bay corner are preferred. The default anchor is the bottom-left corner, but one of the other three corners is selected with a small probability to generate different packing structures.
 
-衝突判定では，非凸な各レイヤーを ear clipping によって凸多角形へ分解する．二つの凸多角形 $A,B$ に対し，相対変位 $(\Delta x,\Delta y)$ が
+For collision detection, each nonconvex layer is decomposed into convex polygons by ear clipping. For two convex polygons $A$ and $B$, a collision occurs when their relative displacement $(\Delta x,\Delta y)$ belongs to
 \begin{equation}
-A\oplus(-B)=\{a-b\mid a\in A,\ b\in B\}
+A\oplus(-B)=\{a-b\mid a\in A,\ b\in B\}\cite{ghosh1993}.
 \end{equation}
-に含まれるとき両者は衝突する\cite{ghosh1993}．この領域を整数 $\Delta y$ ごとに水平切断し，禁止される整数 $\Delta x$ の区間列へ変換する．これは不規則形状パッキングの no-fit polygon と同様の相対配置表現である\cite{burke2008}．数値誤差による衝突の見逃しを避けるため小さな margin を加え，同一行の重複・隣接区間をマージする．クレーン制約では，移動ブロックのレイヤー $k$ と固定ブロックのレイヤー $l\ge k$ の禁止領域を合併する．この関係は非対称なので，向き対の両方向を別々に保持し，初回参照時に遅延構築してキャッシュする．
+This region is horizontally sliced at every integer $\Delta y$ and converted into intervals of forbidden integer $\Delta x$. This relative-placement representation is analogous to the no-fit polygon used in irregular packing\cite{burke2008}. A small margin prevents missed collisions due to numerical errors, and overlapping or adjacent intervals in the same row are merged. For crane constraints, forbidden regions are united for every moving layer $k$ and fixed layer $l\ge k$. Because crane obstruction is directional, the two directions of every orientation pair are stored separately. The collision grid is lazily constructed on first use and then cached.
 
 \paragraph{Joint spatial-temporal sweep.}
-本挿入法の特徴は，空間走査と時刻探索を分離しない点にある．各既存ブロックについて，新ブロックが既存ブロックに遮られる方向と，既存ブロックが新ブロックに遮られる方向を別々に管理する．禁止 $x$ 区間の端点をイベントとし，$x$ を動かしながら二方向の干渉状態を更新する．その状態と既存ブロックの滞在区間から，新ブロックの禁止搬入時刻は高々二つの区間として求まる．現在の座標で有効な全禁止区間をマージし，探索範囲内の最早 feasible entry time を得る．したがって，各座標・各日についてスケジュール全体を再検証する必要がなく，計算量は時間 horizon に直接比例しない．
+The distinguishing feature of the insertion procedure is that spatial and temporal searches are not separated. For every existing block, the algorithm separately tracks whether the new block is obstructed by the existing block and whether the existing block is obstructed by the new block. Endpoints of forbidden $x$ intervals are treated as events, and these two directional states are updated during the $x$ sweep. From the current state and the residence interval of the existing block, the forbidden entry times of the new block can be represented by at most two intervals. All active forbidden intervals at the current coordinates are merged to find the earliest feasible entry time in the search range. Hence, the full schedule need not be revalidated at every coordinate and every day, and the running time does not directly depend on the time horizon.
 
-ベイ $j$ に既にあるブロック数を $n_j$，ベイ幅と高さを $W_j,H_j$，対象ブロックの向き数を $O_i$ とする．ブロック対当たりの衝突区間数を定数とみなすと，一つの $(o,y)$ に対するイベント生成と counting sort は $O(n_j+W_j)$ である．候補位置ごとの禁止時刻区間走査を含む保守的な上界は $O(W_j+n_j^2)$ であり，一ブロックの挿入全体は概ね
+Let $n_j$ be the number of blocks already placed in bay $j$, let $W_j$ and $H_j$ be its width and height, and let $O_i$ be the number of orientations of the inserted block. Treating the number of collision intervals per block pair as constant, event generation and counting sort for one $(o,y)$ require $O(n_j+W_j)$ time. A conservative bound including scans of forbidden time intervals at candidate positions is $O(W_j+n_j^2)$. The approximate worst-case complexity of inserting one block is therefore
 \begin{equation}
-O\left(\sum_j O_iH_j(W_j+n_j^2)\right)
+O\left(\sum_j O_iH_j(W_j+n_j^2)\right).
 \end{equation}
-となる．
 
 \subsubsection{Simulated annealing and large reconstruction.}
-局所探索には simulated annealing\cite{kirkpatrick1983} を用いる．近傍は Large Reconstruction，Shift，Move，Rotate，Swap の五種類である．Shift は同じベイ・向きで近傍の $y$ を走査し，Rotate は事前計算した形状の近い向きへ変更する．Move は比較的小さいブロックを候補とし，ベイ，向き，位置，時刻を貪欲挿入で決め直す．Swap は面積と形状が近い二ブロックの位置を交換して再配置する．
+The local search is based on simulated annealing\cite{kirkpatrick1983} and uses five neighborhood types: Large Reconstruction, Shift, Move, Rotate, and Swap. Shift scans nearby $y$ coordinates while retaining the bay and orientation. Rotate changes to a geometrically similar orientation precomputed in advance. Move primarily selects a relatively small block and redetermines its bay, orientation, position, and time by greedy insertion. Swap exchanges the locations of two blocks with similar area and shape and reinserts both.
 
-Large reconstruction では，複数の seed を badness，fluidity，random の三方式から選ぶ．Badness は tardiness と選好ペナルティ，および作業量の重いベイへの所属を評価する．Fluidity は slack が大きく，ベイ選好の幅が小さい，すなわち動かしやすいブロックを評価する．各 seed と同じベイにあるブロックを
+Large reconstruction selects multiple seeds using three methods: badness, fluidity, and random selection. Badness evaluates tardiness, preference penalty, and membership in the bay with the heaviest workload. Fluidity favors blocks with large slack and a small spread of bay preferences, which are easier to move. Blocks in the same bay as each seed are ordered by
 \begin{equation}
 d(i,s)=\lambda_x(x_i-x_s)^2+\lambda_y(y_i-y_s)^2
-+\lambda_t(e_i-e_s)^2
++\lambda_t(e_i-e_s)^2,
 \end{equation}
-で並べ，近いブロックをまとめて除去する．複数 seed により，一つの局所領域だけでなく複数の構造を同時に変更できる．再挿入順序は workload，体積，選好幅，限界時刻，slack，現在のペナルティ，乱数の重み付き和で決め，各重みを試行ごとに変える．これにより，固定されたサイズ順や期限順に偏らず，tardiness と packability のトレードオフを再探索する．なお，抽象事前最適化内の large reconstruction は，座標を持たないため，より単純な複数ブロックの除去・再配置とする．
+and nearby blocks are removed together. Multiple seeds make it possible to change several local structures in one move. The reinsertion order is determined from a weighted combination of workload, volume, preference spread, limit time, slack, current penalty, and randomness. These weights are randomized for every attempt, allowing the search to revisit the trade-off between tardiness and packability without being restricted to a fixed size or due-date order. Large reconstruction in abstract preoptimization is simpler because the abstract state has no coordinates.
 
-焼きなましは複数ワーカーで並列に行う．各ワーカーは共有最良解を更新し，一定反復ごとに十分良い共有解を取り込む．停滞時には最良解へ戻して温度を一時的に上げる reheating を行う．また，tardiness が正の局面とゼロの局面で温度範囲を切り替え，前者では $Z_1$ の大きな改善を，後者では $Z_3$ を中心とした細かな改善を扱う．スケジュールのハッシュを tabu として保持し，同一状態への短期的な再訪を抑える．
+Simulated annealing is executed by multiple workers in parallel. Each worker updates a shared best state and periodically imports a sufficiently better shared solution. During stagnation, the worker returns to its best state and reheats by temporarily increasing its temperature. Distinct temperature ranges are used when positive tardiness remains and after tardiness reaches zero: the former handles larger changes in $Z_1$, while the latter focuses on finer improvements, primarily to $Z_3$. A tabu set of schedule hashes suppresses short-term revisits to identical states.
 
 \subsection{Key Ideas that Failed}
 
-Beam-search reconstruction では，同じ base schedule に対するブロックの挿入結果を複数の探索状態で再利用し，計算量を抑えながら再挿入順序を探索した．しかし，挿入結果の再利用よりも，多様な配置状態そのものを探索する方が重要であり，採用しなかった．
+Beam-search reconstruction attempted to reuse block-insertion results relative to the same base schedule across multiple search states, thereby exploring reinsertion orders at lower computational cost. However, exploring diverse placement states proved more important than reusing insertion results, and the method was discarded.
 
-Multi-stage optimization として，tardiness，preference，workload imbalance を段階的に最適化する方法を試したが，通常の探索に対する優位な改善を確認できなかった．また，観測した目的関数差から温度を決める adaptive annealing と，クレーン操作を妨げる blocker を明示的に除去する近傍も試した．いずれも可能性はあったが，インスタンス間で安定する調整が難しかった．
+Multi-stage optimization, which optimized tardiness, preference, and workload imbalance in separate stages, did not show a significant advantage over the standard search. We also tested adaptive annealing that derived its temperature from observed objective differences and a blocker-aware neighborhood that explicitly removed blocks obstructing crane operations. Both ideas appeared promising, but obtaining parameter settings that worked consistently across instances was difficult.
 
 \subsection{Further Improvement Plan}
 
-抽象事前最適化では，近似占有量と congestion の精度を改善し，抽象解と実配置の乖離を小さくしたい．Rolling horizon については，horizon サイズと探索時間配分をインスタンスに応じて変更するほか，同時刻の ENTRY/EXIT 順序や搬出時刻の変更による時間的順序の入れ替えを探索へ導入する．Large reconstruction では blocker の依存関係を利用した除去対象選択を再検討する．
+For abstract preoptimization, we plan to improve approximate occupancy and congestion so that the gap between abstract schedules and exact placements is reduced. For rolling-horizon optimization, horizon size and search-time allocation could be adapted to each instance. We also plan to include the ordering of ENTRY/EXIT operations at the same time and temporal-order changes produced by modifying exit times. For large reconstruction, blocker dependencies could be used more directly in selecting blocks for removal.
 
-焼きなましについては，目的関数差や受理率に基づく adaptive annealing の再調整に加え，ワーカーごとに異なる温度帯や近傍構成を担当させ，一定間隔で状態を交換する並列焼きなましへ拡張する．高温ワーカーによる配置構造の変更と，低温ワーカーによる局所改善を明確に分担させることを目的とする．
+For simulated annealing, in addition to revisiting adaptive temperature control based on objective differences and acceptance ratios, we plan to introduce a more systematic parallel scheme. Workers would specialize in different temperature ranges or neighborhood compositions and periodically exchange states, explicitly separating structural changes by high-temperature workers from local improvement by low-temperature workers.
 
 \section{Implementation Details}
 \label{sec:implementation}
 
-Solver は Rust で実装し，並列化には Rayon を用いた．多角形の凸分解，境界矩形，ベイ内配置可能範囲，向き近傍，交換候補を事前計算する．ブロック対・向き対の衝突グリッドは必要になった時点で構築し，以降の探索で共有する．配置走査では禁止 $x$ 区間の端点だけを処理し，counting sort と bitset による active interval 管理を用いる．
+The solver is implemented in Rust and parallelized with Rayon. Convex decompositions, bounding boxes, feasible placement ranges in bays, orientation neighbors, and swap candidates are precomputed. Collision grids for block and orientation pairs are built on demand and shared throughout the subsequent search. The placement sweep processes only endpoints of forbidden $x$ intervals and uses counting sort and bitsets to maintain active time intervals.
 
-制限時間は抽象事前最適化と rolling-horizon 最適化へ分配する．後者では残り horizon の規模から各段階の deadline を計算する．探索中の共有最良解は一定間隔で候補解として標準出力へ保存する．出力時には EXIT を先に追加してから ENTRY を追加することで，同一時刻の全 EXIT を ENTRY より前に並べる．
+The time limit is divided between abstract preoptimization and rolling horizon optimization. In the latter phase, the deadline of each horizon is computed from the sizes of the remaining horizons. The current shared best solution is emitted periodically during the search. EXIT operations are added to the output before ENTRY operations, ensuring that every EXIT precedes every ENTRY at the same time.
 
-Rust solver の外側には Python wrapper を置く．探索中に出力された候補を重複除去して目的値順に検証し，Shapely を用いて割当，時間制約，ベイ境界，多層衝突，クレーン操作を独立に確認する．最良候補が infeasible の場合は，以前に出力された次順位の feasible な候補へ fallback する．検証時間と返却時間は solver の制限時間からあらかじめ確保する．
+A Python wrapper surrounds the Rust solver. It deduplicates emitted candidates, checks them in objective-value order, and independently validates assignments, temporal constraints, bay containment, multilayer collisions, and crane operations using Shapely. If the best candidate is infeasible, the wrapper falls back to the next previously emitted feasible candidate. Time for validation and returning the result is reserved in advance from the solver time limit.
 
 \section{Computational Results}
 
 \begin{itemize}
-    \item TODO: training dataset における $Z_1$，$Z_2$，$Z_3$，総目的値を表で掲載する．
-    \item TODO: 各提出バージョンの目的値推移を掲載する．
-    \item TODO: release-time 順，due-date 順，abstract preoptimization 順を比較し，挿入順序による $Z_1$ と総目的値の違いを掲載する．
-    \item TODO: abstract preoptimization，rolling horizon，large reconstruction を順に追加したアブレーション結果を掲載する．
-    \item TODO: rolling horizon の有無による単位時間当たりの iteration 数と目的値の違いを掲載する．
-    \item TODO: 各インスタンスの目的関数の重みと $w_1Z_1,w_2Z_2,w_3Z_3$ の内訳を示し，$Z_1,Z_3$ が支配的となるケースを確認する．
-    \item TODO: 結果から確認できる主要な傾向と限界を記述する．
+    \item TODO: Report $Z_1$, $Z_2$, $Z_3$, and the total objective on the training dataset.
+    \item TODO: Report the changes in objective values across submission versions.
+    \item TODO: Compare release-time, due-date, and abstract-preoptimization admission orders, including their effects on $Z_1$ and the total objective.
+    \item TODO: Report an ablation study that successively adds abstract preoptimization, rolling-horizon optimization, and large reconstruction.
+    \item TODO: Compare the number of iterations per unit time and objective values with and without rolling-horizon optimization.
+    \item TODO: Report the instance weights and the decomposition into $w_1Z_1$, $w_2Z_2$, and $w_3Z_3$ to identify cases dominated by $Z_1$ and $Z_3$.
+    \item TODO: Discuss the main trends and limitations observed in the results.
 \end{itemize}
 
 \section{Team Members' Contributions\\ (Not Applicable to Single-Member Teams)}
 
-本チームは一名で構成されるため，本項は該当しない．
+This section is not applicable because the team consists of a single member.
 
 \section{AI Use Declaration}
 
-本プロジェクトでは，主に Codex の GPT 5.6 Sol High を，著者が考案したアルゴリズムの実装，コードの読解・修正，およびデバッグの支援に使用した．技術レポートの作成では，既存実装の整理，日本語の骨子と下書きの作成，文章校正，および英語への翻訳に使用した．アルゴリズム上のアイデアと設計判断は著者が行い，生成されたコードと文章についても著者がレビュー，検証，修正した．
+In this project, primarily Codex with GPT 5.6 Sol High was used to assist with implementing algorithms conceived by the author, reading and modifying code, and debugging. For this technical report, it was used to organize the existing implementation, prepare the Japanese outline and draft, edit the text, and translate it into English. The algorithmic ideas and design decisions were made by the author, who also reviewed, validated, and revised the generated code and text.
 
 \begin{thebibliography}{8}
 
