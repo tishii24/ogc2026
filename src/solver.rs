@@ -12,12 +12,13 @@ mod placement_scan;
 mod precompute;
 mod preoptimize;
 mod reconstruct;
+mod rolling;
 
-use optimize::GlobalAnnealing;
+use optimize::{OptimizeAnnealing, OptimizeMode};
 use output::{CandidateEmitter, schedule_to_solution};
 use precompute::Precompute;
 use preoptimize::{PreoptimizePrecompute, preoptimize};
-use reconstruct::build_optimize_state;
+use rolling::build_rolling_initial_state;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct PreoptimizedBlock {
@@ -77,27 +78,28 @@ pub fn solve(
         timer.elapsed_seconds(),
         initial_abstract.score
     );
-    let build_time_limit = phase_time_limit(
+    let rolling_time_limit = phase_time_limit(
         timelimit,
-        params.phases.initial_build.time_ratio,
-        params.phases.initial_build.max_seconds,
+        params.phases.rolling.time_ratio,
+        params.phases.rolling.max_seconds,
     )
     .min((deadline - timer.elapsed_seconds()).max(1e-4));
-    let initial = build_optimize_state(
+    let rolling_deadline = timer.elapsed_seconds() + rolling_time_limit;
+    let initial = build_rolling_initial_state(
         problem,
         &pre,
         &initial_abstract,
-        build_time_limit,
+        rolling_deadline,
         timer,
+        &params.phases.rolling,
+        &params.annealing.rolling,
+        &params.global_neighbor,
+        &params.insert,
         params.runtime.worker_count,
         params.runtime.solver_seed,
-        &params.global_neighbor.reconstruct,
-        &params.insert,
-        params.preoptimize.precedence_margin,
-    )
-    .ok_or_else(|| "failed to build initial optimize state".to_string())?;
+    );
     log!(
-        "[{:.4}] initial optimize score: {:.3}",
+        "[{:.4}] rolling initial score: {:.3}",
         timer.elapsed_seconds(),
         initial.objective
     );
@@ -118,44 +120,18 @@ pub fn solve(
     let candidate_emitter = CandidateEmitter::new(interval_seconds);
     candidate_emitter.emit(&initial, timer, true);
 
-    let global = GlobalAnnealing::new(
-        problem,
-        &pre,
-        &initial_abstract,
-        params.preoptimize.precedence_margin,
-        timer,
-        &candidate_emitter,
-    );
-    let constrained_time_limit = phase_time_limit(
-        (deadline - global_start).max(0.0),
-        params.phases.global_constrained.time_ratio,
-        params.phases.global_constrained.max_seconds,
-    );
-    let constrained_deadline = global_start + constrained_time_limit;
-    let initial = global.run(
-        initial,
-        constrained_deadline,
-        &params.annealing.global_constrained,
-        &params.global_neighbor,
-        &params.insert,
-        true,
-        params.runtime.solver_seed,
-        params.runtime.worker_count,
-    );
-    log!(
-        "[{:.4}] constrained global annealing score: {:.3}",
-        timer.elapsed_seconds(),
-        initial.objective
-    );
-    candidate_emitter.emit(&initial, timer, true);
-
+    let global = OptimizeAnnealing::new(problem, &pre, timer);
     let best = global.run(
         initial,
         deadline,
         &params.annealing.global,
         &params.global_neighbor,
         &params.insert,
-        false,
+        OptimizeMode {
+            name: "global",
+            w2: problem.weights.w2,
+        },
+        Some(&candidate_emitter),
         params.runtime.solver_seed.wrapping_add(1 << 32),
         params.runtime.worker_count,
     );

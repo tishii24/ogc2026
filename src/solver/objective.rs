@@ -15,17 +15,11 @@ pub(super) fn score13_block(problem: &Problem, pre: &Precompute, scheduled: Sche
     problem.weights.w1 * tardiness as f64 + problem.weights.w3 * pref_penalty as f64
 }
 
-pub(super) fn schedule_tardiness(problem: &Problem, schedule: &[ScheduledBlock]) -> i64 {
-    schedule
-        .iter()
-        .map(|scheduled| (scheduled.exit_time - problem.blocks[scheduled.block_id].due_date).max(0))
-        .sum()
-}
-
 pub(super) fn score_schedule(
     problem: &Problem,
     pre: &Precompute,
     schedule: &[ScheduledBlock],
+    w2: f64,
 ) -> ScheduleScore {
     let mut obj1 = 0;
     let mut obj3 = 0.0;
@@ -40,9 +34,7 @@ pub(super) fn score_schedule(
 
     let obj2 = normalized_imbalance(&loads, &pre.bay_load_scale);
     ScheduleScore {
-        objective: problem.weights.w1 * obj1 as f64
-            + problem.weights.w2 * obj2
-            + problem.weights.w3 * obj3,
+        objective: problem.weights.w1 * obj1 as f64 + w2 * obj2 + problem.weights.w3 * obj3,
         total_tardiness: obj1,
     }
 }

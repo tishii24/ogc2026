@@ -1,27 +1,12 @@
-use std::{
-    cmp::Reverse,
-    collections::{BinaryHeap, HashSet},
-    sync::Mutex,
-};
-
-use rayon::prelude::*;
+use std::cmp::Reverse;
 
 use crate::{
-    Problem, ScheduledBlock,
+    INF, Problem, ScheduledBlock,
     params::{InsertParams, ReconstructNeighborParams},
-    utils::{
-        random::{RandPcg64Mcg, Random, sample_weighted_index},
-        time::Timer,
-    },
+    utils::random::{Random, sample_weighted_index},
 };
 
-use super::{
-    PreoptimizeState,
-    insert::insert_greedy,
-    objective::{ScheduleScore, schedule_tardiness, score_schedule, score13_block},
-    optimize::OptimizeState,
-    precompute::Precompute,
-};
+use super::{insert::insert_greedy, objective::score13_block, precompute::Precompute};
 
 #[derive(Clone, Copy)]
 enum RemoveSeedMethod {
@@ -56,17 +41,6 @@ struct BlockOrderContext {
     slack_span: f64,
 }
 
-pub(super) struct HeuristicPrecedence {
-    pub(super) predecessors: Vec<Vec<usize>>,
-    pub(super) successors: Vec<Vec<usize>>,
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct EntryTimeBounds {
-    pub(super) min: i64,
-    pub(super) max: i64,
-}
-
 pub(super) fn sample_reconstruct_order_weights(
     rng: &mut impl Random,
     params: &ReconstructNeighborParams,
@@ -94,156 +68,6 @@ pub(super) fn sample_reconstruct_order_weights(
             params.order_random_weight_range.1,
         ),
     }
-}
-
-pub(super) fn build_optimize_state(
-    problem: &Problem,
-    pre: &Precompute,
-    state: &PreoptimizeState,
-    time_limit: f64,
-    timer: Timer,
-    max_worker_count: usize,
-    seed: u64,
-    neighbor_params: &ReconstructNeighborParams,
-    insert_params: &InsertParams,
-    precedence_margin: i64,
-) -> Option<OptimizeState> {
-    let constraints = build_heuristic_precedence(problem, state, precedence_margin);
-
-    let mut blocks_by_bay = vec![Vec::new(); problem.bays.len()];
-    for (block_id, block) in state.blocks.iter().enumerate() {
-        blocks_by_bay[block.bay_id].push(block_id);
-    }
-    let active_bays: Vec<_> = blocks_by_bay
-        .iter()
-        .enumerate()
-        .filter_map(|(bay_id, blocks)| (!blocks.is_empty()).then_some(bay_id))
-        .collect();
-    if active_bays.is_empty() {
-        return Some(OptimizeState {
-            objective: 0.0,
-            total_tardiness: 0,
-            schedule: Vec::new(),
-        });
-    }
-
-    let build_deadline = timer.elapsed_seconds() + time_limit;
-    let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
-    let seen_order_hashes: Vec<_> = (0..problem.bays.len())
-        .map(|_| Mutex::new(HashSet::new()))
-        .collect();
-    let bests: Vec<Mutex<Option<(i64, Vec<ScheduledBlock>)>>> =
-        (0..problem.bays.len()).map(|_| Mutex::new(None)).collect();
-
-    let worker_trials: Vec<_> = (0..worker_count)
-        .into_par_iter()
-        .map(|worker_id| {
-            let mut rng =
-                RandPcg64Mcg::new(seed.wrapping_add(1 << 16).wrapping_add(worker_id as u64));
-            let mut turn = worker_id;
-            let mut trials = 0usize;
-
-            while timer.elapsed_seconds() < build_deadline {
-                let bay_id = active_bays[turn % active_bays.len()];
-                turn += 1;
-
-                let weights = sample_reconstruct_order_weights(&mut rng, neighbor_params);
-                let order = build_topological_order(
-                    problem,
-                    pre,
-                    &blocks_by_bay[bay_id],
-                    &constraints,
-                    weights,
-                    None,
-                    0.0,
-                    &mut rng,
-                );
-                let order_hash = hash_order(&order);
-                if !seen_order_hashes[bay_id].lock().unwrap().insert(order_hash) {
-                    continue;
-                }
-
-                let Some(schedule) = build_bay_schedule(
-                    problem,
-                    pre,
-                    bay_id,
-                    &order,
-                    &constraints,
-                    insert_params,
-                    &mut rng,
-                ) else {
-                    continue;
-                };
-                trials += 1;
-
-                let tardiness = schedule_tardiness(problem, &schedule);
-                let mut best = bests[bay_id].lock().unwrap();
-                if best
-                    .as_ref()
-                    .is_none_or(|(best_tardiness, _)| tardiness < *best_tardiness)
-                {
-                    *best = Some((tardiness, schedule));
-                    log!(
-                        "[{:.4}] [build] best: worker={}, bay={}, tardiness={}",
-                        timer.elapsed_seconds(),
-                        worker_id,
-                        bay_id,
-                        tardiness,
-                    );
-                }
-            }
-            trials
-        })
-        .collect();
-
-    for (worker_id, trials) in worker_trials.into_iter().enumerate() {
-        log!(
-            "[{:.4}] [build worker={}] trials={}",
-            timer.elapsed_seconds(),
-            worker_id,
-            trials,
-        );
-    }
-
-    let mut bests: Vec<_> = bests
-        .into_iter()
-        .map(|best| best.into_inner().unwrap())
-        .collect();
-    let mut blocks = Vec::with_capacity(problem.blocks.len());
-    for bay_id in active_bays {
-        let (tardiness, schedule) = bests[bay_id].take()?;
-        log!(
-            "[{:.4}] [build] result: bay={}, tardiness={}",
-            timer.elapsed_seconds(),
-            bay_id,
-            tardiness,
-        );
-        blocks.extend(schedule);
-    }
-
-    let ScheduleScore {
-        objective,
-        total_tardiness,
-    } = score_schedule(problem, pre, &blocks);
-    log!(
-        "[{:.4}] [build] finished: score={:.3}",
-        timer.elapsed_seconds(),
-        objective,
-    );
-    Some(OptimizeState {
-        objective,
-        total_tardiness,
-        schedule: blocks,
-    })
-}
-
-fn hash_order(order: &[usize]) -> u64 {
-    let mut hash = 1469598103934665603u64;
-    for &block_id in order {
-        hash ^= block_id as u64;
-        hash = hash.wrapping_mul(1099511628211);
-    }
-    hash
 }
 
 pub(super) struct ReconstructBase {
@@ -291,16 +115,16 @@ pub(super) struct LargeReconstructResult {
 pub(super) fn try_large_reconstruct<R: Random>(
     problem: &Problem,
     pre: &Precompute,
-    constraints: Option<&HeuristicPrecedence>,
     schedule: &[ScheduledBlock],
     rng: &mut R,
     accept_threshold: f64,
     params: &ReconstructNeighborParams,
     insert_params: &InsertParams,
+    w2: f64,
 ) -> Option<LargeReconstructResult> {
-    let k = sample_removed_count(rng, params).min(problem.blocks.len());
+    let k = sample_removed_count(rng, params).min(schedule.len());
 
-    let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, rng, params)?;
+    let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, w2, rng, params)?;
     if removed_ids.is_empty() {
         return None;
     }
@@ -310,82 +134,50 @@ pub(super) fn try_large_reconstruct<R: Random>(
         params.current_penalty_weight_range.1,
     );
     let mut current_penalties = vec![0.0; problem.blocks.len()];
+    let mut original_by_id = vec![None; problem.blocks.len()];
     for &scheduled in schedule {
         current_penalties[scheduled.block_id] = score13_block(problem, pre, scheduled);
+        original_by_id[scheduled.block_id] = Some(scheduled);
     }
-    let order = if let Some(constraints) = constraints {
-        build_topological_order(
-            problem,
-            pre,
-            &removed_ids,
-            constraints,
-            weights,
-            Some(&current_penalties),
-            current_penalty_weight,
-            rng,
-        )
-    } else {
-        sort_block_order(
-            problem,
-            &pre.max_footprint_area,
-            &pre.pref_spread,
-            &mut removed_ids,
-            weights,
-            Some(&current_penalties),
-            current_penalty_weight,
-            rng,
-        );
-        removed_ids.clone()
-    };
+    sort_block_order(
+        problem,
+        &pre.max_footprint_area,
+        &pre.pref_spread,
+        &mut removed_ids,
+        weights,
+        Some(&current_penalties),
+        current_penalty_weight,
+        rng,
+    );
 
-    let original_by_id = scheduled_by_id(problem, schedule);
     let ReconstructBase {
         schedule: mut cur,
         mut loads,
         weighted_z1_z3: mut fixed_score13,
     } = build_reconstruct_base(problem, pre, schedule, &removed_ids);
-    let mut current_by_id = constraints.map(|_| scheduled_by_id(problem, &cur));
 
-    for block_id in order {
+    for &block_id in &removed_ids {
         if fixed_score13 > accept_threshold + 1e-9 {
             return None;
         }
         let old = original_by_id[block_id]?;
-        let EntryTimeBounds {
-            min: min_entry_time,
-            max: max_entry_time,
-        } = if let Some(constraints) = constraints {
-            precedence_entry_time_bounds(
-                problem,
-                constraints,
-                current_by_id.as_ref().unwrap(),
-                block_id,
-            )?
-        } else {
-            EntryTimeBounds {
-                min: i64::MIN,
-                max: i64::MAX,
-            }
-        };
         let scheduled = insert_greedy(
             problem,
             pre,
             old,
-            min_entry_time,
-            max_entry_time,
+            -INF,
+            INF,
             &cur,
             &loads,
             insert_params,
             &pre.bay_order_by_pref[old.block_id],
             params.insert_candidate_top_k,
             params.insert_candidate_select_p,
+            w2,
             rng,
         )?;
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
         fixed_score13 += score13_block(problem, pre, scheduled);
-        if let Some(current_by_id) = &mut current_by_id {
-            current_by_id[block_id] = Some(scheduled);
-        }
         cur.push(scheduled);
     }
 
@@ -393,41 +185,6 @@ pub(super) fn try_large_reconstruct<R: Random>(
         schedule: cur,
         #[cfg(feature = "anneal-visualizer")]
         selected_block_ids: removed_ids,
-    })
-}
-
-pub(super) fn scheduled_by_id(
-    problem: &Problem,
-    schedule: &[ScheduledBlock],
-) -> Vec<Option<ScheduledBlock>> {
-    let mut result = vec![None; problem.blocks.len()];
-    for &scheduled in schedule {
-        result[scheduled.block_id] = Some(scheduled);
-    }
-    result
-}
-
-pub(super) fn precedence_entry_time_bounds(
-    problem: &Problem,
-    constraints: &HeuristicPrecedence,
-    scheduled_by_id: &[Option<ScheduledBlock>],
-    block_id: usize,
-) -> Option<EntryTimeBounds> {
-    let block = &problem.blocks[block_id];
-    let mut min_entry_time = block.release_time;
-    for &before in &constraints.predecessors[block_id] {
-        min_entry_time = min_entry_time.max(scheduled_by_id[before]?.exit_time);
-    }
-
-    let mut max_entry_time = i64::MAX;
-    for &after in &constraints.successors[block_id] {
-        if let Some(after) = scheduled_by_id[after] {
-            max_entry_time = max_entry_time.min(after.entry_time - block.processing_time);
-        }
-    }
-    (min_entry_time <= max_entry_time).then_some(EntryTimeBounds {
-        min: min_entry_time,
-        max: max_entry_time,
     })
 }
 
@@ -452,7 +209,12 @@ fn push_removed_block(selected: &mut Vec<usize>, used: &mut [bool], block_id: us
     }
 }
 
-fn remove_badness(problem: &Problem, pre: &Precompute, schedule: &[ScheduledBlock]) -> Vec<i64> {
+fn remove_badness(
+    problem: &Problem,
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    w2: f64,
+) -> Vec<i64> {
     let mut loads = vec![0.0; problem.bays.len()];
     for s in schedule {
         loads[s.bay_id] += problem.blocks[s.block_id].workload as f64;
@@ -472,11 +234,7 @@ fn remove_badness(problem: &Problem, pre: &Precompute, schedule: &[ScheduledBloc
         let pref_penalty = pre.pref_penalty[s.block_id][s.bay_id];
         let score = tardiness as f64 * problem.weights.w1
             + pref_penalty as f64 * problem.weights.w3
-            + if Some(s.bay_id) == heavy_bay {
-                problem.weights.w2
-            } else {
-                0.0
-            };
+            + if Some(s.bay_id) == heavy_bay { w2 } else { 0.0 };
         badness[s.block_id] = score as i64;
     }
     badness
@@ -672,6 +430,7 @@ pub(super) fn choose_removed_blocks<R: Random>(
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     k: usize,
+    w2: f64,
     rng: &mut R,
     params: &ReconstructNeighborParams,
 ) -> Option<Vec<usize>> {
@@ -692,7 +451,7 @@ pub(super) fn choose_removed_blocks<R: Random>(
         params.remove_t_distance_weight_range.0,
         params.remove_t_distance_weight_range.1,
     );
-    let badness = remove_badness(problem, pre, schedule);
+    let badness = remove_badness(problem, pre, schedule, w2);
     let mut by_block = vec![None; problem.blocks.len()];
     for &scheduled in schedule {
         by_block[scheduled.block_id] = Some(scheduled);
@@ -901,162 +660,4 @@ pub(super) fn sort_default_reconstruct_order<R: Random>(
         0.0,
         rng,
     );
-}
-
-pub(super) fn build_heuristic_precedence(
-    problem: &Problem,
-    state: &PreoptimizeState,
-    precedence_margin: i64,
-) -> HeuristicPrecedence {
-    let block_count = problem.blocks.len();
-    let start_times: Vec<_> = state.blocks.iter().map(|block| block.entry_time).collect();
-    let end_times: Vec<_> = state
-        .blocks
-        .iter()
-        .enumerate()
-        .map(|(block_id, block)| block.entry_time + problem.blocks[block_id].processing_time)
-        .collect();
-    let mut predecessors = vec![Vec::new(); block_count];
-    let mut successors = vec![Vec::new(); block_count];
-
-    for after in 0..block_count {
-        let latest_start = (0..block_count)
-            .filter(|&block_id| {
-                block_id != after
-                    && state.blocks[block_id].bay_id == state.blocks[after].bay_id
-                    && end_times[block_id].saturating_add(precedence_margin) <= start_times[after]
-            })
-            .map(|block_id| start_times[block_id])
-            .max();
-
-        for before in 0..block_count {
-            if before == after
-                || state.blocks[before].bay_id != state.blocks[after].bay_id
-                || end_times[before].saturating_add(precedence_margin) > start_times[after]
-            {
-                continue;
-            }
-            if latest_start.is_some_and(|start_time| {
-                end_times[before].saturating_add(precedence_margin) <= start_time
-            }) {
-                continue;
-            }
-            successors[before].push(after);
-            predecessors[after].push(before);
-        }
-    }
-
-    HeuristicPrecedence {
-        predecessors,
-        successors,
-    }
-}
-
-pub(super) fn build_topological_order<R: Random>(
-    problem: &Problem,
-    pre: &Precompute,
-    bay_block_ids: &[usize],
-    constraints: &HeuristicPrecedence,
-    weights: BlockOrderWeights,
-    current_penalties: Option<&[f64]>,
-    current_penalty_weight: f64,
-    rng: &mut R,
-) -> Vec<usize> {
-    let mut priority_order = bay_block_ids.to_vec();
-    sort_block_order(
-        problem,
-        &pre.max_footprint_area,
-        &pre.pref_spread,
-        &mut priority_order,
-        weights,
-        current_penalties,
-        current_penalty_weight,
-        rng,
-    );
-    let mut priority_rank = vec![usize::MAX; problem.blocks.len()];
-    for (rank, &block_id) in priority_order.iter().enumerate() {
-        priority_rank[block_id] = rank;
-    }
-
-    let mut included = vec![false; problem.blocks.len()];
-    for &block_id in bay_block_ids {
-        included[block_id] = true;
-    }
-    let mut indegree = vec![0usize; problem.blocks.len()];
-    let mut ready = BinaryHeap::new();
-    for &block_id in bay_block_ids {
-        indegree[block_id] = constraints.predecessors[block_id]
-            .iter()
-            .filter(|&&before| included[before])
-            .count();
-        if indegree[block_id] == 0 {
-            ready.push(Reverse((priority_rank[block_id], block_id)));
-        }
-    }
-
-    let mut order = Vec::with_capacity(bay_block_ids.len());
-    while let Some(Reverse((_, block_id))) = ready.pop() {
-        order.push(block_id);
-        for &after in &constraints.successors[block_id] {
-            if !included[after] {
-                continue;
-            }
-            indegree[after] -= 1;
-            if indegree[after] == 0 {
-                ready.push(Reverse((priority_rank[after], after)));
-            }
-        }
-    }
-    debug_assert_eq!(order.len(), bay_block_ids.len());
-    order
-}
-
-fn build_bay_schedule<R: Random>(
-    problem: &Problem,
-    pre: &Precompute,
-    bay_id: usize,
-    order: &[usize],
-    constraints: &HeuristicPrecedence,
-    params: &InsertParams,
-    rng: &mut R,
-) -> Option<Vec<ScheduledBlock>> {
-    let mut schedule = Vec::with_capacity(order.len());
-    let mut scheduled_by_id: Vec<Option<ScheduledBlock>> = vec![None; problem.blocks.len()];
-    let mut loads = vec![0.0; problem.bays.len()];
-    let bay_order = [bay_id];
-
-    for &block_id in order {
-        let block = &problem.blocks[block_id];
-        let min_entry_time = constraints.predecessors[block_id]
-            .iter()
-            .map(|&before| scheduled_by_id[before].unwrap().exit_time)
-            .fold(block.release_time, i64::max);
-        let original = ScheduledBlock {
-            block_id,
-            bay_id,
-            orient_idx: 0,
-            x: 0,
-            y: 0,
-            entry_time: block.release_time,
-            exit_time: block.release_time + block.processing_time,
-        };
-        let scheduled = insert_greedy(
-            problem,
-            pre,
-            original,
-            min_entry_time,
-            i64::MAX,
-            &schedule,
-            &loads,
-            params,
-            &bay_order,
-            1,
-            1.0,
-            rng,
-        )?;
-        loads[bay_id] += block.workload as f64;
-        scheduled_by_id[block_id] = Some(scheduled);
-        schedule.push(scheduled);
-    }
-    Some(schedule)
 }

@@ -2,7 +2,7 @@ use std::{
     collections::{HashSet, VecDeque},
     sync::{
         Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Instant,
 };
@@ -349,6 +349,10 @@ pub(crate) trait AnnealingDelegate: Sync {
 
     fn on_shared_best(&self, _state: &Self::State, _timer: Timer) {}
 
+    fn should_stop(&self, _state: &Self::State) -> bool {
+        false
+    }
+
     #[cfg(feature = "anneal-visualizer")]
     fn visualizer_schedule<'a>(&self, _state: &'a Self::State) -> Option<&'a [ScheduledBlock]> {
         None
@@ -443,9 +447,10 @@ impl<D: AnnealingDelegate> Annealer<D> {
         assert!(self.params.exchange_interval > 0);
 
         let shared = SharedBest::new(initial_state.clone());
+        let stop = AtomicBool::new(self.delegate.should_stop(&initial_state));
         let worker_results: Vec<_> = (0..self.worker_count)
             .into_par_iter()
-            .map(|worker_id| self.run_worker(&initial_state, &shared, timer, worker_id))
+            .map(|worker_id| self.run_worker(&initial_state, &shared, &stop, timer, worker_id))
             .collect();
         let state = shared.into_inner();
         for worker in &worker_results {
@@ -482,6 +487,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
         &self,
         initial_state: &D::State,
         shared: &SharedBest<D::State>,
+        stop: &AtomicBool,
         timer: Timer,
         worker_id: usize,
     ) -> WorkerSummary {
@@ -528,6 +534,9 @@ impl<D: AnnealingDelegate> Annealer<D> {
             + STATUS_LOG_INTERVAL_SECONDS;
 
         loop {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
             let Some(elapsed) = context.next(timer) else {
                 break;
             };
@@ -685,6 +694,9 @@ impl<D: AnnealingDelegate> Annealer<D> {
                         candidate_score,
                     );
                 }
+            }
+            if self.delegate.should_stop(&local.current) {
+                stop.store(true, Ordering::Relaxed);
             }
 
             stats.time_sec += neighbor_start.elapsed().as_secs_f64();

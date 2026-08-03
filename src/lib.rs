@@ -1,3 +1,5 @@
+pub const INF: i64 = 1 << 40;
+
 pub const LOCAL: bool = cfg!(feature = "local");
 
 #[inline]

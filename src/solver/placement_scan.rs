@@ -1,4 +1,4 @@
-use crate::{Problem, ScheduledBlock};
+use crate::{INF, Problem, ScheduledBlock};
 
 use super::{
     collision::{BlockOrient, OrientPairCollision},
@@ -293,7 +293,7 @@ impl<'a> PlacementXScanner<'a> {
         let process_t = self.process_t;
         let min_t = self.min_t;
         let max_t = self.max_t;
-        self.scan_y_ranges(orient_idx, y, i64::MIN, i64::MAX, |x, forbidden| {
+        self.scan_y_ranges(orient_idx, y, -INF, INF, |x, forbidden| {
             let Some(entry_time) = forbidden.first_feasible_time(&[], min_t, max_t) else {
                 return false;
             };

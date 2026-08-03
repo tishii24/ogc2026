@@ -45,8 +45,7 @@ pub struct RuntimeParams {
 #[serde(deny_unknown_fields)]
 pub struct PhaseParams {
     pub initial_preoptimize: LimitedPhaseParams,
-    pub initial_build: LimitedPhaseParams,
-    pub global_constrained: LimitedPhaseParams,
+    pub rolling: RollingPhaseParams,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -54,6 +53,15 @@ pub struct PhaseParams {
 pub struct LimitedPhaseParams {
     pub time_ratio: f64,
     pub max_seconds: f64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RollingPhaseParams {
+    pub time_ratio: f64,
+    pub max_seconds: f64,
+    pub horizon_size: usize,
+    pub time_allocation_power: f64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -77,7 +85,6 @@ pub struct PreoptimizeSolverParams {
     pub alpha: f64,
     pub beta: f64,
     pub bay_padding: f64,
-    pub precedence_margin: i64,
     pub congestion_weight: f64,
     pub initial_build: LimitedPhaseParams,
     pub neighbor_probabilities: PreoptimizeNeighborProbabilities,
@@ -137,8 +144,13 @@ pub struct AnnealingRegimeConfig {
 }
 
 impl AnnealingRegimeConfig {
-    fn make(&self, problem: &Problem, initial_score: f64) -> AnnealingRegimeParams {
-        let initial_score_per_block = initial_score / problem.blocks.len() as f64;
+    fn make(
+        &self,
+        problem: &Problem,
+        initial_score: f64,
+        block_count: usize,
+    ) -> AnnealingRegimeParams {
+        let initial_score_per_block = initial_score / block_count.max(1) as f64;
         let candidates = [
             self.temperature_w1_scale
                 .map(|scale| [scale.0 * problem.weights.w1, scale.1 * problem.weights.w1]),
@@ -176,7 +188,7 @@ impl AnnealingRegimeConfig {
 #[serde(deny_unknown_fields)]
 pub struct AnnealingConfigs {
     pub preoptimize: AnnealingParamsConfig,
-    pub global_constrained: AnnealingParamsConfig,
+    pub rolling: AnnealingParamsConfig,
     pub global: AnnealingParamsConfig,
 }
 
@@ -201,7 +213,12 @@ pub struct AnnealingParamsConfig {
 }
 
 impl AnnealingParamsConfig {
-    pub(crate) fn make(&self, problem: &Problem, initial_score: f64) -> AnnealingParams {
+    pub(crate) fn make(
+        &self,
+        problem: &Problem,
+        initial_score: f64,
+        block_count: usize,
+    ) -> AnnealingParams {
         AnnealingParams {
             exchange_interval: self.exchange_interval,
             reheat: self.reheat.as_ref().map(|reheat| ReheatParams {
@@ -209,8 +226,12 @@ impl AnnealingParamsConfig {
                 interval: reheat.interval,
                 temperature_scale: reheat.temperature_scale,
             }),
-            positive_tardiness: self.positive_tardiness.make(problem, initial_score),
-            zero_tardiness: self.zero_tardiness.make(problem, initial_score),
+            positive_tardiness: self
+                .positive_tardiness
+                .make(problem, initial_score, block_count),
+            zero_tardiness: self
+                .zero_tardiness
+                .make(problem, initial_score, block_count),
             worker_temperature_scale: self.worker_temperature_scale,
             tabu_capacity: self.tabu_capacity,
         }

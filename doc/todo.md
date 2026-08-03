@@ -1,40 +1,20 @@
-- reconstructの改善
-- より広範囲を探索する
-  - reheatの改善
-  - bayの割り当てを変える
-  - 現在から遠い状態を優先する
-- 初期解を改善する
-  - bayごとに初期解を作らない
-
 todo:
-- multi-stage optimizeの検証・追加
-- 長時間の検証環境
-- adaptive-annealing
-  - refactor: trait
-  - reheat、温度設定
 - initial-build
-  - beam-search
+  - rolling horizon
+- 長時間の検証
 - preopt
   - 近似方法・精度の改善
   - チューニング
 - report
 
 nits:
+- epsを共通化する
 - moveを全てのblockを対象にする
+- remove-blockはL^aで削除する
+- tardiness>0ならtを大きく、tardiness=0ならtは小さくする
 - reconstruct-weightのpowerをつける
-- seedの選び方を増やす
-  - target-bay/time-window remove
 - reconstructはpreserved-loadsを使う
-- reconstructでもmulti-stage objectiveで評価する
-
-annealing:
-- adaptive-annealing
-  - reheat
-  - temperature_per_block_scale を取り直す
-  - スコアが離れすぎたら、bestをもらってくる
-- multi-stage
-  - tardiness -> pref -> pref + loads
-  - obj2を軽視する
+- スコアが離れすぎたら、bestをもらってくる
 
 tuning:
 - 温度の調整
@@ -59,11 +39,9 @@ pending:
 - beam-reconstructの導入
 - 時刻の優先度だけでなく、bayの優先度を制約に入れて最適化する
 
+rejected:
 - adaptive-annealing
 - multi-stage
   - tardiness -> pref -> pref + loads
 - preoptimizeの改善
   - 近似方法・パラメータ
-- initial-build、constraint-optimizeの改善
-  - bay割り当てをもっと重視する
-  - constraint-optimizeはbay割当をしばらく固定する

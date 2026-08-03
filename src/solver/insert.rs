@@ -30,6 +30,7 @@ pub(crate) fn insert_greedy<R: Random>(
     bay_order: &[usize],
     candidate_top_k: usize,
     candidate_select_p: f64,
+    w2: f64,
     rng: &mut R,
 ) -> Option<ScheduledBlock> {
     fn insert_candidate_cmp(
@@ -84,18 +85,25 @@ pub(crate) fn insert_greedy<R: Random>(
         return None;
     }
 
-    let current_obj2 = normalized_imbalance(loads, &pre.bay_load_scale);
+    let current_obj2 = if w2 == 0.0 {
+        0.0
+    } else {
+        normalized_imbalance(loads, &pre.bay_load_scale)
+    };
     let original_tardiness = (original.exit_time - block.due_date).max(0);
     let mut candidates = Vec::new();
     let mut best_score_delta = f64::INFINITY;
 
     for &bay_id in bay_order {
-        let mut next_loads = loads.to_vec();
-        next_loads[bay_id] += block.workload as f64;
-
-        let delta_obj23 = problem.weights.w2
-            * (normalized_imbalance(&next_loads, &pre.bay_load_scale) - current_obj2)
-            + problem.weights.w3 * pre.pref_penalty[block_id][bay_id] as f64;
+        let delta_obj2 = if w2 == 0.0 {
+            0.0
+        } else {
+            let mut next_loads = loads.to_vec();
+            next_loads[bay_id] += block.workload as f64;
+            w2 * (normalized_imbalance(&next_loads, &pre.bay_load_scale) - current_obj2)
+        };
+        let delta_obj23 =
+            delta_obj2 + problem.weights.w3 * pre.pref_penalty[block_id][bay_id] as f64;
         let min_tardiness = min_t
             .saturating_add(process_t)
             .saturating_sub(block.due_date)

@@ -1,5 +1,5 @@
 use crate::{
-    Problem, ScheduledBlock,
+    INF, Problem, ScheduledBlock,
     params::{
         InsertParams, MoveNeighborParams, RotateNeighborParams, ShiftNeighborParams,
         SwapNeighborParams,
@@ -8,13 +8,8 @@ use crate::{
 };
 
 use super::{
-    insert::insert_greedy,
-    objective::score13_block,
-    placement_scan::PlacementXScanner,
+    insert::insert_greedy, objective::score13_block, placement_scan::PlacementXScanner,
     precompute::Precompute,
-    reconstruct::{
-        EntryTimeBounds, HeuristicPrecedence, precedence_entry_time_bounds, scheduled_by_id,
-    },
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -78,7 +73,6 @@ pub(super) fn try_shift_neighbor<R: Random>(
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     rng: &mut R,
-    constraints: Option<&HeuristicPrecedence>,
     params: &ShiftNeighborParams,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.is_empty() {
@@ -95,27 +89,8 @@ pub(super) fn try_shift_neighbor<R: Random>(
         }
     }
 
-    let EntryTimeBounds {
-        min: min_entry_time,
-        max: max_entry_time,
-    } = if let Some(constraints) = constraints {
-        let by_id = scheduled_by_id(problem, &base);
-        precedence_entry_time_bounds(problem, constraints, &by_id, old.block_id)?
-    } else {
-        EntryTimeBounds {
-            min: i64::MIN,
-            max: i64::MAX,
-        }
-    };
-    let mut scanner = PlacementXScanner::new(
-        problem,
-        pre,
-        &base,
-        old.block_id,
-        old.bay_id,
-        min_entry_time,
-        max_entry_time,
-    )?;
+    let mut scanner =
+        PlacementXScanner::new(problem, pre, &base, old.block_id, old.bay_id, -INF, INF)?;
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
     for dy in params.dy_range.0..=params.dy_range.1 {
         let y = old.y + dy;
@@ -137,7 +112,6 @@ pub(super) fn try_rotate_neighbor<R: Random>(
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     rng: &mut R,
-    constraints: Option<&HeuristicPrecedence>,
     params: &RotateNeighborParams,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.is_empty() {
@@ -158,27 +132,8 @@ pub(super) fn try_rotate_neighbor<R: Random>(
         }
     }
 
-    let EntryTimeBounds {
-        min: min_entry_time,
-        max: max_entry_time,
-    } = if let Some(constraints) = constraints {
-        let by_id = scheduled_by_id(problem, &base);
-        precedence_entry_time_bounds(problem, constraints, &by_id, old.block_id)?
-    } else {
-        EntryTimeBounds {
-            min: i64::MIN,
-            max: i64::MAX,
-        }
-    };
-    let mut scanner = PlacementXScanner::new(
-        problem,
-        pre,
-        &base,
-        old.block_id,
-        old.bay_id,
-        min_entry_time,
-        max_entry_time,
-    )?;
+    let mut scanner =
+        PlacementXScanner::new(problem, pre, &base, old.block_id, old.bay_id, -INF, INF)?;
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
     for neighbor in &pre.orientation_neighbors[old.block_id][old.orient_idx] {
         for ddy in params.dy_range.0..=params.dy_range.1 {
@@ -232,7 +187,6 @@ pub(super) fn try_swap_neighbor<R: Random>(
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     rng: &mut R,
-    constraints: Option<&HeuristicPrecedence>,
     params: &SwapNeighborParams,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.len() < 2 {
@@ -247,8 +201,7 @@ pub(super) fn try_swap_neighbor<R: Random>(
             let b_idx = schedule
                 .iter()
                 .position(|s| s.block_id == candidate.block_id)?;
-            (constraints.is_none() || schedule[b_idx].bay_id == a_old.bay_id)
-                .then_some((candidate, b_idx))
+            Some((candidate, b_idx))
         })
         .take(params.neighbor_top_k)
         .collect();
@@ -265,7 +218,7 @@ pub(super) fn try_swap_neighbor<R: Random>(
         }
     }
 
-    let mut targets = [
+    let targets = [
         (
             a_old,
             b_old.bay_id,
@@ -279,36 +232,10 @@ pub(super) fn try_swap_neighbor<R: Random>(
             a_old.y + candidate.dy,
         ),
     ];
-    if constraints.is_some_and(|constraints| {
-        constraints.predecessors[a_old.block_id].contains(&b_old.block_id)
-    }) {
-        targets.swap(0, 1);
-    }
 
     for (old, bay_id, orient_idx, base_y) in targets {
-        let EntryTimeBounds {
-            min: min_entry_time,
-            max: max_entry_time,
-        } = if let Some(constraints) = constraints {
-            let by_id = scheduled_by_id(problem, &cur);
-            precedence_entry_time_bounds(problem, constraints, &by_id, old.block_id)?
-        } else {
-            EntryTimeBounds {
-                min: i64::MIN,
-                max: i64::MAX,
-            }
-        };
         let new = try_swap_place(
-            problem,
-            pre,
-            old,
-            &cur,
-            bay_id,
-            orient_idx,
-            base_y,
-            min_entry_time,
-            max_entry_time,
-            params,
+            problem, pre, old, &cur, bay_id, orient_idx, base_y, -INF, INF, params,
         )?;
         cur.push(new);
     }
@@ -321,9 +248,9 @@ pub(super) fn try_move_neighbor<R: Random>(
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     rng: &mut R,
-    constraints: Option<&HeuristicPrecedence>,
     params: &MoveNeighborParams,
     insert_params: &InsertParams,
+    w2: f64,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.is_empty() {
         return None;
@@ -360,30 +287,19 @@ pub(super) fn try_move_neighbor<R: Random>(
         base.push(s);
     }
 
-    let EntryTimeBounds {
-        min: min_entry_time,
-        max: max_entry_time,
-    } = if let Some(constraints) = constraints {
-        let by_id = scheduled_by_id(problem, &base);
-        precedence_entry_time_bounds(problem, constraints, &by_id, old.block_id)?
-    } else {
-        EntryTimeBounds {
-            min: i64::MIN,
-            max: i64::MAX,
-        }
-    };
     let scheduled = insert_greedy(
         problem,
         pre,
         old,
-        min_entry_time,
-        max_entry_time,
+        -INF,
+        INF,
         &base,
         &loads,
         insert_params,
         &pre.bay_order_by_pref[old.block_id],
         1,
         1.0,
+        w2,
         rng,
     )?;
     if scheduled == old {

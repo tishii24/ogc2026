@@ -10,12 +10,11 @@ phases:
   initial_preoptimize:
     time_ratio: 0.1
     max_seconds: 10.0
-  initial_build:
-    time_ratio: 0.1
-    max_seconds: 10.0
-  global_constrained:
-    time_ratio: 0.25
-    max_seconds: 20.0
+  rolling:
+    time_ratio: 0.5
+    max_seconds: 300.0
+    horizon_size: 20
+    time_allocation_power: 2.0
 
 precompute:
   orientation_neighbor_limit: 100
@@ -43,7 +42,7 @@ annealing:
         w3_scale: 50.0
     worker_temperature_scale: 0.0
     tabu_capacity: 4096
-  global_constrained:
+  rolling:
     exchange_interval: 2000
     positive_tardiness:
       type: geometric
@@ -84,7 +83,6 @@ preoptimize:
   alpha: 0.8
   beta: 0.1
   bay_padding: 0.0
-  precedence_margin: 2
   congestion_weight: 0.001
   initial_build:
     time_ratio: 0.1
