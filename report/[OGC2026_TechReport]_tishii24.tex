@@ -1,0 +1,181 @@
+% OGC2026 Technical Report Template
+% Based on the Springer LNCS document class
+%
+\documentclass[runningheads]{llncs}
+
+% -------------------------------------------------
+% Packages
+% -------------------------------------------------
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage[most]{tcolorbox}
+\usepackage{comment}
+
+\urlstyle{rm}
+
+% -------------------------------------------------
+% Writing-guideline boxes
+% -------------------------------------------------
+\newif\ifshowguidance
+\showguidancetrue
+% \showguidancefalse  % Uncomment this line for the final submission.
+
+\ifshowguidance
+    \newtcolorbox{guidance}{
+        enhanced, breakable, colback=blue!4, colframe=blue!55!black,
+        coltext=blue!70!black, colbacktitle=blue!55!black, coltitle=white,
+        boxrule=0.5pt, arc=1mm, left=2mm, right=2mm, top=1.5mm, bottom=1.5mm,
+        before skip=5pt, after skip=8pt, title={Writing Guidelines},
+        fonttitle=\small\bfseries, fontupper=\small
+    }
+\else
+    \excludecomment{guidance}
+\fi
+
+\begin{document}
+
+\title{OGC2026 Technical Report}
+\maketitle
+
+% =================================================
+% General Submission Guidelines
+% =================================================
+\begin{guidance}
+\textbf{General Submission Guidelines:}
+\begin{itemize}
+    \item \textbf{Page Limit:} The technical report must not exceed \textbf{10 pages}, including all figures, tables, and references.
+    \item \textbf{Submission Deadline:} 2026-08-06 14:00 (KST, UTC+09:00)
+    \item \textbf{Submission Method:} Submit the report via email to \texttt{techreport@optichallenge.com}. Please include your team name in the email subject and file name, following the format below:
+\begin{itemize}
+\item Email subject: [OGC2026] TeamName
+\item Technical report: [OGC2026\_TechReport]\_TeamName.pdf
+\end{itemize}
+    \item \textbf{Format Requirement:} The final submission must be in PDF format. Do not modify the formatting settings of the provided template.
+    \item \textbf{Final PDF Preparation:} All Writing Guidelines boxes must be completely removed before submission.
+    \item \textbf{Blind Review:} The reports will be evaluated anonymously. Do not include any information in the report that could identify the team, including team name, affiliations,  repository links, or other identifying details.
+\end{itemize}
+\end{guidance}
+
+% =================================================
+% Abstract
+% =================================================
+
+
+% \begin{abstract}
+% Write the abstract here.
+% \end{abstract}
+% \begin{guidance}
+% Summarize the report in 250 words:
+% \begin{itemize}
+%     \item Challenge problem \& overall approach
+%     \item Main algorithmic \& implementation contributions
+%     \item Key improvements for the final round \& main results
+% \end{itemize}
+% \end{guidance}
+
+% =================================================
+% 1. Introduction
+% =================================================
+\section{Introduction}
+
+
+\subsection{Challenge Problem \& Main Difficulties}
+\begin{guidance}
+Briefly describe the problem. Highlight the objective, key decisions, and main challenges. Avoid repeating the  official description.
+\end{guidance}
+
+
+\subsection{Contributions}
+\begin{guidance}
+List the main algorithmic and implementation contributions concisely.
+\end{guidance}
+
+
+% =================================================
+% 2. Algorithm Description
+% =================================================
+\section{Algorithm Description}
+
+
+\subsection{Overall Algorithm Framework}
+\begin{guidance}
+Provide an overview of the solution procedure (e.g., preprocessing, initial solution, improvement, validation).
+For each stage, specify the main approach used, such as optimization models, reinforcement learning, heuristics, or a hybrid method, and
+briefly explain how the stages interact.
+\end{guidance}
+
+% Describe the overall algorithmic framework and constraint handling here.
+
+\subsection{Key Ideas that Succeeded}
+\begin{guidance}
+Detail the strategies and methodologies that significantly improved performance.
+\end{guidance}
+
+\subsection{Key Ideas that Failed}
+\begin{guidance}
+Discuss approaches that were explored but did not yield positive results.
+\end{guidance}
+
+\subsection{Further Improvement Plan}
+\begin{guidance}
+Describe the additional modifications planned for the remainder of the final
+round.
+\end{guidance}
+
+% =================================================
+% 3. Implementation Details
+% =================================================
+\section{Implementation Details}
+\label{sec:implementation}
+
+\begin{guidance}
+Describe the software environment and implementation innovations.
+
+\end{guidance}
+
+% =================================================
+% 4. Computational Results
+% =================================================
+\section{Computational Results}
+
+
+
+\begin{guidance}
+Present the overall results on the training dataset, including the three metrics used in the objective function: Tardiness ($Z_1$), Workload Imbalance ($Z_2$), and Preference Score ($Z_3$).
+Also show how these objective values changed across your submissions.
+\end{guidance}
+
+\newpage
+
+% =================================================
+% 5. Team Members' Contributions
+% =================================================
+
+\section{Team Members' Contributions\\ (Not Applicable to Single-Member Teams)}
+\begin{guidance}
+Describe each team member's individual contributions, such as problem
+analysis, algorithm ideation, mathematical modeling, implementation,
+computational optimization, parameter tuning, experimentation, result
+analysis, validation, and report preparation. Clearly identify each
+member's primary responsibilities.
+\end{guidance}
+
+% =================================================
+% 6. AI Use Declaration
+% =================================================
+
+
+\section{AI Use Declaration}
+\begin{guidance}
+    Declare any use of generative AI tools (e.g., LLMs, automated code assistants) utilized during the development of your algorithm or the drafting of this report. Merely listing the names of the tools is not sufficient. The declaration
+should clearly describe where and how each tool contributed to the work. If none were used, explicitly state so.
+\end{guidance}
+
+\begin{thebibliography}{8}
+\end{thebibliography}
+
+\end{document}

@@ -1,16 +1,18 @@
 todo:
-- refactor
 - report
 - horizonの改善
-- validを切る
+- stderrからscoreの遷移を見る
+- 焼きなまし過程を見る
 - preopt
   - 近似方法・精度の改善
   - チューニング
-- report
 
 nits:
 - tl=30sで検証する
 - loopを削除する
+
+ideas:
+- exit-tを最小化する
 - 途中からw2を考慮する
 - moveを全てのblockを対象にする
 - remove-blockはL^aで削除する
@@ -27,10 +29,6 @@ tuning:
 solver:
 - 限界高速化
 
-evaluation:
-- データ拡張
-- caseに応じてtimelimitを設定する
-
 pending:
 - 同時刻の操作順を考慮する
   - block-id順で出す、とすれば半分くらいは考慮できる
@@ -41,6 +39,8 @@ pending:
 - pref/volume, limit-t/volumeの交互作用をorderに入れる
 - beam-reconstructの導入
 - 時刻の優先度だけでなく、bayの優先度を制約に入れて最適化する
+- データ拡張
+- caseに応じてtimelimitを設定する
 
 rejected:
 - adaptive-annealing
