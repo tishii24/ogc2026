@@ -11,13 +11,11 @@ mod placement_scan;
 mod precompute;
 mod preoptimize;
 mod reconstruct;
-mod rolling;
 
-use optimize::{OptimizeAnnealing, OptimizeMode};
+use optimize::optimize;
 use output::{CandidateEmitter, schedule_to_solution};
 use precompute::Precompute;
 use preoptimize::{PreoptimizePrecompute, preoptimize};
-use rolling::build_rolling_initial_state;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct PreoptimizedBlock {
@@ -62,12 +60,12 @@ pub fn solve(
         params.phases.initial_preoptimize.max_seconds,
     )
     .min((deadline - timer.elapsed_seconds()).max(1e-4));
-    let initial_abstract = preoptimize(
+    let preoptimized = preoptimize(
         problem,
         &preoptimize_pre,
         &params.preoptimize,
         &params.annealing.preoptimize,
-        &params.global_neighbor.reconstruct,
+        &params.neighbor.reconstruct,
         preoptimize_time_limit,
         params.runtime.worker_count,
         params.runtime.preoptimize_seed,
@@ -75,64 +73,36 @@ pub fn solve(
     log!(
         "[{:.4}] initial abstract score: {:.3}",
         timer.elapsed_seconds(),
-        initial_abstract.score
-    );
-    let rolling_time_limit = phase_time_limit(
-        timelimit,
-        params.phases.rolling.time_ratio,
-        params.phases.rolling.max_seconds,
-    )
-    .min((deadline - timer.elapsed_seconds()).max(1e-4));
-    let rolling_deadline = timer.elapsed_seconds() + rolling_time_limit;
-    let initial = build_rolling_initial_state(
-        problem,
-        &pre,
-        &initial_abstract,
-        rolling_deadline,
-        timer,
-        &params.phases.rolling,
-        &params.annealing.rolling,
-        &params.global_neighbor,
-        &params.insert,
-        params.runtime.worker_count,
-        params.runtime.solver_seed,
-    );
-    log!(
-        "[{:.4}] rolling initial score: {:.3}",
-        timer.elapsed_seconds(),
-        initial.objective
+        preoptimized.score
     );
 
-    let global_start = timer.elapsed_seconds();
-    let global_annealing_time = (deadline - global_start).max(0.0);
+    let optimize_start = timer.elapsed_seconds();
+    let optimize_time = (deadline - optimize_start).max(0.0);
     let interval_seconds = params
         .runtime
         .solution_emit_min_interval_seconds
-        .max(global_annealing_time / params.runtime.solution_emit_max_count as f64);
+        .max(optimize_time / params.runtime.solution_emit_max_count as f64);
     log!(
-        "[{:.4}] [candidate-emit] interval={:.3}s, global_time={:.3}s, max_count={}",
+        "[{:.4}] [candidate-emit] interval={:.3}s, optimize_time={:.3}s, max_count={}",
         timer.elapsed_seconds(),
         interval_seconds,
-        global_annealing_time,
+        optimize_time,
         params.runtime.solution_emit_max_count,
     );
     let candidate_emitter = CandidateEmitter::new(interval_seconds);
-    candidate_emitter.emit(&initial, timer, true);
-
-    let global = OptimizeAnnealing::new(problem, &pre, timer);
-    let best = global.run(
-        initial,
+    let best = optimize(
+        problem,
+        &pre,
+        &preoptimized,
         deadline,
-        &params.annealing.global,
-        &params.global_neighbor,
+        timer,
+        &params.phases.optimize,
+        &params.annealing.optimize,
+        &params.neighbor,
         &params.insert,
-        OptimizeMode {
-            name: "global",
-            w2: problem.weights.w2,
-        },
-        Some(&candidate_emitter),
-        params.runtime.solver_seed.wrapping_add(1 << 32),
+        &candidate_emitter,
         params.runtime.worker_count,
+        params.runtime.solver_seed,
     );
     candidate_emitter.emit(&best, timer, true);
     Ok(schedule_to_solution(&best.schedule))

@@ -18,7 +18,7 @@ pub struct SolverParams {
     pub insert: InsertParams,
     pub annealing: AnnealingConfigs,
     pub preoptimize: PreoptimizeSolverParams,
-    pub global_neighbor: NeighborParams,
+    pub neighbor: NeighborParams,
 }
 
 impl SolverParams {
@@ -45,7 +45,7 @@ pub struct RuntimeParams {
 #[serde(deny_unknown_fields)]
 pub struct PhaseParams {
     pub initial_preoptimize: LimitedPhaseParams,
-    pub rolling: RollingPhaseParams,
+    pub optimize: OptimizePhaseParams,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -57,9 +57,7 @@ pub struct LimitedPhaseParams {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RollingPhaseParams {
-    pub time_ratio: f64,
-    pub max_seconds: f64,
+pub struct OptimizePhaseParams {
     pub horizon_size: usize,
     pub time_allocation_power: f64,
 }
@@ -188,8 +186,7 @@ impl AnnealingRegimeConfig {
 #[serde(deny_unknown_fields)]
 pub struct AnnealingConfigs {
     pub preoptimize: AnnealingParamsConfig,
-    pub rolling: AnnealingParamsConfig,
-    pub global: AnnealingParamsConfig,
+    pub optimize: AnnealingParamsConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]

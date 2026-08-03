@@ -1,6 +1,6 @@
 todo:
-- initial-build
-  - rolling horizon
+- refactor
+- 途中からw2を考慮する
 - 長時間の検証
 - preopt
   - 近似方法・精度の改善
