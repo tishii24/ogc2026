@@ -1,6 +1,7 @@
 todo:
 - refactor
 - report
+- horizonの改善
 - validを切る
 - preopt
   - 近似方法・精度の改善
@@ -8,6 +9,7 @@ todo:
 - report
 
 nits:
+- tl=30sで検証する
 - loopを削除する
 - 途中からw2を考慮する
 - moveを全てのblockを対象にする
