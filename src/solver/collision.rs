@@ -231,15 +231,6 @@ impl Drop for OrientPairCache {
 
 impl CollisionGrid {
     #[inline]
-    pub(crate) fn contains(&self, dx: i64, dy: i64) -> bool {
-        let intervals = self.dx_intervals(dy);
-        let index = intervals.partition_point(|&(_, right)| right < dx);
-        intervals
-            .get(index)
-            .is_some_and(|&(left, right)| left <= dx && dx <= right)
-    }
-
-    #[inline]
     pub(crate) fn dx_intervals(&self, dy: i64) -> &[(i64, i64)] {
         if dy < self.delta.min_dy || self.delta.max_dy < dy {
             return &[];

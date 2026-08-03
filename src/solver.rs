@@ -7,7 +7,6 @@ mod neighbors;
 mod objective;
 mod optimize;
 mod output;
-pub mod pair_structure;
 mod placement_scan;
 mod precompute;
 mod preoptimize;
