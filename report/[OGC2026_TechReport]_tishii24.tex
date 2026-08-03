@@ -1,11 +1,8 @@
 % OGC2026 Technical Report Template
 % Based on the Springer LNCS document class
-%
+
 \documentclass[runningheads]{llncs}
 
-% -------------------------------------------------
-% Packages
-% -------------------------------------------------
 \usepackage[T1]{fontenc}
 \usepackage{graphicx}
 \usepackage{amsmath}
@@ -14,15 +11,15 @@
 \usepackage{xcolor}
 \usepackage[most]{tcolorbox}
 \usepackage{comment}
+\usepackage{iftex}
+\ifLuaTeX
+    \usepackage{luatexja}
+\fi
 
 \urlstyle{rm}
 
-% -------------------------------------------------
-% Writing-guideline boxes
-% -------------------------------------------------
 \newif\ifshowguidance
-\showguidancetrue
-% \showguidancefalse  % Uncomment this line for the final submission.
+\showguidancefalse
 
 \ifshowguidance
     \newtcolorbox{guidance}{
@@ -41,141 +38,188 @@
 \title{OGC2026 Technical Report}
 \maketitle
 
-% =================================================
-% General Submission Guidelines
-% =================================================
-\begin{guidance}
-\textbf{General Submission Guidelines:}
-\begin{itemize}
-    \item \textbf{Page Limit:} The technical report must not exceed \textbf{10 pages}, including all figures, tables, and references.
-    \item \textbf{Submission Deadline:} 2026-08-06 14:00 (KST, UTC+09:00)
-    \item \textbf{Submission Method:} Submit the report via email to \texttt{techreport@optichallenge.com}. Please include your team name in the email subject and file name, following the format below:
-\begin{itemize}
-\item Email subject: [OGC2026] TeamName
-\item Technical report: [OGC2026\_TechReport]\_TeamName.pdf
-\end{itemize}
-    \item \textbf{Format Requirement:} The final submission must be in PDF format. Do not modify the formatting settings of the provided template.
-    \item \textbf{Final PDF Preparation:} All Writing Guidelines boxes must be completely removed before submission.
-    \item \textbf{Blind Review:} The reports will be evaluated anonymously. Do not include any information in the report that could identify the team, including team name, affiliations,  repository links, or other identifying details.
-\end{itemize}
-\end{guidance}
+\begin{abstract}
+本稿では，時間制約と多層ポリゴンの幾何制約を同時に扱うブロックスケジューリング問題に対するヒューリスティックを提案する．本問題では各ブロックのベイ，向き，座標，搬入時刻，搬出時刻を決定する必要があり，特にクレーンによる搬入・搬出可能性が配置と時間の強い結合を生む．提案法の中心は，実幾何制約を時刻別の面積容量制約へ緩和する抽象事前最適化と，そこで得た搬入順序に従ってブロックを追加する rolling-horizon 最適化である．各 horizon では，空間走査と禁止搬入時刻区間を統合した貪欲挿入により実行可能解を構築し，複数ブロックを除去・再挿入する large reconstruction を含む並列焼きなましで改善する．密なパッキングでは局所操作のみで別の配置構造へ移ることが難しいため，良い挿入順序を先に求め，全ブロックが一度はスケジュール末尾に位置するよう逐次最適化することを重視した．
+\end{abstract}
 
-% =================================================
-% Abstract
-% =================================================
-
-
-% \begin{abstract}
-% Write the abstract here.
-% \end{abstract}
-% \begin{guidance}
-% Summarize the report in 250 words:
-% \begin{itemize}
-%     \item Challenge problem \& overall approach
-%     \item Main algorithmic \& implementation contributions
-%     \item Key improvements for the final round \& main results
-% \end{itemize}
-% \end{guidance}
-
-% =================================================
-% 1. Introduction
-% =================================================
 \section{Introduction}
 
-
 \subsection{Challenge Problem \& Main Difficulties}
-\begin{guidance}
-Briefly describe the problem. Highlight the objective, key decisions, and main challenges. Avoid repeating the  official description.
-\end{guidance}
 
+ブロック $i$ に対して，割当ベイ $b_i$，向き $o_i$，座標 $(x_i,y_i)$，搬入時刻 $e_i$，搬出時刻 $q_i$ を決定する．時間制約は
+\begin{equation}
+e_i\ge R_i,\qquad q_i-e_i\ge P_i
+\end{equation}
+である．同じ時刻に同じベイを占有するブロックは，同じ高さのレイヤーで重なってはならない．さらに ENTRY と EXIT の際には，対象ブロックを鉛直方向へ移動したときに，対象レイヤーより同じ高さ以上にある他ブロックのレイヤーと衝突しないことが要求される．したがって，ある配置が静的には非衝突であっても，クレーン操作が不可能となる場合がある．
+
+目的関数は，総遅れ $Z_1$，ベイ間の作業量不均衡 $Z_2$，ベイ選好ペナルティ $Z_3$ の重み付き和
+\begin{equation}
+F=w_1Z_1+w_2Z_2+w_3Z_3
+\end{equation}
+である．ここで
+\begin{equation}
+Z_1=\sum_i\max(0,q_i-D_i),\qquad
+Z_3=\sum_i(S_i^{\max}-S_{i,b_i})
+\end{equation}
+であり，$Z_1$ と $Z_3$ はブロックごとの寄与へ分解できる．一方で，その値を実現できるかどうかは他ブロックの配置と滞在区間に依存する．
+
+本問題の主な難しさは探索空間の硬直性にある．ベイが密に埋まると，一つのブロックを移動して生じた空きだけでは別のブロックを改善できず，配置構造を変更するには複数ブロックを協調して動かす必要がある．また，早い時刻のブロックを変更すると多数の後続ブロックとの衝突関係とクレーン順序が変わる．このため，局所探索の性能は初期解，特にブロックを実配置へ追加する順序に強く依存する．
 
 \subsection{Contributions}
-\begin{guidance}
-List the main algorithmic and implementation contributions concisely.
-\end{guidance}
 
+本稿の主な貢献は以下の通りである．
+\begin{itemize}
+    \item 多層ポリゴンの幾何制約を時刻別の面積容量制約へ緩和し，全ブロックのベイ割当と搬入時刻から挿入順序を求める抽象事前最適化を導入した．
+    \item 抽象解の搬入順序に従って部分問題を拡大する rolling-horizon 最適化により，各ブロックを自由度の高いスケジュール末尾で一度最適化する枠組みを構築した．
+    \item Minkowski difference に基づく多層衝突の $x$ 方向走査と，クレーン制約から導かれる禁止搬入時刻区間を統合した貪欲挿入法を実装した．
+    \item 時間・空間的に関連する複数ブロックを構造的に選択して再挿入する large reconstruction と，小規模近傍を組み合わせた並列焼きなましを構築した．
+\end{itemize}
 
-% =================================================
-% 2. Algorithm Description
-% =================================================
 \section{Algorithm Description}
 
-
 \subsection{Overall Algorithm Framework}
-\begin{guidance}
-Provide an overview of the solution procedure (e.g., preprocessing, initial solution, improvement, validation).
-For each stage, specify the main approach used, such as optimization models, reinforcement learning, heuristics, or a hybrid method, and
-briefly explain how the stages interact.
-\end{guidance}
 
-% Describe the overall algorithmic framework and constraint handling here.
+\subsubsection{Key findings and design rationale.}
+総遅れではブロックの大きさによらず，各ブロックの遅れが同じ重みで加算される．同様の ENTRY/EXIT 条件を持つ大ブロック一つと小ブロック複数のいずれかを遅らせる場合，小ブロック群を先に処理する方が $Z_1$ を抑えやすい．一方，大ブロックは空き領域が広い段階で配置した方が挿入しやすい．したがって，tardiness に有利な順序と packability に有利な順序は必ずしも一致しない．単純な release-time 順や due-date 順では，サイズ，処理時間，ベイ容量，ベイ選好，および他ブロックとの競合を同時に考慮できない．
+
+Rolling horizon を用いるためには，ブロックを部分問題へ追加する順序を事前に決める必要がある．そこで本手法では，正確な座標を一旦捨象した事前最適化により，全体の tardiness にとって望ましい搬入時刻 $\hat e_i$ を求め，その昇順を admission order とする．すなわち，抽象事前最適化は「何を先に挿入するか」を大域的に決め，rolling horizon はその順序を「どのように実配置へ変換するか」を扱う．
+
+Rolling horizon 自体にも四つの利点がある．第一に，配置済みブロック数を限定した部分問題となる．第二に，多くのケースで支配的な $Z_1$ と $Z_3$ はブロックごとに加法的であり，部分問題の改善が全体目的の改善と整合しやすい．第三に，末尾のブロックには後続ブロックがないため，搬入時刻と配置を変更しやすい．各ブロックは追加された horizon で一度は末尾に位置するため，全ブロックに自由度の高い探索機会を与えられる．第四に，近傍評価の計算量は配置済みブロック数とともに増加するため，前半の小さな部分問題では単位時間当たりの反復数を増やせる．なお，過去の horizon は固定せず，追加済みの全ブロックを探索対象に残す．
+
+密な配置では Shift や Move のような一ブロック近傍だけでは構造を変えにくい．そこで，関連する複数ブロックを除去し，異なる順序で挿入し直す large reconstruction を用いる．以上より，本手法では，抽象事前最適化が大域的な挿入順序を与え，rolling horizon が小さく可動性の高い部分問題を作り，large reconstruction が部分問題内の配置構造を大きく組み替える．
+
+\subsubsection{Solution procedure.}
+全体の処理は次の通りである．
+\begin{enumerate}
+    \item 各向きの境界矩形，ベイ内の配置可能範囲，向き近傍，交換候補，および衝突情報を事前計算する．
+    \item 面積容量に緩和した抽象問題を解き，各ブロックのベイ $\hat b_i$ と搬入時刻 $\hat e_i$ を求める．
+    \item $(\hat e_i,D_i,i)$ の辞書順でブロックを並べ，同じ $\hat e_i$ を分断しないよう horizon を構成する．
+    \item 新しい horizon のブロックを実幾何制約下で貪欲に挿入し，追加済みの全ブロックを焼きなましで改善する．
+    \item 全ブロックを追加した最後の horizon で，$Z_1,Z_2,Z_3$ を含む完全な目的関数により最終改善を行う．
+\end{enumerate}
 
 \subsection{Key Ideas that Succeeded}
-\begin{guidance}
-Detail the strategies and methodologies that significantly improved performance.
-\end{guidance}
+
+\subsubsection{Abstract preoptimization.}
+ブロック $i$ の向き $o$ について，全レイヤーの和領域面積を $A^{\mathrm{union}}_{io}$，その境界矩形面積を $A^{\mathrm{bbox}}_{io}$，和領域の外周長を $L_{io}$ とする．向き $o$ でベイ $j$ に収まる場合の近似占有量を
+\begin{equation}
+a_{ijo}=A^{\mathrm{union}}_{io}
++\alpha\left(A^{\mathrm{bbox}}_{io}-A^{\mathrm{union}}_{io}\right)
++\beta L_{io}
+\end{equation}
+とし，収容可能な向きの最小値を $a_{ij}$ とする．第一項は実際の占有面積，第二項は凹形状や細長い形状の周囲に生じる利用しづらい空間，第三項は複雑な輪郭によるパッキング困難性を近似する．
+
+ベイ $j$ の有効容量を $C_j$ とし，各時刻に
+\begin{equation}
+\sum_{i:\,\hat e_i\le t<\hat e_i+P_i,\,\hat b_i=j}a_{ij}\le C_j
+\end{equation}
+を課す．抽象状態は各ブロックの $(\hat b_i,\hat e_i)$ のみを持ち，正確な向きと座標は持たない．目的関数は抽象状態から計算した $Z_1,Z_2,Z_3$ に congestion penalty を加えたものとする．実装では同時滞在する二ブロックの占有率の積を時刻ごとに加算し，面積上は収まっても実配置へ変換しにくい高密度状態を避ける．
+
+初期状態は，ブロックの workload，面積と処理時間の積，ベイ選好の幅，due date から処理時間を引いた限界時刻，slack，および乱数を組み合わせた複数の順序から貪欲に構築する．各ブロックについて，容量制約を満たす最早時刻をベイごとに調べ，$Z_1,Z_2,Z_3$ と congestion の増分が最小の候補を採用する．その後，relocate，swap，複数ブロックの再配置を近傍とする焼きなましで改善する．
+
+\subsubsection{Rolling-horizon geometric optimization.}
+抽象解を $(\hat e_i,D_i,i)$ でソートし，規定個数ごとに horizon を作る．境界で $\hat e_i$ が同じブロックは同一 horizon に含める．各 horizon では，まず新規ブロックを $\hat e_i$ 以降を基準として貪欲挿入する．その後，新規ブロックだけでなく，それまでに追加した全ブロックを焼きなましの対象とする．このため，前段の決定を完全に固定する通常の freeze 型 rolling horizon と異なり，後続ブロックの追加による修正が可能である．Rolling-horizon decomposition は大規模 tardiness scheduling にも用いられている\cite{singer2001}．
+
+$Z_2$ は全ブロックのベイ割当が揃う前には意味が安定しないため，中間 horizon ではその重みをゼロとする．最後の horizon のみ公式の $w_2$ を用いる．各 horizon への探索時間は，追加済みブロック数のべき乗に比例する重みで配分し，規模の大きい後半へより多くの時間を残す．
+
+\subsubsection{Greedy geometric insertion and collision detection.}
+貪欲挿入では，ベイ，向き，整数 $y$ を列挙し，$x$ 方向をイベント走査する．候補 $s$ は主に
+\begin{equation}
+\Delta F(s)=w_1T_i(s)+w_2\Delta Z_2(s)
++w_3(S_i^{\max}-S_{i,b_i(s)})
+\end{equation}
+で比較する．最良値と同等の候補では，早い搬入時刻とベイの隅へ寄せる配置を優先する．通常は左下をアンカーとするが，一定確率で他の三隅を選び，異なるパッキング構造を生成する．
+
+衝突判定では，非凸な各レイヤーを ear clipping によって凸多角形へ分解する．二つの凸多角形 $A,B$ に対し，相対変位 $(\Delta x,\Delta y)$ が
+\begin{equation}
+A\oplus(-B)=\{a-b\mid a\in A,\ b\in B\}
+\end{equation}
+に含まれるとき両者は衝突する\cite{ghosh1993}．この領域を整数 $\Delta y$ ごとに水平切断し，禁止される整数 $\Delta x$ の区間列へ変換する．これは不規則形状パッキングの no-fit polygon と同様の相対配置表現である\cite{burke2008}．数値誤差による衝突の見逃しを避けるため小さな margin を加え，同一行の重複・隣接区間をマージする．クレーン制約では，移動ブロックのレイヤー $k$ と固定ブロックのレイヤー $l\ge k$ の禁止領域を合併する．この関係は非対称なので，向き対の両方向を別々に保持し，初回参照時に遅延構築してキャッシュする．
+
+\paragraph{Joint spatial-temporal sweep.}
+本挿入法の特徴は，空間走査と時刻探索を分離しない点にある．各既存ブロックについて，新ブロックが既存ブロックに遮られる方向と，既存ブロックが新ブロックに遮られる方向を別々に管理する．禁止 $x$ 区間の端点をイベントとし，$x$ を動かしながら二方向の干渉状態を更新する．その状態と既存ブロックの滞在区間から，新ブロックの禁止搬入時刻は高々二つの区間として求まる．現在の座標で有効な全禁止区間をマージし，探索範囲内の最早 feasible entry time を得る．したがって，各座標・各日についてスケジュール全体を再検証する必要がなく，計算量は時間 horizon に直接比例しない．
+
+ベイ $j$ に既にあるブロック数を $n_j$，ベイ幅と高さを $W_j,H_j$，対象ブロックの向き数を $O_i$ とする．ブロック対当たりの衝突区間数を定数とみなすと，一つの $(o,y)$ に対するイベント生成と counting sort は $O(n_j+W_j)$ である．候補位置ごとの禁止時刻区間走査を含む保守的な上界は $O(W_j+n_j^2)$ であり，一ブロックの挿入全体は概ね
+\begin{equation}
+O\left(\sum_j O_iH_j(W_j+n_j^2)\right)
+\end{equation}
+となる．
+
+\subsubsection{Simulated annealing and large reconstruction.}
+局所探索には simulated annealing\cite{kirkpatrick1983} を用いる．近傍は Large Reconstruction，Shift，Move，Rotate，Swap の五種類である．Shift は同じベイ・向きで近傍の $y$ を走査し，Rotate は事前計算した形状の近い向きへ変更する．Move は比較的小さいブロックを候補とし，ベイ，向き，位置，時刻を貪欲挿入で決め直す．Swap は面積と形状が近い二ブロックの位置を交換して再配置する．
+
+Large reconstruction では，複数の seed を badness，fluidity，random の三方式から選ぶ．Badness は tardiness と選好ペナルティ，および作業量の重いベイへの所属を評価する．Fluidity は slack が大きく，ベイ選好の幅が小さい，すなわち動かしやすいブロックを評価する．各 seed と同じベイにあるブロックを
+\begin{equation}
+d(i,s)=\lambda_x(x_i-x_s)^2+\lambda_y(y_i-y_s)^2
++\lambda_t(e_i-e_s)^2
+\end{equation}
+で並べ，近いブロックをまとめて除去する．複数 seed により，一つの局所領域だけでなく複数の構造を同時に変更できる．再挿入順序は workload，体積，選好幅，限界時刻，slack，現在のペナルティ，乱数の重み付き和で決め，各重みを試行ごとに変える．これにより，固定されたサイズ順や期限順に偏らず，tardiness と packability のトレードオフを再探索する．なお，抽象事前最適化内の large reconstruction は，座標を持たないため，より単純な複数ブロックの除去・再配置とする．
+
+焼きなましは複数ワーカーで並列に行う．各ワーカーは共有最良解を更新し，一定反復ごとに十分良い共有解を取り込む．停滞時には最良解へ戻して温度を一時的に上げる reheating を行う．また，tardiness が正の局面とゼロの局面で温度範囲を切り替え，前者では $Z_1$ の大きな改善を，後者では $Z_3$ を中心とした細かな改善を扱う．スケジュールのハッシュを tabu として保持し，同一状態への短期的な再訪を抑える．
 
 \subsection{Key Ideas that Failed}
-\begin{guidance}
-Discuss approaches that were explored but did not yield positive results.
-\end{guidance}
+
+Beam-search reconstruction では，同じ base schedule に対するブロックの挿入結果を複数の探索状態で再利用し，計算量を抑えながら再挿入順序を探索した．しかし，挿入結果の再利用よりも，多様な配置状態そのものを探索する方が重要であり，採用しなかった．
+
+Multi-stage optimization として，tardiness，preference，workload imbalance を段階的に最適化する方法を試したが，通常の探索に対する優位な改善を確認できなかった．また，観測した目的関数差から温度を決める adaptive annealing と，クレーン操作を妨げる blocker を明示的に除去する近傍も試した．いずれも可能性はあったが，インスタンス間で安定する調整が難しかった．
 
 \subsection{Further Improvement Plan}
-\begin{guidance}
-Describe the additional modifications planned for the remainder of the final
-round.
-\end{guidance}
 
-% =================================================
-% 3. Implementation Details
-% =================================================
+抽象事前最適化では，近似占有量と congestion の精度を改善し，抽象解と実配置の乖離を小さくしたい．Rolling horizon については，horizon サイズと探索時間配分をインスタンスに応じて変更するほか，同時刻の ENTRY/EXIT 順序や搬出時刻の変更による時間的順序の入れ替えを探索へ導入する．Large reconstruction では blocker の依存関係を利用した除去対象選択を再検討する．
+
+焼きなましについては，目的関数差や受理率に基づく adaptive annealing の再調整に加え，ワーカーごとに異なる温度帯や近傍構成を担当させ，一定間隔で状態を交換する並列焼きなましへ拡張する．高温ワーカーによる配置構造の変更と，低温ワーカーによる局所改善を明確に分担させることを目的とする．
+
 \section{Implementation Details}
 \label{sec:implementation}
 
-\begin{guidance}
-Describe the software environment and implementation innovations.
+Solver は Rust で実装し，並列化には Rayon を用いた．多角形の凸分解，境界矩形，ベイ内配置可能範囲，向き近傍，交換候補を事前計算する．ブロック対・向き対の衝突グリッドは必要になった時点で構築し，以降の探索で共有する．配置走査では禁止 $x$ 区間の端点だけを処理し，counting sort と bitset による active interval 管理を用いる．
 
-\end{guidance}
+制限時間は抽象事前最適化と rolling-horizon 最適化へ分配する．後者では残り horizon の規模から各段階の deadline を計算する．探索中の共有最良解は一定間隔で候補解として標準出力へ保存する．出力時には EXIT を先に追加してから ENTRY を追加することで，同一時刻の全 EXIT を ENTRY より前に並べる．
 
-% =================================================
-% 4. Computational Results
-% =================================================
+Rust solver の外側には Python wrapper を置く．探索中に出力された候補を重複除去して目的値順に検証し，Shapely を用いて割当，時間制約，ベイ境界，多層衝突，クレーン操作を独立に確認する．最良候補が infeasible の場合は，以前に出力された次順位の feasible な候補へ fallback する．検証時間と返却時間は solver の制限時間からあらかじめ確保する．
+
 \section{Computational Results}
 
-
-
-\begin{guidance}
-Present the overall results on the training dataset, including the three metrics used in the objective function: Tardiness ($Z_1$), Workload Imbalance ($Z_2$), and Preference Score ($Z_3$).
-Also show how these objective values changed across your submissions.
-\end{guidance}
-
-\newpage
-
-% =================================================
-% 5. Team Members' Contributions
-% =================================================
+\begin{itemize}
+    \item TODO: training dataset における $Z_1$，$Z_2$，$Z_3$，総目的値を表で掲載する．
+    \item TODO: 各提出バージョンの目的値推移を掲載する．
+    \item TODO: release-time 順，due-date 順，abstract preoptimization 順を比較し，挿入順序による $Z_1$ と総目的値の違いを掲載する．
+    \item TODO: abstract preoptimization，rolling horizon，large reconstruction を順に追加したアブレーション結果を掲載する．
+    \item TODO: rolling horizon の有無による単位時間当たりの iteration 数と目的値の違いを掲載する．
+    \item TODO: 各インスタンスの目的関数の重みと $w_1Z_1,w_2Z_2,w_3Z_3$ の内訳を示し，$Z_1,Z_3$ が支配的となるケースを確認する．
+    \item TODO: 結果から確認できる主要な傾向と限界を記述する．
+\end{itemize}
 
 \section{Team Members' Contributions\\ (Not Applicable to Single-Member Teams)}
-\begin{guidance}
-Describe each team member's individual contributions, such as problem
-analysis, algorithm ideation, mathematical modeling, implementation,
-computational optimization, parameter tuning, experimentation, result
-analysis, validation, and report preparation. Clearly identify each
-member's primary responsibilities.
-\end{guidance}
 
-% =================================================
-% 6. AI Use Declaration
-% =================================================
-
+本チームは一名で構成されるため，本項は該当しない．
 
 \section{AI Use Declaration}
-\begin{guidance}
-    Declare any use of generative AI tools (e.g., LLMs, automated code assistants) utilized during the development of your algorithm or the drafting of this report. Merely listing the names of the tools is not sufficient. The declaration
-should clearly describe where and how each tool contributed to the work. If none were used, explicitly state so.
-\end{guidance}
+
+本プロジェクトでは，主に Codex の GPT 5.6 Sol High を，著者が考案したアルゴリズムの実装，コードの読解・修正，およびデバッグの支援に使用した．技術レポートの作成では，既存実装の整理，日本語の骨子と下書きの作成，文章校正，および英語への翻訳に使用した．アルゴリズム上のアイデアと設計判断は著者が行い，生成されたコードと文章についても著者がレビュー，検証，修正した．
 
 \begin{thebibliography}{8}
+
+\bibitem{kirkpatrick1983}
+S. Kirkpatrick, C. D. Gelatt, Jr., and M. P. Vecchi,
+``Optimization by Simulated Annealing,''
+\emph{Science}, vol. 220, no. 4598, pp. 671--680, 1983.
+
+\bibitem{singer2001}
+M. Singer,
+``Decomposition Methods for Large Job Shops,''
+\emph{Computers \& Operations Research}, vol. 28, no. 3, pp. 193--207, 2001.
+
+\bibitem{ghosh1993}
+P. K. Ghosh,
+``A Unified Computational Framework for Minkowski Operations,''
+\emph{Computers \& Graphics}, vol. 17, no. 4, pp. 357--378, 1993.
+
+\bibitem{burke2008}
+E. K. Burke, R. S. R. Hellier, G. Kendall, and G. Whitwell,
+``A Comprehensive and Robust Procedure for Obtaining the No-Fit Polygon Using Minkowski Sums,''
+\emph{Computers \& Operations Research}, vol. 35, no. 1, pp. 267--281, 2008.
+
 \end{thebibliography}
 
 \end{document}
