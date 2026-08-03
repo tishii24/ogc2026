@@ -4,9 +4,7 @@ use serde::Deserialize;
 
 use crate::{
     Problem,
-    solver::annealing::{
-        AnnealingParams, AnnealingRegimeParams, ReheatParams, TemperatureScheduleKind,
-    },
+    solver::annealing::{AnnealingParams, AnnealingRegimeParams, ReheatParams},
 };
 
 #[derive(Clone, Debug, Deserialize)]
@@ -112,33 +110,33 @@ pub struct PreoptimizeNeighborParams {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WeightScaleConfig {
-    pub w1_scale: f64,
-    pub w3_scale: f64,
+    #[serde(default)]
+    pub w1_scale: Option<f64>,
+    #[serde(default)]
+    pub w3_scale: Option<f64>,
 }
 
 impl WeightScaleConfig {
     fn make(&self, problem: &Problem) -> f64 {
-        (self.w1_scale * problem.weights.w1).min(self.w3_scale * problem.weights.w3)
+        [
+            self.w1_scale.map(|scale| scale * problem.weights.w1),
+            self.w3_scale.map(|scale| scale * problem.weights.w3),
+        ]
+        .into_iter()
+        .flatten()
+        .reduce(f64::min)
+        .unwrap_or(0.0)
     }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TemperatureScheduleConfig {
-    Linear,
-    Cosine,
-    Geometric,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnnealingRegimeConfig {
-    #[serde(rename = "type")]
-    pub schedule_type: TemperatureScheduleConfig,
     pub temperature_w1_scale: Option<(f64, f64)>,
     pub temperature_w3_scale: Option<(f64, f64)>,
     pub temperature_initial_score_per_block_scale: Option<(f64, f64)>,
-    pub exchange_threshold: WeightScaleConfig,
+    #[serde(default)]
+    pub exchange_threshold: Option<WeightScaleConfig>,
 }
 
 impl AnnealingRegimeConfig {
@@ -169,15 +167,13 @@ impl AnnealingRegimeConfig {
                 .reduce(f64::min)
                 .unwrap()
         });
-        let temperature_schedule = match self.schedule_type {
-            TemperatureScheduleConfig::Linear => TemperatureScheduleKind::Linear,
-            TemperatureScheduleConfig::Cosine => TemperatureScheduleKind::Cosine,
-            TemperatureScheduleConfig::Geometric => TemperatureScheduleKind::Geometric,
-        };
         AnnealingRegimeParams {
-            temperature_schedule,
             temperature: (temperature[0], temperature[1]),
-            exchange_threshold: self.exchange_threshold.make(problem),
+            exchange_threshold: self
+                .exchange_threshold
+                .as_ref()
+                .map(|threshold| threshold.make(problem))
+                .unwrap_or(0.0),
         }
     }
 }
@@ -205,6 +201,7 @@ pub struct AnnealingParamsConfig {
     pub reheat: Option<ReheatConfig>,
     pub positive_tardiness: AnnealingRegimeConfig,
     pub zero_tardiness: AnnealingRegimeConfig,
+    #[serde(default)]
     pub worker_temperature_scale: f64,
     pub tabu_capacity: usize,
 }

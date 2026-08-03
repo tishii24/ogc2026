@@ -14,8 +14,8 @@ from typing import Any
 
 from shapely.geometry import Polygon
 
-VALIDATION_RESERVE_SECONDS = 1.0
-RETURN_BUFFER_SECONDS = 0.5
+VALIDATION_RESERVE_SECONDS = 2.0
+RETURN_BUFFER_SECONDS = 1.0
 
 
 class FeasibilityTimeout(Exception):

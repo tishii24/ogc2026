@@ -1,13 +1,15 @@
 todo:
 - refactor
-- 途中からw2を考慮する
-- 長時間の検証
+- report
+- validを切る
 - preopt
   - 近似方法・精度の改善
   - チューニング
 - report
 
 nits:
+- loopを削除する
+- 途中からw2を考慮する
 - moveを全てのblockを対象にする
 - remove-blockはL^aで削除する
 - tardiness>0ならtを大きく、tardiness=0ならtは小さくする

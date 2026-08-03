@@ -2,7 +2,7 @@ runtime:
   worker_count: 4
   solver_seed: 1
   preoptimize_seed: 2
-  solve_time_buffer_seconds: 1.5
+  solve_time_buffer_seconds: 2.0
   solution_emit_min_interval_seconds: 10.0
   solution_emit_max_count: 10
 
@@ -27,18 +27,13 @@ annealing:
   preoptimize:
     exchange_interval: 1000000
     positive_tardiness:
-      type: geometric
       temperature_initial_score_per_block_scale: [1.0, 0.01]
       exchange_threshold:
         w1_scale: 0.5
-        w3_scale: 50.0
     zero_tardiness:
-      type: geometric
       temperature_w3_scale: [10.0, 1.0]
       exchange_threshold:
-        w1_scale: 0.5
         w3_scale: 50.0
-    worker_temperature_scale: 0.0
     tabu_capacity: 4096
   optimize:
     exchange_interval: 2000
@@ -47,18 +42,13 @@ annealing:
       interval: 50000
       temperature_scale: 2.0
     positive_tardiness:
-      type: geometric
       temperature_initial_score_per_block_scale: [0.2, 0.02]
       exchange_threshold:
         w1_scale: 0.5
-        w3_scale: 50.0
     zero_tardiness:
-      type: geometric
       temperature_w3_scale: [5.0, 0.5]
       exchange_threshold:
-        w1_scale: 0.5
         w3_scale: 50.0
-    worker_temperature_scale: 0.0
     tabu_capacity: 4096
 
 preoptimize:
@@ -95,11 +85,11 @@ neighbor:
     remove_pool_factor: 4
     remove_count_sample_power: 2.0
     remove_seed_per_block: [1, 4]
-    remove_entry_base_interval_weights: [0.0, 0.0, 0.0, 0.2, 0.2, 0.2, 0.2, 0.2]
+    remove_entry_base_interval_weights: [0.0, 0.0, 1.0, 1.0, 1.0]
     remove_entry_seed_candidate_count: 10
     remove_seed_method_weights:
-      badness: 0.0
-      fluidity: 0.0
+      badness: 1.0
+      fluidity: 1.0
       random: 2.0
     remove_fluidity_slack_weight_range: [0.5, 2.0]
     remove_fluidity_pref_spread_weight_range: [0.5, 2.0]

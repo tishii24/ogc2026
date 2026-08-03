@@ -81,33 +81,14 @@ impl<S: AnnealingState> SharedBest<S> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum TemperatureScheduleKind {
-    Linear,
-    Cosine,
-    Geometric,
-}
-
 #[derive(Clone, Copy)]
 struct TemperatureRegime {
-    schedule: TemperatureScheduleKind,
     range: (f64, f64),
 }
 
 impl TemperatureRegime {
     fn current(&self, progress: f64) -> f64 {
-        match self.schedule {
-            TemperatureScheduleKind::Linear => {
-                self.range.0 + (self.range.1 - self.range.0) * progress
-            }
-            TemperatureScheduleKind::Cosine => {
-                let ratio = 0.5 * (1.0 + (std::f64::consts::PI * progress).cos());
-                self.range.1 + (self.range.0 - self.range.1) * ratio
-            }
-            TemperatureScheduleKind::Geometric => {
-                self.range.0 * (self.range.1 / self.range.0).powf(progress)
-            }
-        }
+        self.range.0 * (self.range.1 / self.range.0).powf(progress)
     }
 }
 
@@ -134,14 +115,12 @@ impl AnnealingTemperature {
             start_time: timer.elapsed_seconds(),
             deadline,
             positive_tardiness: TemperatureRegime {
-                schedule: params.positive_tardiness.temperature_schedule,
                 range: (
                     params.positive_tardiness.temperature.0 * scale,
                     params.positive_tardiness.temperature.1 * scale,
                 ),
             },
             zero_tardiness: TemperatureRegime {
-                schedule: params.zero_tardiness.temperature_schedule,
                 range: (
                     params.zero_tardiness.temperature.0 * scale,
                     params.zero_tardiness.temperature.1 * scale,
@@ -235,7 +214,6 @@ pub(crate) fn worker_temperature_scale(worker_id: usize, worker_count: usize, sc
 }
 
 pub(crate) struct AnnealingRegimeParams {
-    pub(crate) temperature_schedule: TemperatureScheduleKind,
     pub(crate) temperature: (f64, f64),
     pub(crate) exchange_threshold: f64,
 }
