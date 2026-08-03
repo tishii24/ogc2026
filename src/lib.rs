@@ -11,9 +11,8 @@ pub const fn local_enabled() -> bool {
 #[macro_export]
 macro_rules! log {
     ($($arg:tt)*) => {{
-        if $crate::local_enabled() {
-            eprintln!($($arg)*);
-        }
+        #[cfg(feature = "local")]
+        eprintln!($($arg)*);
     }};
 }
 
