@@ -7,6 +7,8 @@
 \usepackage{graphicx}
 \usepackage{amsmath}
 \usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
 \usepackage{url}
 \usepackage{xcolor}
 \usepackage[most]{tcolorbox}
@@ -77,13 +79,67 @@ The main contributions of this report are as follows.
 \subsection{Overall Algorithm Framework}
 
 \subsubsection{Key findings and design rationale.}
-In total tardiness, every unit of block tardiness has the same weight regardless of block size. Given one large block and several small blocks with similar ENTRY/EXIT conditions, processing the small blocks first may therefore reduce $Z_1$. In contrast, large blocks are easier to insert while ample free space remains. Thus, an order favorable for tardiness does not necessarily coincide with one favorable for packability. A simple release-time or due-date order cannot simultaneously account for block size, processing time, bay capacity, bay preference, and competition with other blocks.
+The first key observation concerns a conflict between tardiness and
+packability.  Every unit of block tardiness has the same weight in $Z_1$,
+regardless of the size of the block.  Given one large block and several small
+blocks with similar ENTRY/EXIT conditions, processing the small blocks first
+can therefore reduce total tardiness.  Geometrically, however, a large block
+is easier to insert while ample free space remains, and inserting it first may
+produce a better packing.  Consequently, an order favorable for $Z_1$ does
+not necessarily coincide with an order favorable for geometric feasibility.
+A simple release-time or due-date order cannot capture this trade-off together
+with processing times, bay capacities, bay preferences, and competition among
+blocks.
 
-Rolling-horizon optimization requires an order in which blocks are introduced into its partial problems. We first solve a preoptimization problem that omits exact coordinates, obtaining globally desirable entry times $\hat e_i$, and use their ascending order as the admission order. Abstract preoptimization therefore determines which blocks should be admitted first, whereas rolling-horizon optimization determines how that order is converted into an exact geometric schedule.
+The second observation is that the geometric constraints cause strong
+lock-in.  Once a schedule has been packed densely, moving to a substantially
+different packing by changing one block at a time is difficult.  Moreover,
+moving a block changes its temporal and crane-obstruction relationships with
+blocks scheduled after it.  A block near the beginning of a completed
+schedule is therefore constrained by many subsequent blocks, whereas a block
+near the end has few or no subsequent blocks and is much easier to relocate.
+These properties make both the initial admission order and the stage at which
+each block is optimized important.
 
-Rolling-horizon optimization itself has four advantages. First, each stage is a partial problem with a limited number of admitted blocks. Second, $Z_1$ and $Z_3$, which are dominant in many cases, are block-wise additive; improving them in a partial problem is therefore aligned with improving the full objective. Third, blocks near the end of a schedule have no later blocks and are consequently easier to move in time and space. Because each block is once newly admitted at the end of a horizon, every block receives an opportunity to be optimized with relatively high freedom. Fourth, neighborhood evaluation becomes more expensive as the number of admitted blocks grows, so the smaller early problems allow more iterations per unit time. Blocks from previous horizons are not frozen; all admitted blocks remain in the search to permit corrections after later blocks are added.
+We address the admission-order problem by abstract preoptimization.  Exact
+polygon constraints are relaxed into time-indexed area-capacity constraints,
+and the relaxed problem is solved over all blocks to obtain a bay $\hat b_i$
+and a desirable entry time $\hat e_i$ for every block.  Sorting by $\hat e_i$
+provides an admission order that reflects global competition for capacity and
+the resulting tardiness, rather than relying on a local priority such as
+release time or due date.  The purpose of this stage is not to determine final
+coordinates, but to predict an effective order in which the exact geometric
+schedule should be constructed.
 
-In a dense schedule, single-block neighborhoods such as Shift and Move are insufficient to change the packing structure. We therefore use large reconstruction, which removes several related blocks and reinserts them in a different order. The three key ideas consequently have complementary roles: abstract preoptimization supplies a global admission order, rolling-horizon optimization creates small and flexible subproblems, and large reconstruction makes substantial structural changes within each subproblem.
+We then convert this global order into an exact schedule by rolling-horizon
+optimization.  Each horizon admits only a limited number of new blocks and
+optimizes a partial problem.  This decomposition is well aligned with the
+original objective because its dominant terms in many instances are
+block-wise additive:
+\begin{equation}
+Z_1=\sum_i T_i, \qquad
+Z_3=\sum_i \left(S_i^{\max}-S_{i,b_i}\right).
+\end{equation}
+Improving these terms for admitted blocks therefore directly contributes to
+improving the corresponding terms of the full problem.  In addition, every
+block is once newly admitted near the tail of a partial schedule, where it can
+be moved with relatively few dependencies on subsequent blocks.  Limiting the
+number of admitted blocks also reduces the cost of neighborhood evaluation
+and permits more search iterations than repeatedly optimizing the complete
+problem.  Earlier blocks are not frozen: all admitted blocks remain movable,
+so decisions can still be corrected when later blocks are introduced.
+
+Finally, rolling-horizon optimization alone does not eliminate geometric
+lock-in within each partial problem.  In a dense schedule, single-block
+neighborhoods such as Shift and Move often cannot cross infeasible
+intermediate configurations.  Large reconstruction therefore removes several
+spatially, temporally, or objectively related blocks and reinserts them in a
+new order, allowing the packing structure to change in one neighborhood move.
+The three main ideas thus have complementary roles: abstract preoptimization
+determines a globally informed admission order, rolling-horizon optimization
+gives every block a relatively flexible stage for exact optimization, and
+large reconstruction enables structural changes after blocks have been
+packed.
 
 \subsubsection{Solution procedure.}
 The complete procedure is as follows.
@@ -96,6 +152,40 @@ The complete procedure is as follows.
 \end{enumerate}
 
 \subsection{Key Ideas that Succeeded}
+
+Algorithm~\ref{alg:overall} summarizes how the abstract schedule is converted
+into an exact geometric schedule.  The abstract entry times determine the
+admission order and serve as references for insertion, but neither the bay nor
+the entry time is fixed in the geometric optimization.
+
+\begin{algorithm}[t]
+\small
+\caption{Abstract-guided rolling-horizon optimization}
+\label{alg:overall}
+\begin{algorithmic}[1]
+\Require problem instance, horizon size $H$, global deadline $\tau$
+\Ensure feasible geometric schedule $S$
+\State $\{(\hat b_i,\hat e_i)\}_i \gets \Call{AbstractPreoptimization}{}$
+\State $\pi \gets$ blocks sorted lexicographically by $(\hat e_i,D_i,i)$
+\State $\mathcal{H} \gets \Call{BuildHorizons}{\pi,H}$
+       \Comment{do not split equal $\hat e_i$}
+\State $S\gets\emptyset$
+\For{each horizon $h\in\mathcal{H}$}
+    \For{each newly admitted block $i$ in $h$}
+        \State $S\gets\Call{GreedyInsert}{S,i,\hat e_i}$
+    \EndFor
+    \If{$h$ is the final horizon}
+        \State $w'_2\gets w_2$
+    \Else
+        \State $w'_2\gets 0$
+    \EndIf
+    \State $\tau_h\gets\Call{AllocateRemainingTime}{h,\mathcal{H},\tau}$
+    \State $S\gets\Call{ParallelSA}{S,w_1,w'_2,w_3,\tau_h}$
+       \Comment{optimize all admitted blocks}
+\EndFor
+\State \Return $S$
+\end{algorithmic}
+\end{algorithm}
 
 \subsubsection{Abstract preoptimization.}
 For orientation $o$ of block $i$, let $A^{\mathrm{union}}_{io}$ be the area of the union of all layers, $A^{\mathrm{bbox}}_{io}$ be the area of its bounding box, and $L_{io}$ be the perimeter of the union. If orientation $o$ fits in bay $j$, its approximate occupancy is
@@ -115,9 +205,24 @@ at every time. An abstract state stores only $(\hat b_i,\hat e_i)$ for each bloc
 Initial states are built greedily from multiple randomized block orders. Each order combines workload, the product of area and processing time, the spread of bay preferences, the limit time defined as due date minus processing time, slack, and a random component. For each block, the earliest capacity-feasible time is found in every eligible bay, and the candidate minimizing the incremental $Z_1$, $Z_2$, $Z_3$, and congestion is selected. The state is then improved by simulated annealing using relocate, swap, and multi-block reconstruction neighborhoods.
 
 \subsubsection{Rolling-horizon geometric optimization.}
-Blocks are sorted by $(\hat e_i,D_i,i)$, and horizons are formed with a prescribed block count. Blocks with the same $\hat e_i$ at a horizon boundary are included in the same horizon. At each horizon, newly admitted blocks are first inserted using $\hat e_i$ as their reference entry time. Simulated annealing is then applied not only to the new blocks but to all blocks admitted so far. Unlike a freezing-type rolling horizon, earlier decisions can therefore be revised in response to later admissions. Rolling-horizon decomposition has also been applied to large tardiness scheduling problems\cite{singer2001}.
+Blocks are sorted by $(\hat e_i,D_i,i)$, and horizons are formed with a prescribed block count. Blocks with the same $\hat e_i$ at a horizon boundary are included in the same horizon. At each horizon, newly admitted blocks are first inserted using $\hat e_i$ as their reference entry time. Simulated annealing is then applied not only to the new blocks but to all blocks admitted so far. Unlike a freezing-type rolling horizon, earlier decisions can therefore be revised in response to later admissions.
 
 Because $Z_2$ is not meaningful until the bay assignments of all blocks are present, its weight is set to zero in intermediate horizons. The official $w_2$ is enabled only in the final horizon. Search time is allocated with weights proportional to a power of the number of admitted blocks, reserving more time for the larger late-stage problems.
+
+Specifically, let $N_h$ denote the cumulative number of admitted blocks in
+horizon $h$, and let $\gamma$ be a parameter.  Ignoring time already consumed
+by construction and other overhead, the nominal allocation is
+\begin{equation}
+\tau_h=\tau_{\mathrm{total}}
+\frac{N_h^{\gamma}}{\sum_q N_q^{\gamma}}.
+\end{equation}
+In the implementation, this ratio is recomputed from the remaining horizons
+and the remaining time at the beginning of every horizon, so earlier
+overruns do not invalidate the global deadline.  We use $\gamma>1$ because
+later horizons contain more interacting blocks, have more expensive
+neighborhood evaluations, and are closer to the final complete objective.
+At the same time, early horizons still receive enough time to establish a
+packing structure before additional blocks reduce the available space.
 
 \subsubsection{Greedy geometric insertion and collision detection.}
 Greedy insertion enumerates bays, orientations, and integer $y$ coordinates, while sweeping in the $x$ direction through collision events. A candidate $s$ is compared primarily by
@@ -127,11 +232,37 @@ Greedy insertion enumerates bays, orientations, and integer $y$ coordinates, whi
 \end{equation}
 Among candidates tied with the best objective value, an earlier entry time and placement near a bay corner are preferred. The default anchor is the bottom-left corner, but one of the other three corners is selected with a small probability to generate different packing structures.
 
-For collision detection, each nonconvex layer is decomposed into convex polygons by ear clipping. For two convex polygons $A$ and $B$, a collision occurs when their relative displacement $(\Delta x,\Delta y)$ belongs to
+Algorithm~\ref{alg:greedy-insert} outlines the insertion procedure.  Rather
+than testing every $(x,e_i)$, the sweep updates collision states at
+$x$-interval endpoints and converts them into forbidden entry-time intervals.
+
+\begin{algorithm}[t]
+\small
+\caption{Greedy geometric insertion of block $i$}
+\label{alg:greedy-insert}
+\begin{algorithmic}[1]
+\Require partial schedule $S$, block $i$, reference entry time $\hat e_i$
+\State $s^*\gets\mathrm{none}$ and $F^*\gets+\infty$
+\For{each eligible $(j,o,y)$ whose lower bound does not exceed $F^*$}
+    \State $E\gets\Call{BuildXEvents}{S,i,j,o,y}$
+    \For{each candidate $x$ in the event sweep over $E$}
+        \State update directional collision states at $x$
+        \State $\mathcal{I}\gets$ corresponding forbidden entry-time intervals
+        \State $e\gets\Call{FirstFeasibleTime}{\mathcal{I},\max(R_i,\hat e_i)}$
+        \If{$e$ exists and $s=(j,o,x,y,e,e+P_i)$ is better than $s^*$}
+            \State $s^*\gets s$ and $F^*\gets\Delta F(s)$
+        \EndIf
+    \EndFor
+\EndFor
+\State \Return $s^*$
+\end{algorithmic}
+\end{algorithm}
+
+For collision detection, each nonconvex layer is decomposed into convex polygons by ear clipping. For two convex polygons $A$ and $B$, a collision occurs when their relative displacement $(\Delta x,\Delta y)$ belongs to the Minkowski difference\cite{ghosh1993}
 \begin{equation}
-A\oplus(-B)=\{a-b\mid a\in A,\ b\in B\}\cite{ghosh1993}.
+A\oplus(-B)=\{a-b\mid a\in A,\ b\in B\}.
 \end{equation}
-This region is horizontally sliced at every integer $\Delta y$ and converted into intervals of forbidden integer $\Delta x$. This relative-placement representation is analogous to the no-fit polygon used in irregular packing\cite{burke2008}. A small margin prevents missed collisions due to numerical errors, and overlapping or adjacent intervals in the same row are merged. For crane constraints, forbidden regions are united for every moving layer $k$ and fixed layer $l\ge k$. Because crane obstruction is directional, the two directions of every orientation pair are stored separately. The collision grid is lazily constructed on first use and then cached.
+This region is horizontally sliced at every integer $\Delta y$ and converted into intervals of forbidden integer $\Delta x$. A small margin prevents missed collisions due to numerical errors, and overlapping or adjacent intervals in the same row are merged. For crane constraints, forbidden regions are united for every moving layer $k$ and fixed layer $l\ge k$. Because crane obstruction is directional, the two directions of every orientation pair are stored separately. The collision grid is lazily constructed on first use and then cached.
 
 \paragraph{Joint spatial-temporal sweep.}
 The distinguishing feature of the insertion procedure is that spatial and temporal searches are not separated. For every existing block, the algorithm separately tracks whether the new block is obstructed by the existing block and whether the existing block is obstructed by the new block. Endpoints of forbidden $x$ intervals are treated as events, and these two directional states are updated during the $x$ sweep. From the current state and the residence interval of the existing block, the forbidden entry times of the new block can be represented by at most two intervals. All active forbidden intervals at the current coordinates are merged to find the earliest feasible entry time in the search range. Hence, the full schedule need not be revalidated at every coordinate and every day, and the running time does not directly depend on the time horizon.
@@ -176,23 +307,121 @@ A Python wrapper surrounds the Rust solver. It deduplicates emitted candidates, 
 
 \section{Computational Results}
 
-\begin{itemize}
-    \item TODO: Report $Z_1$, $Z_2$, $Z_3$, and the total objective on the training dataset.
-    \item TODO: Report the changes in objective values across submission versions.
-    \item TODO: Compare release-time, due-date, and abstract-preoptimization admission orders, including their effects on $Z_1$ and the total objective.
-    \item TODO: Report an ablation study that successively adds abstract preoptimization, rolling-horizon optimization, and large reconstruction.
-    \item TODO: Compare the number of iterations per unit time and objective values with and without rolling-horizon optimization.
-    \item TODO: Report the instance weights and the decomposition into $w_1Z_1$, $w_2Z_2$, and $w_3Z_3$ to identify cases dominated by $Z_1$ and $Z_3$.
-    \item TODO: Discuss the main trends and limitations observed in the results.
-\end{itemize}
+All methods were evaluated once on the 40 instances in
+final training set, with a time limit of 300 seconds and four worker
+threads.  ``w/o preoptimization'' replaces abstract preoptimization with a
+simple due-date admission order, while ``w/o rolling horizon'' admits all
+blocks in a single horizon.  All runs produced feasible solutions.
+Table~\ref{tab:aggregate-results} reports the objective components aggregated
+over all instances, and Table~\ref{tab:case-results} reports the total
+objective for each instance together with its numbers of bays and blocks.
 
-\section{Team Members' Contributions\\ (Not Applicable to Single-Member Teams)}
+\begin{table}[H]
+  \centering
+  \caption{Aggregated objective values on the training dataset. Lower is better.}
+  \label{tab:aggregate-results}
+  \begin{tabular}{lrrr}
+    \hline
+    Metric & Solution & w/o preoptimization & w/o rolling horizon \\
+    \hline
+    $Z_1$ & \textbf{412,209,673} & 455,157,137 & 452,373,802 \\
+    $Z_2$ & 534,593 & 520,229 & \textbf{428,491} \\
+    $Z_3$ & \textbf{35,526,753} & 38,580,980 & 43,548,790 \\
+    Total & \textbf{448,271,019} & 494,258,346 & 496,351,083 \\
+    \hline
+  \end{tabular}
+\end{table}
+
+\begin{table}[t]
+  \centering
+  \caption{Case-wise total objective values. The best value in each row is bold.}
+  \label{tab:case-results}
+  \scriptsize
+  \setlength{\tabcolsep}{4pt}
+  \renewcommand{\arraystretch}{0.88}
+  \begin{tabular}{rrrrrr}
+    \hline
+    Case & Bays & Blocks & Solution & w/o preopt. & w/o RH \\
+    \hline
+     1 & 3 & 150 & \textbf{200,600} & 254,893 & 294,493 \\
+     2 & 3 & 250 & \textbf{51,514,630} & 56,503,516 & 56,822,966 \\
+     3 & 4 & 200 & 3,861,664 & \textbf{3,727,803} & 3,827,482 \\
+     4 & 4 & 250 & 1,495,165 & \textbf{1,284,783} & 1,842,738 \\
+     5 & 2 & 150 & \textbf{6,128,553} & 6,379,911 & 6,538,337 \\
+     6 & 4 & 250 & 4,453,575 & \textbf{4,395,833} & 4,595,350 \\
+     7 & 3 & 150 & 344,892 & 294,701 & \textbf{286,315} \\
+     8 & 4 & 200 & \textbf{57,275} & 60,110 & 64,021 \\
+     9 & 3 & 200 & 4,787,490 & \textbf{4,515,461} & 5,387,753 \\
+    10 & 2 & 150 & \textbf{2,514,378} & 3,196,467 & 3,362,278 \\
+    11 & 4 & 250 & 6,158,320 & \textbf{6,153,697} & 6,731,431 \\
+    12 & 5 & 300 & \textbf{108,905} & 109,140 & 109,631 \\
+    13 & 2 & 300 & \textbf{65,583,089} & 71,348,407 & 69,348,586 \\
+    14 & 4 & 250 & \textbf{509,993} & 580,705 & 590,104 \\
+    15 & 3 & 250 & \textbf{9,117,871} & 10,285,613 & 10,778,146 \\
+    16 & 5 & 300 & \textbf{844,749} & 1,242,098 & 2,748,614 \\
+    17 & 3 & 250 & \textbf{4,166,279} & 4,582,154 & 4,792,621 \\
+    18 & 3 & 200 & \textbf{7,760,385} & 8,633,235 & 8,996,725 \\
+    19 & 3 & 200 & \textbf{14,253,229} & 15,638,146 & 16,154,618 \\
+    20 & 3 & 250 & \textbf{7,226,052} & 8,020,782 & 9,047,633 \\
+    21 & 2 & 150 & \textbf{601,313} & 629,425 & 689,846 \\
+    22 & 3 & 150 & \textbf{1,698} & 1,964 & 1,964 \\
+    23 & 5 & 300 & \textbf{10,860,631} & 11,985,764 & 12,359,963 \\
+    24 & 3 & 150 & \textbf{1,401,057} & 1,702,012 & 2,014,100 \\
+    25 & 2 & 300 & \textbf{65,341,045} & 74,668,806 & 72,491,167 \\
+    26 & 2 & 300 & \textbf{22,713,804} & 26,057,775 & 24,568,661 \\
+    27 & 4 & 200 & \textbf{113,267} & 137,490 & 181,368 \\
+    28 & 4 & 250 & \textbf{12,835,222} & 13,600,998 & 14,918,839 \\
+    29 & 4 & 200 & \textbf{172,024} & 182,248 & 205,686 \\
+    30 & 5 & 300 & 1,290,398 & \textbf{1,261,997} & 1,707,717 \\
+    31 & 3 & 200 & \textbf{2,514,690} & 3,028,944 & 3,303,448 \\
+    32 & 4 & 200 & \textbf{545,663} & 603,104 & 603,576 \\
+    33 & 2 & 150 & 452,702 & \textbf{372,622} & 987,223 \\
+    34 & 5 & 300 & 128,823 & \textbf{127,209} & 148,527 \\
+    35 & 4 & 250 & \textbf{81,715} & 83,496 & 140,982 \\
+    36 & 2 & 300 & \textbf{69,984,887} & 78,781,616 & 75,387,709 \\
+    37 & 2 & 150 & \textbf{14,170,930} & 15,999,477 & 15,299,472 \\
+    38 & 4 & 200 & \textbf{6,466,785} & 7,300,523 & 6,973,239 \\
+    39 & 2 & 150 & \textbf{41,480,168} & 43,320,130 & 44,791,617 \\
+    40 & 2 & 300 & \textbf{6,027,103} & 7,205,291 & 7,256,137 \\
+    \hline
+  \end{tabular}
+\end{table}
+
+As shown in Table~\ref{tab:aggregate-results}, removing preoptimization
+increased the total objective by 10.26\%, including
+increases of 10.42\% in $Z_1$ and 8.60\% in $Z_3$.  This result supports the
+use of the relaxed area-capacity model to determine an admission order that
+accounts for competition among blocks more effectively than a simple due-date
+order.
+
+Table~\ref{tab:aggregate-results} also shows that removing the rolling horizon
+increased the total objective by 10.73\%, with
+increases of 9.74\% in $Z_1$ and 22.58\% in $Z_3$.  This is consistent with
+the intended effects of the rolling horizon: solving smaller subproblems
+allows more iterations, and every block is temporarily placed near the tail
+of a partial schedule, where it can be moved without disturbing many
+subsequent blocks.  The particularly large change in $Z_3$ also indicates
+that this additional flexibility helps select better bay assignments.
+
+In Table~\ref{tab:aggregate-results}, both ablations obtained smaller $Z_2$
+values, but these gains were outweighed
+by their deterioration in the dominant $Z_1$ and $Z_3$ terms.  The complete
+method achieved the best total objective in 31 of the 40 rows of
+Table~\ref{tab:case-results}, compared with eight instances for w/o
+preoptimization and one for w/o rolling horizon.
+Thus, abstract preoptimization and rolling-horizon optimization play
+complementary roles: the former provides an effective global insertion order,
+while the latter converts that order into high-quality geometric placements.
+
+\section{Team Members' Contributions}
 
 This section is not applicable because the team consists of a single member.
 
 \section{AI Use Declaration}
 
-In this project, primarily Codex with GPT 5.6 Sol High was used to assist with implementing algorithms conceived by the author, reading and modifying code, and debugging. For this technical report, it was used to organize the existing implementation, prepare the Japanese outline and draft, edit the text, and translate it into English. The algorithmic ideas and design decisions were made by the author, who also reviewed, validated, and revised the generated code and text.
+In this project, primarily Codex with GPT 5.6 Sol High was used to assist with implementing algorithms conceived by the author.
+For this technical report, it was used to organize the existing implementation and prepare the draft.
+The algorithmic ideas and design decisions were made by the author, who also reviewed, validated, and revised the generated code and text.
 
 \begin{thebibliography}{8}
 
@@ -201,20 +430,10 @@ S. Kirkpatrick, C. D. Gelatt, Jr., and M. P. Vecchi,
 ``Optimization by Simulated Annealing,''
 \emph{Science}, vol. 220, no. 4598, pp. 671--680, 1983.
 
-\bibitem{singer2001}
-M. Singer,
-``Decomposition Methods for Large Job Shops,''
-\emph{Computers \& Operations Research}, vol. 28, no. 3, pp. 193--207, 2001.
-
 \bibitem{ghosh1993}
 P. K. Ghosh,
 ``A Unified Computational Framework for Minkowski Operations,''
 \emph{Computers \& Graphics}, vol. 17, no. 4, pp. 357--378, 1993.
-
-\bibitem{burke2008}
-E. K. Burke, R. S. R. Hellier, G. Kendall, and G. Whitwell,
-``A Comprehensive and Robust Procedure for Obtaining the No-Fit Polygon Using Minkowski Sums,''
-\emph{Computers \& Operations Research}, vol. 35, no. 1, pp. 267--281, 2008.
 
 \end{thebibliography}
 
