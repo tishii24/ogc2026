@@ -1,0 +1,32 @@
+Build Instructions
+
+Requirements:
+- A Unix-like environment
+- Python 3
+- Rust stable with Cargo
+
+From the project root, run:
+
+    python3 tools/composer.py submission \
+        --params params/default.yaml
+
+This command:
+
+1. Builds the Rust solver in release mode for the current platform.
+2. Copies the executable to solutions/submission/solver.
+3. Copies tools/myalgorithm.py to solutions/submission/myalgorithm.py.
+4. Copies the specified parameter file to solutions/submission/params.yaml.
+
+The generated submission files are located in:
+
+    solutions/submission/
+    - myalgorithm.py
+    - params.yaml
+    - solver
+
+At runtime, myalgorithm.py invokes the solver executable in the same
+directory and passes the problem instance through standard input.
+
+Runtime requirements:
+- Python 3
+- Shapely 2.1.2
