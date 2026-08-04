@@ -11,7 +11,7 @@ phases:
     time_ratio: 0.1
     max_seconds: 10.0
   optimize:
-    horizon_size: 20
+    horizon_size: 10
     time_allocation_power: 1.5
 
 precompute:

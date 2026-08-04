@@ -1,7 +1,10 @@
 todo:
 - report
 - build.txtを追加
+- expand-scheduleを改善する
+  - loopを削除して、orderを何個か試す
 - horizonの改善
+- 複数状態を持って次のhorizonに行く
 - stderrからscoreの遷移を見る
 - 焼きなまし過程を見る
 - preopt
@@ -10,7 +13,7 @@ todo:
 
 nits:
 - tl=30sで検証する
-- loopを削除する
+- candidate-emitの見直し
 
 ideas:
 - exit-tを最小化する
