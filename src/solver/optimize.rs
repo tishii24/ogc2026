@@ -332,7 +332,8 @@ pub(super) fn optimize(
 
     for (horizon_index, horizon) in horizons.iter().enumerate() {
         let is_last = horizon_index + 1 == horizons.len();
-        let w2 = if is_last { problem.weights.w2 } else { 0.0 };
+        let horizon_progress = horizon.end as f64 / order.len() as f64;
+        let w2 = problem.weights.w2 * horizon_progress.powf(phase_params.horizon_w2_power);
         state = extend_schedule(
             problem,
             pre,

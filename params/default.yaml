@@ -11,8 +11,9 @@ phases:
     time_ratio: 0.1
     max_seconds: 10.0
   optimize:
-    horizon_size: 10
+    horizon_size: 20
     time_allocation_power: 1.5
+    horizon_w2_power: 2.0
 
 precompute:
   orientation_neighbor_limit: 100

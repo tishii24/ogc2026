@@ -1,8 +1,8 @@
 todo:
-- report
-- build.txtを追加
 - expand-scheduleを改善する
-  - loopを削除して、orderを何個か試す
+  - orderを何個か試して、ベストなものを採用する
+  - horizonに割り当てられた時間をdtとして、max(dt*expand-ratio,max-expand-time)を使う
+  - あるいは、1回すべてのblockがinsertできるまでは試行し続ける
 - horizonの改善
 - 複数状態を持って次のhorizonに行く
 - stderrからscoreの遷移を見る
