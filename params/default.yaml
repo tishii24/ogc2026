@@ -11,9 +11,8 @@ phases:
     time_ratio: 0.1
     max_seconds: 10.0
   optimize:
-    horizon_size: 20
-    time_allocation_power: 1.5
-    horizon_w2_power: 2.0
+    base_horizon_size: 20
+    time_allocation_power: 2.0
     expand_time_ratio: 0.05
     max_expand_seconds: 5.0
 
@@ -33,9 +32,11 @@ annealing:
       temperature_initial_score_per_block_scale: [1.0, 0.01]
       exchange_threshold:
         w1_scale: 0.5
+        w3_scale: 50.0
     zero_tardiness:
       temperature_w3_scale: [10.0, 1.0]
       exchange_threshold:
+        w1_scale: 0.5
         w3_scale: 50.0
     tabu_capacity: 4096
   optimize:
@@ -48,9 +49,11 @@ annealing:
       temperature_initial_score_per_block_scale: [0.2, 0.02]
       exchange_threshold:
         w1_scale: 0.5
+        w3_scale: 50.0
     zero_tardiness:
       temperature_w3_scale: [5.0, 0.5]
       exchange_threshold:
+        w1_scale: 0.5
         w3_scale: 50.0
     tabu_capacity: 4096
 

@@ -1,9 +1,12 @@
 todo:
-- reconstructのdtにexit-t, due-t, limit-tを使う
+- horizonのブロック数を均等にする
 - horizon x beam-search
   - 複数状態を持って次のhorizonに行く
+- base-scheduleを保持して複数のorderを差分計算で試す
 - visualizerを見る
 - horizon割り当ての改善
+  - 中盤にもっと時間を割り当てて良さそう
+  - 温度が高そう
 - preopt
   - 近似方法・精度の改善
   - チューニング
@@ -14,13 +17,14 @@ nits:
 
 ideas:
 - exit-tを最小化する
-- 途中からw2を考慮する
 - moveを全てのblockを対象にする
 - remove-blockはL^aで削除する
-- tardiness>0ならtを大きく、tardiness=0ならtは小さくする
+- tardiness>0ならwtを大きく、tardiness=0ならwtは小さくする
 - reconstruct-weightのpowerをつける
 - reconstructはpreserved-loadsを使う
+- reconstructのdtにexit-tも使う
 - スコアが離れすぎたら、bestをもらってくる
+- w2を途中から考慮する
 
 tuning:
 - 温度の調整

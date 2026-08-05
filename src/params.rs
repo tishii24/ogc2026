@@ -56,9 +56,9 @@ pub struct LimitedPhaseParams {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OptimizePhaseParams {
-    pub horizon_size: usize,
+    pub base_horizon_size: usize,
     pub time_allocation_power: f64,
-    pub horizon_w2_power: f64,
+    pub horizon_w2_power: Option<f64>,
     pub expand_time_ratio: f64,
     pub max_expand_seconds: f64,
 }

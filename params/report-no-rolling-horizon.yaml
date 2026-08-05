@@ -11,7 +11,7 @@ phases:
     time_ratio: 0.1
     max_seconds: 10.0
   optimize:
-    horizon_size: 1000000000
+    base_horizon_size: 1000000000
     time_allocation_power: 1.5
     use_due_date_order: false
 
@@ -116,4 +116,3 @@ neighbor:
   swap:
     neighbor_top_k: 32
     dy_range: [-2, 2]
-

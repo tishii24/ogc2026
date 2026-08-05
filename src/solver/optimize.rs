@@ -226,36 +226,42 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
     }
 }
 
-fn build_admission_order(problem: &Problem, preopt: &PreoptimizeState) -> Vec<usize> {
+fn build_admission_order(
+    problem: &Problem,
+    pre: &Precompute,
+    preopt: &PreoptimizeState,
+) -> Vec<usize> {
     let mut order: Vec<_> = (0..problem.blocks.len()).collect();
-    order.sort_by_key(|&block_id| {
-        (
-            preopt.blocks[block_id].entry_time,
-            problem.blocks[block_id].due_date,
-            block_id,
-        )
+    order.sort_by(|&a, &b| {
+        let volume_a = pre.max_footprint_area[a] * problem.blocks[a].processing_time as f64;
+        let volume_b = pre.max_footprint_area[b] * problem.blocks[b].processing_time as f64;
+        preopt.blocks[a]
+            .entry_time
+            .cmp(&preopt.blocks[b].entry_time)
+            .then_with(|| volume_b.total_cmp(&volume_a))
+            .then(a.cmp(&b))
     });
     order
 }
 
-fn build_horizons(
-    order: &[usize],
-    preopt: &PreoptimizeState,
-    horizon_size: usize,
-) -> Vec<Range<usize>> {
-    let mut horizons = Vec::new();
-    let mut start = 0;
-    while start < order.len() {
-        let mut end = (start + horizon_size).min(order.len());
-        while end < order.len()
-            && preopt.blocks[order[end - 1]].entry_time == preopt.blocks[order[end]].entry_time
-        {
-            end += 1;
+fn build_horizons(order: &[usize], base_horizon_size: usize) -> Vec<Range<usize>> {
+    let horizon_count = order.len().div_ceil(base_horizon_size);
+    (0..horizon_count)
+        .map(|index| order.len() * index / horizon_count..order.len() * (index + 1) / horizon_count)
+        .collect()
+}
+
+fn horizon_w2(w2: f64, progress: f64, is_last: bool, power: Option<f64>) -> f64 {
+    match power {
+        Some(power) => w2 * progress.powf(power),
+        None => {
+            if is_last {
+                w2
+            } else {
+                0.0
+            }
         }
-        horizons.push(start..end);
-        start = end;
     }
-    horizons
 }
 
 fn extend_schedule(
@@ -381,8 +387,8 @@ pub(super) fn optimize(
     max_worker_count: usize,
     seed: u64,
 ) -> OptimizeState {
-    let order = build_admission_order(problem, preopt);
-    let horizons = build_horizons(&order, preopt, phase_params.horizon_size);
+    let order = build_admission_order(problem, pre, preopt);
+    let horizons = build_horizons(&order, phase_params.base_horizon_size);
     let mut state = make_optimize_state(problem, pre, Vec::new(), 0.0);
     let mut rng = RandPcg64Mcg::new(seed);
     let annealer = OptimizeAnnealing::new(problem, pre, timer);
@@ -390,7 +396,12 @@ pub(super) fn optimize(
     for (horizon_index, horizon) in horizons.iter().enumerate() {
         let is_last = horizon_index + 1 == horizons.len();
         let horizon_progress = horizon.end as f64 / order.len() as f64;
-        let w2 = problem.weights.w2 * horizon_progress.powf(phase_params.horizon_w2_power);
+        let w2 = horizon_w2(
+            problem.weights.w2,
+            horizon_progress,
+            is_last,
+            phase_params.horizon_w2_power,
+        );
         let now = timer.elapsed_seconds();
         let remaining_weight: f64 = horizons[horizon_index..]
             .iter()
