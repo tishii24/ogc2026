@@ -1,5 +1,7 @@
 target/
 log/
+report/
+doc/
 solutions/
 .git/
 .DS_Store
