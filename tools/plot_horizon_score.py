@@ -1,0 +1,232 @@
+# ruff: noqa
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import matplotlib.pyplot as plt # type: ignore
+
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+HORIZON_RE = re.compile(
+    r"^\[(?P<time>[0-9.]+)\] \[optimize\] horizon=(?P<horizon>\d+)/(?P<total>\d+), "
+    r"blocks=(?P<blocks>\d+), initial=(?P<initial>[-+0-9.eE]+), w2=(?P<w2>[-+0-9.eE]+)"
+)
+WORKER_RE = re.compile(
+    r"^\[(?P<time>[0-9.]+)\] \[optimize worker=(?P<worker>\d+)\] "
+    r"iter=\s*(?P<iter>\d+), current=(?P<current>[-+0-9.eE]+), "
+    r"temperature=(?P<temperature>[-+0-9.eE]+), regime=(?P<regime>\S+)"
+)
+SHARED_BEST_RE = re.compile(
+    r"^\[(?P<time>[0-9.]+)\] \[optimize\] shared best: "
+    r"worker=(?P<worker>\d+), iter=\s*(?P<iter>\d+), score=(?P<score>[-+0-9.eE]+)"
+)
+END_RE = re.compile(r"^\[(?P<time>[0-9.]+)\] \[main\] end\.")
+
+
+@dataclass
+class WorkerPoint:
+    time: float
+    current: float
+    temperature: float
+    regime: str
+
+
+@dataclass
+class Horizon:
+    index: int
+    total: int
+    start: float
+    blocks: int
+    initial: float
+    w2: float
+    workers: dict[int, list[WorkerPoint]] = field(default_factory=dict)
+    shared_best: list[tuple[float, float]] = field(default_factory=list)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Plot rolling-horizon worker scores and temperatures from stderr.log."
+    )
+    parser.add_argument("stderr_log", help="Path to stderr.log")
+    parser.add_argument("--out", help="Output image path (default: beside the log)")
+    return parser.parse_args()
+
+
+def parse_log(path: Path) -> tuple[list[Horizon], float | None]:
+    horizons: list[Horizon] = []
+    current_horizon: Horizon | None = None
+    end_time = None
+
+    with path.open(encoding="utf-8", errors="replace") as file:
+        for raw_line in file:
+            line = ANSI_RE.sub("", raw_line.strip())
+            if match := HORIZON_RE.match(line):
+                current_horizon = Horizon(
+                    index=int(match.group("horizon")),
+                    total=int(match.group("total")),
+                    start=float(match.group("time")),
+                    blocks=int(match.group("blocks")),
+                    initial=float(match.group("initial")),
+                    w2=float(match.group("w2")),
+                )
+                horizons.append(current_horizon)
+                continue
+
+            if current_horizon is not None and (match := WORKER_RE.match(line)):
+                worker = int(match.group("worker"))
+                current_horizon.workers.setdefault(worker, []).append(
+                    WorkerPoint(
+                        time=float(match.group("time")),
+                        current=float(match.group("current")),
+                        temperature=float(match.group("temperature")),
+                        regime=match.group("regime"),
+                    )
+                )
+                continue
+
+            if current_horizon is not None and (match := SHARED_BEST_RE.match(line)):
+                current_horizon.shared_best.append(
+                    (float(match.group("time")), float(match.group("score")))
+                )
+                continue
+
+            if match := END_RE.match(line):
+                end_time = float(match.group("time"))
+
+    return horizons, end_time
+
+
+def plot(horizons: list[Horizon], end_time: float | None, out_path: Path) -> None:
+    worker_ids = sorted(
+        {worker for horizon in horizons for worker in horizon.workers}
+    )
+    colors = {
+        worker: plt.get_cmap("tab10")(index % 10)
+        for index, worker in enumerate(worker_ids)
+    }
+
+    figure, (score_ax, temperature_ax) = plt.subplots(
+        2, 1, figsize=(14, 9), sharex=True, constrained_layout=True
+    )
+
+    for position, horizon in enumerate(horizons):
+        next_start = (
+            horizons[position + 1].start
+            if position + 1 < len(horizons)
+            else end_time
+        )
+        if position % 2 == 0 and next_start is not None:
+            score_ax.axvspan(horizon.start, next_start, color="black", alpha=0.035)
+            temperature_ax.axvspan(
+                horizon.start, next_start, color="black", alpha=0.035
+            )
+
+        for axis in (score_ax, temperature_ax):
+            axis.axvline(horizon.start, color="gray", linewidth=0.8, alpha=0.7)
+
+        score_ax.scatter(
+            [horizon.start],
+            [horizon.initial],
+            color="black",
+            marker="x",
+            s=35,
+            zorder=4,
+        )
+        score_ax.annotate(
+            f"H{horizon.index} blocks={horizon.blocks} w2={horizon.w2:g}",
+            (horizon.start, 1.0),
+            xycoords=("data", "axes fraction"),
+            xytext=(3, -4),
+            textcoords="offset points",
+            rotation=90,
+            va="top",
+            ha="left",
+            fontsize=8,
+            color="dimgray",
+        )
+
+        for worker, points in sorted(horizon.workers.items()):
+            times = [point.time for point in points]
+            score_ax.plot(
+                times,
+                [point.current for point in points],
+                color=colors[worker],
+                linewidth=1.2,
+                marker=".",
+                markersize=3,
+                label=f"worker {worker}" if position == 0 else None,
+            )
+            temperature_ax.plot(
+                times,
+                [point.temperature for point in points],
+                color=colors[worker],
+                linewidth=1.2,
+                marker=".",
+                markersize=3,
+                label=f"worker {worker}" if position == 0 else None,
+            )
+
+        if horizon.shared_best:
+            shared_times = [horizon.start]
+            shared_scores = [horizon.initial]
+            shared_times.extend(time for time, _ in horizon.shared_best)
+            shared_scores.extend(score for _, score in horizon.shared_best)
+            if next_start is not None:
+                shared_times.append(next_start)
+                shared_scores.append(shared_scores[-1])
+            score_ax.step(
+                shared_times,
+                shared_scores,
+                where="post",
+                color="black",
+                linewidth=1.0,
+                alpha=0.8,
+                label="shared best" if position == 0 else None,
+            )
+
+    score_ax.set_title("Rolling-horizon optimize score by worker")
+    score_ax.set_ylabel("current score")
+    score_ax.grid(True, alpha=0.25)
+    temperature_ax.set_ylabel("temperature")
+    temperature_ax.set_xlabel("elapsed time [s]")
+    temperature_ax.grid(True, alpha=0.25)
+
+    if worker_ids:
+        score_ax.legend(loc="best", ncol=min(4, len(worker_ids) + 1))
+        temperature_ax.legend(loc="best", ncol=min(4, len(worker_ids)))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(out_path, dpi=160)
+    plt.close(figure)
+
+
+def main() -> int:
+    args = parse_args()
+    log_path = Path(args.stderr_log).resolve()
+    if not log_path.is_file():
+        print(f"error: log not found: {log_path}", file=sys.stderr)
+        return 1
+
+    horizons, end_time = parse_log(log_path)
+    if not horizons:
+        print(f"error: no optimize horizon logs found in {log_path}", file=sys.stderr)
+        return 1
+
+    out_path = (
+        Path(args.out).resolve()
+        if args.out
+        else log_path.with_name("horizon-score.png")
+    )
+    plot(horizons, end_time, out_path)
+    print(f"created: {out_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

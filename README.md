@@ -23,6 +23,11 @@
 ## tools/visualizer.py
 - runner.pyが作成した実行結果を可視化する
 
+## tools/plot_horizon_score.py
+- runner.pyが保存した`stderr.log`から、rolling horizonごとのworkerのcurrent scoreと温度を可視化する
+- horizonの開始時刻、initial score、shared bestも同じグラフに表示する
+- matplotlibが必要
+
 ## テスト
 
 ```bash
@@ -41,6 +46,11 @@ python tools/runner.py $VERSION --suite suites/half.json --timelimit $TIMELIMIT 
 
 # ビジュアライザの作成
 python tools/visualizer.py log/$VERSION/$TIMELIMIT
+
+# stderr.logのscoreと温度を可視化
+python tools/plot_horizon_score.py log/$VERSION/$TIMELIMIT/prob_1/stderr.log
+# 出力先を指定する場合
+python tools/plot_horizon_score.py log/$VERSION/$TIMELIMIT/prob_1/stderr.log --out horizon-score.png
 
 # 統計情報の表示
 python tools/stats.py --suite suites/half.json

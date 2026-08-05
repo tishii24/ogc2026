@@ -145,12 +145,12 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
 
     #[cfg(feature = "anneal-visualizer")]
     fn visualizer_schedule<'a>(&self, state: &'a Self::State) -> Option<&'a [ScheduledBlock]> {
-        self.candidate_emitter.is_some().then_some(&state.schedule)
+        Some(&state.schedule)
     }
 
     #[cfg(feature = "anneal-visualizer")]
     fn visualizer_problem(&self) -> Option<&Problem> {
-        self.candidate_emitter.map(|_| self.problem)
+        Some(self.problem)
     }
 
     fn propose(

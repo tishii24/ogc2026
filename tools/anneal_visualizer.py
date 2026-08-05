@@ -183,6 +183,10 @@ HTML_TEMPLATE = r"""<!doctype html>
 const viewerData = JSON.parse(document.getElementById('viewer-data').textContent);
 const problem = viewerData.problem;
 const allSnapshots = viewerData.snapshots || [];
+const finalSchedule = allSnapshots[allSnapshots.length - 1]?.schedule || [];
+const displayTimeMax = Math.max(0, ...finalSchedule.map(s => Number(s.exit_time || 0)));
+const maxBayWidth = Math.max(...(problem.bays || []).map(bay => Number(bay.width || 1)));
+const maxBayHeight = Math.max(...(problem.bays || []).map(bay => Number(bay.height || 1)));
 let snapshots = allSnapshots;
 const playButton = document.getElementById('playButton');
 const speedSelect = document.getElementById('speedSelect');
@@ -226,13 +230,7 @@ function blockPreferencePenalty(s) {
 function currentSnapshot() { return snapshots[currentIndex] || { schedule: [] }; }
 
 function currentPhaseTimes() {
-  const schedule = currentSnapshot().schedule || [];
-  if (!schedule.length) return [0, 0, 0, 0];
-  const tMin = Math.min(...schedule.map(s => Number(s.entry_time || 0)));
-  const tMax = Math.max(...schedule.map(s => Number(s.exit_time || 0)));
-  const span = Math.max(0, tMax - tMin);
-  if (span <= 0) return [tMin, tMin, tMin, tMin];
-  return [1, 2, 3, 4].map(k => Math.floor(tMin + k * span / 5));
+  return [1, 2, 3, 4].map(k => Math.floor(k * displayTimeMax / 5));
 }
 
 function activeBlocksForBayAtPhase(bayId, phaseIndex) {
@@ -286,11 +284,7 @@ function applyFilters() {
 function renderBays() {
   baysRoot.innerHTML = '';
   canvases = [];
-  const commonAspect = Math.max(
-    ...(problem.bays || []).map(bay =>
-      Number(bay.height || 1) / Math.max(1, Number(bay.width || 1))
-    )
-  );
+  const commonAspect = maxBayHeight / Math.max(1, maxBayWidth);
   const commonCanvasHeight = Math.max(
     120,
     Math.min(260, Math.round(360 * commonAspect + 50))
@@ -341,8 +335,8 @@ function resizeCanvas(canvas) {
 
 function transformPoint(x, y, bay, width, height) {
   const pad = 18;
-  const sx = (width - 2 * pad) / Math.max(1, Number(bay.width || 1));
-  const sy = (height - 2 * pad) / Math.max(1, Number(bay.height || 1));
+  const sx = (width - 2 * pad) / maxBayWidth;
+  const sy = (height - 2 * pad) / maxBayHeight;
   const scale = Math.min(sx, sy);
   const ox = pad + (width - 2 * pad - Number(bay.width || 1) * scale) / 2;
   const oy = pad + (height - 2 * pad - Number(bay.height || 1) * scale) / 2;
@@ -472,8 +466,8 @@ function canvasToBay(canvas, event) {
   const bay = problem.bays[bayId];
   const rect = canvas.getBoundingClientRect();
   const pad = 18;
-  const sx = (rect.width - 2 * pad) / Math.max(1, Number(bay.width || 1));
-  const sy = (rect.height - 2 * pad) / Math.max(1, Number(bay.height || 1));
+  const sx = (rect.width - 2 * pad) / maxBayWidth;
+  const sy = (rect.height - 2 * pad) / maxBayHeight;
   const scale = Math.min(sx, sy);
   const ox = pad + (rect.width - 2 * pad - Number(bay.width || 1) * scale) / 2;
   const oy = pad + (rect.height - 2 * pad - Number(bay.height || 1) * scale) / 2;

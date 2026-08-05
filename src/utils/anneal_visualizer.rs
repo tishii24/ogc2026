@@ -1,8 +1,9 @@
 use std::{
-    fs::{File, create_dir_all},
+    collections::HashSet,
+    fs::{File, OpenOptions, create_dir_all},
     io::{BufWriter, Write},
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Mutex, OnceLock},
 };
 
 use serde::Serialize;
@@ -10,6 +11,7 @@ use serde::Serialize;
 use crate::{Problem, ScheduledBlock};
 
 static OUTPUT_DIR: OnceLock<PathBuf> = OnceLock::new();
+static INITIALIZED_FILES: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
 pub fn init(output_dir: &Path) -> Result<(), String> {
     create_dir_all(output_dir).map_err(|err| {
@@ -94,12 +96,20 @@ impl AnnealVisualizer {
             )
         });
         let path = phase_dir.join(format!("worker_{worker_id}.jsonl"));
-        let file = File::create(&path).unwrap_or_else(|err| {
-            panic!(
-                "failed to create anneal visualize file {}: {err}",
-                path.display()
-            )
-        });
+        let initialized_files = INITIALIZED_FILES.get_or_init(|| Mutex::new(HashSet::new()));
+        let first_open = initialized_files.lock().unwrap().insert(path.clone());
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(!first_open)
+            .truncate(first_open)
+            .open(&path)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "failed to create anneal visualize file {}: {err}",
+                    path.display()
+                )
+            });
         Some(Self {
             writer: BufWriter::new(file),
         })
@@ -112,8 +122,8 @@ impl AnnealVisualizer {
         current: &[ScheduledBlock],
         candidate: &[ScheduledBlock],
     ) {
-        let mut current_by_id = vec![None; current.len()];
-        let mut candidate_by_id = vec![None; candidate.len()];
+        let mut current_by_id = vec![None; problem.blocks.len()];
+        let mut candidate_by_id = vec![None; problem.blocks.len()];
         for &block in current {
             current_by_id[block.block_id] = Some(block);
         }
@@ -130,8 +140,10 @@ impl AnnealVisualizer {
         let mut score13_delta = 0.0;
         let mut block_improvements = Vec::new();
         for &block_id in meta.selected_block_ids {
-            let before = current_by_id[block_id].unwrap();
-            let after = candidate_by_id[block_id].unwrap();
+            let (Some(before), Some(after)) = (current_by_id[block_id], candidate_by_id[block_id])
+            else {
+                continue;
+            };
             let block = &problem.blocks[block_id];
             let before_tardiness = (before.exit_time - block.due_date).max(0);
             let after_tardiness = (after.exit_time - block.due_date).max(0);

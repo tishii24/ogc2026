@@ -1,8 +1,9 @@
 todo:
 - expand-scheduleを改善する
   - orderを何個か試して、ベストなものを採用する
-  - horizonに割り当てられた時間をdtとして、max(dt*expand-ratio,max-expand-time)を使う
+  - horizonに割り当てられた時間をdtとして、min(dt*expand-ratio,max-expand-time)を使う
   - あるいは、1回すべてのblockがinsertできるまでは試行し続ける
+- reconstructのdtにexit-t, due-t, limit-tを使う
 - horizonの改善
 - 複数状態を持って次のhorizonに行く
 - stderrからscoreの遷移を見る

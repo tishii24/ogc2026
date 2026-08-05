@@ -579,6 +579,10 @@ function renderBays() {
   const data = currentCase();
   baysRoot.innerHTML = '';
   canvases = [];
+  const maxBayWidth = Math.max(...data.bays.map(bay => Number(bay.width || 1)));
+  const maxBayHeight = Math.max(...data.bays.map(bay => Number(bay.height || 1)));
+  const commonAspect = maxBayHeight / Math.max(1, maxBayWidth);
+  const commonCanvasHeight = Math.max(180, Math.min(420, Math.round(520 * commonAspect + 70)));
   data.bays.forEach((bay, bayId) => {
     const card = document.createElement('div');
     card.className = 'bay-card';
@@ -590,9 +594,7 @@ function renderBays() {
 
     const canvas = document.createElement('canvas');
     canvas.dataset.bayId = String(bayId);
-    const aspect = Number(bay.height || 1) / Math.max(1, Number(bay.width || 1));
-    const cssHeight = Math.max(180, Math.min(420, Math.round(520 * aspect + 70)));
-    canvas.style.height = `${cssHeight}px`;
+    canvas.style.height = `${commonCanvasHeight}px`; 
     canvas.addEventListener('mousemove', onCanvasMouseMove);
     canvas.addEventListener('mouseleave', () => {
       blockInfo.textContent = 'Hover a block.';
@@ -703,11 +705,13 @@ function resizeCanvas(canvas) {
   return { ctx, width: rect.width, height: rect.height };
 }
 
-function makeTransform(bay, width, height) {
+function makeTransform(bay, bays, width, height) {
   const margin = 22;
+  const maxBayWidth = Math.max(...bays.map(item => Number(item.width || 1)));
+  const maxBayHeight = Math.max(...bays.map(item => Number(item.height || 1)));
   const scale = Math.min(
-    (width - margin * 2) / Math.max(1, Number(bay.width || 1)),
-    (height - margin * 2) / Math.max(1, Number(bay.height || 1)),
+    (width - margin * 2) / maxBayWidth,
+    (height - margin * 2) / maxBayHeight,
   );
   const originX = (width - Number(bay.width || 1) * scale) / 2;
   const originY = (height - Number(bay.height || 1) * scale) / 2;
@@ -728,7 +732,7 @@ function drawBay(canvas, data) {
   const bayId = Number(canvas.dataset.bayId);
   const bay = data.bays[bayId];
   const { ctx, width, height } = resizeCanvas(canvas);
-  const tr = makeTransform(bay, width, height);
+  const tr = makeTransform(bay, data.bays, width, height);
   canvas._hitboxes = [];
 
   ctx.clearRect(0, 0, width, height);
