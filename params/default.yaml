@@ -14,6 +14,8 @@ phases:
     horizon_size: 20
     time_allocation_power: 1.5
     horizon_w2_power: 2.0
+    expand_time_ratio: 0.05
+    max_expand_seconds: 5.0
 
 precompute:
   orientation_neighbor_limit: 100

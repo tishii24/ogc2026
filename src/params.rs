@@ -59,6 +59,8 @@ pub struct OptimizePhaseParams {
     pub horizon_size: usize,
     pub time_allocation_power: f64,
     pub horizon_w2_power: f64,
+    pub expand_time_ratio: f64,
+    pub max_expand_seconds: f64,
 }
 
 #[derive(Clone, Debug, Deserialize)]

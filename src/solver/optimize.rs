@@ -2,7 +2,10 @@ use std::ops::Range;
 
 use crate::{
     EPS, INF, Problem, ScheduledBlock,
-    params::{AnnealingParamsConfig, InsertParams, NeighborParams, OptimizePhaseParams},
+    params::{
+        AnnealingParamsConfig, InsertParams, NeighborParams, OptimizePhaseParams,
+        ReconstructNeighborParams,
+    },
     utils::{random::RandPcg64Mcg, time::Timer},
 };
 
@@ -14,10 +17,10 @@ use super::{
         NeighborKind, sample_neighbor, try_move_neighbor, try_rotate_neighbor, try_shift_neighbor,
         try_swap_neighbor,
     },
-    objective::{ScheduleScore, score_schedule},
+    objective::{ScheduleScore, score_schedule, score13_block},
     output::CandidateEmitter,
     precompute::Precompute,
-    reconstruct::try_large_reconstruct,
+    reconstruct::{sort_default_reconstruct_order, try_large_reconstruct},
 };
 
 #[derive(Clone, Debug)]
@@ -262,29 +265,58 @@ fn extend_schedule(
     state: OptimizeState,
     added_block_ids: &[usize],
     insert_params: &InsertParams,
+    reconstruct_params: &ReconstructNeighborParams,
     w2: f64,
+    timer: Timer,
+    deadline: f64,
     rng: &mut RandPcg64Mcg,
 ) -> OptimizeState {
-    let mut schedule = state.schedule;
-    let mut loads = vec![0.0; problem.bays.len()];
-    for scheduled in &schedule {
-        loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
-    }
+    let base_schedule = state.schedule;
+    let mut best = None;
+    let mut trial_count = 0;
 
-    for &block_id in added_block_ids {
-        let block = &problem.blocks[block_id];
-        let entry_time = preopt.blocks[block_id].entry_time.max(block.release_time);
-        let original = ScheduledBlock {
-            block_id,
-            bay_id: preopt.blocks[block_id].bay_id,
-            orient_idx: 0,
-            x: 0,
-            y: 0,
-            entry_time,
-            exit_time: entry_time + block.processing_time,
-        };
-        loop {
-            if let Some(scheduled) = insert_greedy(
+    'trial: loop {
+        if best.is_some() && timer.elapsed_seconds() >= deadline {
+            break;
+        }
+        trial_count += 1;
+
+        let mut schedule = base_schedule.clone();
+        let mut loads = vec![0.0; problem.bays.len()];
+        let mut fixed_score13 = 0.0;
+        for &scheduled in &schedule {
+            loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
+            fixed_score13 += score13_block(problem, pre, scheduled);
+        }
+        let mut order = added_block_ids.to_vec();
+        sort_default_reconstruct_order(
+            problem,
+            &pre.max_footprint_area,
+            &pre.pref_spread,
+            &mut order,
+            rng,
+            reconstruct_params,
+        );
+
+        for block_id in order {
+            if best
+                .as_ref()
+                .is_some_and(|best: &OptimizeState| fixed_score13 >= best.objective - EPS)
+            {
+                continue 'trial;
+            }
+            let block = &problem.blocks[block_id];
+            let entry_time = preopt.blocks[block_id].entry_time.max(block.release_time);
+            let original = ScheduledBlock {
+                block_id,
+                bay_id: preopt.blocks[block_id].bay_id,
+                orient_idx: 0,
+                x: 0,
+                y: 0,
+                entry_time,
+                exit_time: entry_time + block.processing_time,
+            };
+            let Some(scheduled) = insert_greedy(
                 problem,
                 pre,
                 original,
@@ -298,15 +330,40 @@ fn extend_schedule(
                 1.0,
                 w2,
                 rng,
-            ) {
-                loads[scheduled.bay_id] += block.workload as f64;
-                schedule.push(scheduled);
-                break;
-            }
+            ) else {
+                continue 'trial;
+            };
+            loads[scheduled.bay_id] += block.workload as f64;
+            fixed_score13 += score13_block(problem, pre, scheduled);
+            schedule.push(scheduled);
+        }
+
+        let candidate = make_optimize_state(problem, pre, schedule, w2);
+        if best
+            .as_ref()
+            .is_none_or(|best: &OptimizeState| candidate.objective < best.objective)
+        {
+            log!(
+                "[{:.4}] [expand] best: trial={}, score={:.3}",
+                timer.elapsed_seconds(),
+                trial_count,
+                candidate.objective,
+            );
+            best = Some(candidate);
+        }
+        if best.as_ref().unwrap().objective <= EPS {
+            break;
         }
     }
 
-    make_optimize_state(problem, pre, schedule, w2)
+    let best = best.unwrap();
+    log!(
+        "[{:.4}] [expand] finish: trials={}, score={:.3}",
+        timer.elapsed_seconds(),
+        trial_count,
+        best.objective,
+    );
+    best
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -334,6 +391,15 @@ pub(super) fn optimize(
         let is_last = horizon_index + 1 == horizons.len();
         let horizon_progress = horizon.end as f64 / order.len() as f64;
         let w2 = problem.weights.w2 * horizon_progress.powf(phase_params.horizon_w2_power);
+        let now = timer.elapsed_seconds();
+        let remaining_weight: f64 = horizons[horizon_index..]
+            .iter()
+            .map(|remaining| (remaining.end as f64).powf(phase_params.time_allocation_power))
+            .sum();
+        let current_weight = (horizon.end as f64).powf(phase_params.time_allocation_power);
+        let horizon_deadline = now + (deadline - now).max(0.0) * current_weight / remaining_weight;
+        let expand_duration = ((horizon_deadline - now) * phase_params.expand_time_ratio)
+            .min(phase_params.max_expand_seconds);
         state = extend_schedule(
             problem,
             pre,
@@ -341,7 +407,10 @@ pub(super) fn optimize(
             state,
             &order[horizon.clone()],
             insert_params,
+            &neighbor_params.reconstruct,
             w2,
+            timer,
+            now + expand_duration,
             &mut rng,
         );
         log!(
@@ -360,16 +429,9 @@ pub(super) fn optimize(
         if state.objective <= EPS {
             continue;
         }
-        let now = timer.elapsed_seconds();
-        if now >= deadline {
+        if timer.elapsed_seconds() >= horizon_deadline {
             continue;
         }
-        let remaining_weight: f64 = horizons[horizon_index..]
-            .iter()
-            .map(|remaining| (remaining.end as f64).powf(phase_params.time_allocation_power))
-            .sum();
-        let current_weight = (horizon.end as f64).powf(phase_params.time_allocation_power);
-        let horizon_deadline = now + (deadline - now) * current_weight / remaining_weight;
         state = annealer.run(
             state,
             horizon_deadline,
