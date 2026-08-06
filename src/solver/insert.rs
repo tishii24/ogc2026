@@ -9,11 +9,23 @@ struct InsertCandidate {
 }
 
 #[derive(Clone, Copy)]
-enum InsertAnchor {
+pub(super) enum InsertAnchor {
     BottomLeft,
     BottomRight,
     TopLeft,
     TopRight,
+}
+
+pub(super) fn sample_insert_anchor(rng: &mut impl Random, params: &InsertParams) -> InsertAnchor {
+    if rng.next_f64() >= params.anchor_randomness {
+        InsertAnchor::BottomLeft
+    } else {
+        match rng.gen_range(0, 3) {
+            0 => InsertAnchor::BottomRight,
+            1 => InsertAnchor::TopLeft,
+            _ => InsertAnchor::TopRight,
+        }
+    }
 }
 
 pub(crate) fn insert_greedy<R: Random>(
@@ -29,6 +41,7 @@ pub(crate) fn insert_greedy<R: Random>(
     candidate_top_k: usize,
     candidate_select_p: f64,
     w2: f64,
+    anchor: InsertAnchor,
     rng: &mut R,
 ) -> Option<ScheduledBlock> {
     fn insert_candidate_cmp(
@@ -65,15 +78,6 @@ pub(crate) fn insert_greedy<R: Random>(
             .then(a.scheduled.block_id.cmp(&b.scheduled.block_id))
     }
 
-    let anchor = if rng.next_f64() >= params.anchor_randomness {
-        InsertAnchor::BottomLeft
-    } else {
-        match rng.gen_range(0, 3) {
-            0 => InsertAnchor::BottomRight,
-            1 => InsertAnchor::TopLeft,
-            _ => InsertAnchor::TopRight,
-        }
-    };
     let block_id = original.block_id;
     let block = &problem.blocks[block_id];
     let process_t = block.processing_time;

@@ -4,7 +4,11 @@ use crate::{
     utils::random::Random,
 };
 
-use super::{insert::insert_greedy, placement_scan::PlacementXScanner, precompute::Precompute};
+use super::{
+    insert::{insert_greedy, sample_insert_anchor},
+    placement_scan::PlacementXScanner,
+    precompute::Precompute,
+};
 
 #[derive(Clone, Copy, Debug)]
 #[repr(usize)]
@@ -262,6 +266,7 @@ pub(super) fn try_move_neighbor<R: Random>(
         base.push(s);
     }
 
+    let anchor = sample_insert_anchor(rng, insert_params);
     let scheduled = insert_greedy(
         problem,
         pre,
@@ -275,6 +280,7 @@ pub(super) fn try_move_neighbor<R: Random>(
         1,
         1.0,
         w2,
+        anchor,
         rng,
     )?;
     if scheduled == old {

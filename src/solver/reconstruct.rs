@@ -6,7 +6,11 @@ use crate::{
     utils::random::{Random, sample_weighted_index},
 };
 
-use super::{insert::insert_greedy, objective::score13_block, precompute::Precompute};
+use super::{
+    insert::{insert_greedy, sample_insert_anchor},
+    objective::score13_block,
+    precompute::Precompute,
+};
 
 #[derive(Clone, Copy)]
 enum RemoveSeedMethod {
@@ -155,6 +159,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
         mut loads,
         weighted_z1_z3: mut fixed_score13,
     } = build_reconstruct_base(problem, pre, schedule, &removed_ids);
+    let anchor = sample_insert_anchor(rng, insert_params);
 
     for &block_id in &removed_ids {
         if fixed_score13 > accept_threshold + 1e-9 {
@@ -174,6 +179,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
             params.insert_candidate_top_k,
             params.insert_candidate_select_p,
             w2,
+            anchor,
             rng,
         )?;
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;

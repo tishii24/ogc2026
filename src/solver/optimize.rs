@@ -14,7 +14,7 @@ use crate::{
 use super::{
     PreoptimizeState,
     annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingResult, AnnealingState},
-    insert::insert_greedy,
+    insert::{insert_greedy, sample_insert_anchor},
     neighbors::{
         NeighborKind, sample_neighbor, try_move_neighbor, try_rotate_neighbor, try_shift_neighbor,
         try_swap_neighbor,
@@ -289,6 +289,7 @@ fn extend_schedule(
         }
         trial_count += 1;
 
+        let anchor = sample_insert_anchor(rng, insert_params);
         let mut schedule = base_schedule.clone();
         let mut loads = vec![0.0; problem.bays.len()];
         let mut fixed_score13 = 0.0;
@@ -337,6 +338,7 @@ fn extend_schedule(
                 1,
                 1.0,
                 w2,
+                anchor,
                 rng,
             ) else {
                 continue 'trial;
