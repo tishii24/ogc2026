@@ -295,6 +295,11 @@ fn format_neighbor_stats(stats: &[NeighborStats], kinds: &[&str]) -> String {
         .join("\n")
 }
 
+pub(crate) struct AnnealingResult<S, O> {
+    pub(crate) best: O,
+    pub(crate) worker_bests: Vec<S>,
+}
+
 pub(crate) struct WorkerSummary {
     pub(crate) worker_id: usize,
     pub(crate) iterations: usize,
@@ -313,8 +318,6 @@ pub(crate) struct WorkerSummary {
 pub(crate) trait AnnealingDelegate: Sync {
     type State: AnnealingState;
     type Output;
-
-    fn initial_state(&self) -> Self::State;
 
     fn name(&self) -> &'static str;
 
@@ -380,19 +383,23 @@ impl TabuList {
 
 struct WorkerState<S> {
     current: S,
+    personal_best: S,
     local_best_score: f64,
     last_imported_revision: Option<u64>,
     best_exploration_started_iteration: usize,
     tabu: TabuList,
 }
 
+struct WorkerResult<S> {
+    summary: WorkerSummary,
+    personal_best: S,
+}
+
 fn apply_shared_best<S: AnnealingState>(local: &mut WorkerState<S>, best: S, revision: u64) {
-    let score = best.annealing_score();
     if let Some(key) = best.tabu_key() {
         local.tabu.insert(key);
     }
     local.current = best;
-    local.local_best_score = local.local_best_score.min(score);
     local.last_imported_revision = Some(revision);
 }
 
@@ -421,37 +428,50 @@ impl<D: AnnealingDelegate> Annealer<D> {
         }
     }
 
-    pub(crate) fn run(self, timer: Timer) -> D::Output {
-        let initial_state = self.delegate.initial_state();
+    pub(crate) fn run(
+        self,
+        initial_states: Vec<D::State>,
+        timer: Timer,
+    ) -> AnnealingResult<D::State, D::Output> {
+        assert_eq!(initial_states.len(), self.worker_count);
         assert!(self.worker_count > 0);
         assert!(self.params.exchange_interval > 0);
 
-        let shared = SharedBest::new(initial_state.clone());
-        let stop = AtomicBool::new(self.delegate.should_stop(&initial_state));
-        let worker_results: Vec<_> = (0..self.worker_count)
+        let initial_best = initial_states
+            .iter()
+            .min_by(|a, b| a.annealing_score().total_cmp(&b.annealing_score()))
+            .unwrap()
+            .clone();
+        let shared = SharedBest::new(initial_best.clone());
+        let stop = AtomicBool::new(self.delegate.should_stop(&initial_best));
+        let worker_results: Vec<_> = initial_states
             .into_par_iter()
-            .map(|worker_id| self.run_worker(&initial_state, &shared, &stop, timer, worker_id))
+            .enumerate()
+            .map(|(worker_id, initial_state)| {
+                self.run_worker(&initial_state, &shared, &stop, timer, worker_id)
+            })
             .collect();
         let state = shared.into_inner();
         for worker in &worker_results {
+            let summary = &worker.summary;
             log!(
                 "[{:.4}] [{:8} worker={}] iter={:8}, accepted={:8}, improved={:8}, best_imports={:5}, best_returns={:5}, reheats={:5}, current={:.3}, local_best={:.3}, temp(z1>0)={:.6}->{:.6}, temp(z1=0)={:.6}->{:.6}\nneighbor stats:\n{}",
                 timer.elapsed_seconds(),
                 self.delegate.name(),
-                worker.worker_id,
-                worker.iterations,
-                worker.accepted,
-                worker.improved,
-                worker.best_imports,
-                worker.best_returns,
-                worker.reheats,
-                worker.current_score,
-                worker.local_best_score,
-                worker.positive_tardiness_temperature.0,
-                worker.positive_tardiness_temperature.1,
-                worker.zero_tardiness_temperature.0,
-                worker.zero_tardiness_temperature.1,
-                format_neighbor_stats(&worker.neighbor_stats, self.delegate.neighbor_kinds()),
+                summary.worker_id,
+                summary.iterations,
+                summary.accepted,
+                summary.improved,
+                summary.best_imports,
+                summary.best_returns,
+                summary.reheats,
+                summary.current_score,
+                summary.local_best_score,
+                summary.positive_tardiness_temperature.0,
+                summary.positive_tardiness_temperature.1,
+                summary.zero_tardiness_temperature.0,
+                summary.zero_tardiness_temperature.1,
+                format_neighbor_stats(&summary.neighbor_stats, self.delegate.neighbor_kinds()),
             );
         }
         log!(
@@ -460,7 +480,13 @@ impl<D: AnnealingDelegate> Annealer<D> {
             self.delegate.name(),
             state.annealing_score(),
         );
-        self.delegate.finish(state)
+        AnnealingResult {
+            best: self.delegate.finish(state),
+            worker_bests: worker_results
+                .into_iter()
+                .map(|worker| worker.personal_best)
+                .collect(),
+        }
     }
 
     fn run_worker(
@@ -470,7 +496,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
         stop: &AtomicBool,
         timer: Timer,
         worker_id: usize,
-    ) -> WorkerSummary {
+    ) -> WorkerResult<D::State> {
         let score = initial_state.annealing_score();
         let mut tabu = TabuList::new(self.params.tabu_capacity);
         if let Some(key) = initial_state.tabu_key() {
@@ -478,6 +504,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
         }
         let mut local = WorkerState {
             current: initial_state.clone(),
+            personal_best: initial_state.clone(),
             local_best_score: score,
             last_imported_revision: self.params.reheat.map(|_| 0),
             best_exploration_started_iteration: 1,
@@ -647,6 +674,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
             }
 
             if improved_best {
+                local.personal_best.clone_from(&local.current);
                 local.local_best_score = candidate_score;
                 improved += 1;
                 log!(
@@ -682,19 +710,22 @@ impl<D: AnnealingDelegate> Annealer<D> {
             stats.time_sec += neighbor_start.elapsed().as_secs_f64();
         }
 
-        WorkerSummary {
-            worker_id,
-            iterations: context.iterations(),
-            accepted,
-            improved,
-            best_imports,
-            best_returns,
-            reheats,
-            positive_tardiness_temperature,
-            zero_tardiness_temperature,
-            current_score: local.current.annealing_score(),
-            local_best_score: local.local_best_score,
-            neighbor_stats,
+        WorkerResult {
+            summary: WorkerSummary {
+                worker_id,
+                iterations: context.iterations(),
+                accepted,
+                improved,
+                best_imports,
+                best_returns,
+                reheats,
+                positive_tardiness_temperature,
+                zero_tardiness_temperature,
+                current_score: local.current.annealing_score(),
+                local_best_score: local.local_best_score,
+                neighbor_stats,
+            },
+            personal_best: local.personal_best,
         }
     }
 

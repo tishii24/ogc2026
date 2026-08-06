@@ -1,5 +1,7 @@
 use std::ops::Range;
 
+use rayon::prelude::*;
+
 use crate::{
     EPS, INF, Problem, ScheduledBlock,
     params::{
@@ -11,7 +13,7 @@ use crate::{
 
 use super::{
     PreoptimizeState,
-    annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
+    annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingResult, AnnealingState},
     insert::insert_greedy,
     neighbors::{
         NeighborKind, sample_neighbor, try_move_neighbor, try_rotate_neighbor, try_shift_neighbor,
@@ -79,7 +81,7 @@ impl<'a> OptimizeAnnealing<'a> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn run(
         &self,
-        initial: OptimizeState,
+        initial_states: Vec<OptimizeState>,
         deadline: f64,
         annealing: &AnnealingParamsConfig,
         neighbor_params: &NeighborParams,
@@ -88,8 +90,13 @@ impl<'a> OptimizeAnnealing<'a> {
         candidate_emitter: Option<&CandidateEmitter>,
         seed: u64,
         max_worker_count: usize,
-    ) -> OptimizeState {
+    ) -> AnnealingResult<OptimizeState, OptimizeState> {
         let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
+        assert_eq!(initial_states.len(), worker_count);
+        let initial = initial_states
+            .iter()
+            .min_by(|a, b| a.objective.total_cmp(&b.objective))
+            .unwrap();
         let annealing_params = annealing.make(
             self.problem,
             initial.annealing_score(),
@@ -99,13 +106,13 @@ impl<'a> OptimizeAnnealing<'a> {
             problem: self.problem,
             pre: self.pre,
             w2,
-            initial,
             params: neighbor_params,
             insert_params,
             timer: self.timer,
             candidate_emitter,
         };
-        Annealer::new(deadline, worker_count, seed, annealing_params, delegate).run(self.timer)
+        Annealer::new(deadline, worker_count, seed, annealing_params, delegate)
+            .run(initial_states, self.timer)
     }
 }
 
@@ -113,7 +120,7 @@ struct OptimizeAnnealingDelegate<'a> {
     problem: &'a Problem,
     pre: &'a Precompute,
     w2: f64,
-    initial: OptimizeState,
+
     params: &'a NeighborParams,
     insert_params: &'a InsertParams,
     timer: Timer,
@@ -123,10 +130,6 @@ struct OptimizeAnnealingDelegate<'a> {
 impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
     type State = OptimizeState;
     type Output = OptimizeState;
-
-    fn initial_state(&self) -> Self::State {
-        self.initial.clone()
-    }
 
     fn name(&self) -> &'static str {
         "optimize"
@@ -388,8 +391,10 @@ pub(super) fn optimize(
 ) -> OptimizeState {
     let order = build_admission_order(problem, pre, preopt);
     let horizons = build_horizons(&order, phase_params.base_horizon_size);
-    let mut state = make_optimize_state(problem, pre, Vec::new(), 0.0);
-    let mut rng = RandPcg64Mcg::new(seed);
+    let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
+    let initial = make_optimize_state(problem, pre, Vec::new(), 0.0);
+    let mut worker_states = vec![initial.clone(); worker_count];
+    let mut best_state = initial;
     let annealer = OptimizeAnnealing::new(problem, pre, timer);
 
     for (horizon_index, horizon) in horizons.iter().enumerate() {
@@ -413,52 +418,67 @@ pub(super) fn optimize(
         }
         let expand_duration = ((horizon_deadline - now) * phase_params.expand_time_ratio)
             .min(phase_params.max_expand_seconds);
-        state = extend_schedule(
-            problem,
-            pre,
-            preopt,
-            state,
-            &order[horizon.clone()],
-            insert_params,
-            &neighbor_params.reconstruct,
-            w2,
-            timer,
-            now + expand_duration,
-            &mut rng,
-        );
+        let horizon_seed = seed.wrapping_add(((horizon_index + 1) as u64) << 32);
+        worker_states = worker_states
+            .into_par_iter()
+            .enumerate()
+            .map(|(worker_id, state)| {
+                let mut rng = RandPcg64Mcg::new(horizon_seed.wrapping_add(worker_id as u64));
+                extend_schedule(
+                    problem,
+                    pre,
+                    preopt,
+                    state,
+                    &order[horizon.clone()],
+                    insert_params,
+                    &neighbor_params.reconstruct,
+                    w2,
+                    timer,
+                    now + expand_duration,
+                    &mut rng,
+                )
+            })
+            .collect();
+        best_state = worker_states
+            .iter()
+            .min_by(|a, b| a.objective.total_cmp(&b.objective))
+            .unwrap()
+            .clone();
         log!(
             "[{:.4}] [optimize] horizon={}/{}, blocks={}, initial={:.3}, w2={:.3}",
             timer.elapsed_seconds(),
             horizon_index + 1,
             horizons.len(),
             horizon.end,
-            state.objective,
+            best_state.objective,
             w2,
         );
 
         if is_last {
-            candidate_emitter.emit(&state, timer, true);
+            candidate_emitter.emit(&best_state, timer, true);
         }
-        if state.objective <= EPS {
+        if best_state.objective <= EPS {
             continue;
         }
         if timer.elapsed_seconds() >= horizon_deadline {
             continue;
         }
-        state = annealer.run(
-            state,
+        let result = annealer.run(
+            worker_states,
             horizon_deadline,
             annealing_params,
             neighbor_params,
             insert_params,
             w2,
             is_last.then_some(candidate_emitter),
-            seed.wrapping_add(((horizon_index + 1) as u64) << 32),
+            horizon_seed,
             max_worker_count,
         );
+        best_state = result.best;
+        worker_states = result.worker_bests;
     }
 
-    make_optimize_state(problem, pre, state.schedule, problem.weights.w2)
+    make_optimize_state(problem, pre, best_state.schedule, problem.weights.w2)
 }
 
 fn hash_schedule(schedule: &[ScheduledBlock]) -> u64 {

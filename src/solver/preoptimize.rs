@@ -824,16 +824,11 @@ const PREOPTIMIZE_NEIGHBOR_KINDS: &[&str] = &["Relocate", "Swap", "LargeReconstr
 struct PreoptimizeAnnealingDelegate<'a> {
     problem: &'a Problem,
     context: PreoptimizeContext<'a>,
-    initial: PreoptimizeAnnealingState,
 }
 
 impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
     type State = PreoptimizeAnnealingState;
     type Output = PreoptimizeState;
-
-    fn initial_state(&self) -> Self::State {
-        self.initial.clone()
-    }
 
     fn name(&self) -> &'static str {
         "preopt"
@@ -947,10 +942,11 @@ pub fn preoptimize(
     )?;
     let annealing_params = annealing.make(problem, initial.annealing_score(), problem.blocks.len());
     let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
-    let delegate = PreoptimizeAnnealingDelegate {
-        problem,
-        context,
-        initial,
-    };
-    Ok(Annealer::new(time_limit, worker_count, seed, annealing_params, delegate).run(timer))
+    let initial_states = vec![initial.clone(); worker_count];
+    let delegate = PreoptimizeAnnealingDelegate { problem, context };
+    Ok(
+        Annealer::new(time_limit, worker_count, seed, annealing_params, delegate)
+            .run(initial_states, timer)
+            .best,
+    )
 }
