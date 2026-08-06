@@ -1,16 +1,10 @@
 use crate::{
     INF, Problem, ScheduledBlock,
-    params::{
-        InsertParams, MoveNeighborParams, RotateNeighborParams, ShiftNeighborParams,
-        SwapNeighborParams,
-    },
+    params::{InsertParams, RotateNeighborParams, ShiftNeighborParams, SwapNeighborParams},
     utils::random::Random,
 };
 
-use super::{
-    insert::insert_greedy, objective::score13_block, placement_scan::PlacementXScanner,
-    precompute::Precompute,
-};
+use super::{insert::insert_greedy, placement_scan::PlacementXScanner, precompute::Precompute};
 
 #[derive(Clone, Copy, Debug)]
 #[repr(usize)]
@@ -248,7 +242,6 @@ pub(super) fn try_move_neighbor<R: Random>(
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     rng: &mut R,
-    params: &MoveNeighborParams,
     insert_params: &InsertParams,
     w2: f64,
 ) -> Option<Vec<ScheduledBlock>> {
@@ -256,25 +249,7 @@ pub(super) fn try_move_neighbor<R: Random>(
         return None;
     }
 
-    let sample_count = params.sample_blocks.min(schedule.len());
-    let mut indices: Vec<usize> = (0..schedule.len()).collect();
-    rng.shuffle(&mut indices);
-    indices.truncate(sample_count);
-    indices.sort_by(|&a, &b| {
-        pre.max_footprint_area[schedule[a].block_id]
-            .total_cmp(&pre.max_footprint_area[schedule[b].block_id])
-            .then(schedule[a].block_id.cmp(&schedule[b].block_id))
-    });
-    indices.truncate(params.small_pool_size.min(indices.len()));
-
-    let idx = indices.into_iter().max_by(|&a, &b| {
-        let sa = score13_block(problem, pre, schedule[a]);
-        let sb = score13_block(problem, pre, schedule[b]);
-        sa.total_cmp(&sb).then(
-            pre.max_footprint_area[schedule[b].block_id]
-                .total_cmp(&pre.max_footprint_area[schedule[a].block_id]),
-        )
-    })?;
+    let idx = rng.gen_range(0, schedule.len());
     let old = schedule[idx];
 
     let mut base = Vec::with_capacity(schedule.len());

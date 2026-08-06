@@ -197,7 +197,6 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
                 self.pre,
                 &current.schedule,
                 rng,
-                &params.move_block,
                 self.insert_params,
                 self.w2,
             ),

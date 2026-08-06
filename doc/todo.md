@@ -18,10 +18,12 @@ nits:
 ideas:
 - exit-tを最小化する
 - moveを全てのblockを対象にする
+- shift,swapを減らす
 - remove-blockはL^aで削除する
 - tardiness>0ならwtを大きく、tardiness=0ならwtは小さくする
 - reconstruct-weightのpowerをつける
 - reconstructはpreserved-loadsを使う
+- reconstructでanchorをreconstructごとに固定する
 - reconstructのdtにexit-tも使う
 - スコアが離れすぎたら、bestをもらってくる
 - w2を途中から考慮する

@@ -241,8 +241,6 @@ pub struct NeighborParams {
     pub probabilities: NeighborProbabilities,
     pub reconstruct: ReconstructNeighborParams,
     pub shift: ShiftNeighborParams,
-    #[serde(rename = "move")]
-    pub move_block: MoveNeighborParams,
     pub rotate: RotateNeighborParams,
     pub swap: SwapNeighborParams,
 }
@@ -278,13 +276,6 @@ pub struct ReconstructNeighborParams {
 #[serde(deny_unknown_fields)]
 pub struct ShiftNeighborParams {
     pub dy_range: (i64, i64),
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MoveNeighborParams {
-    pub sample_blocks: usize,
-    pub small_pool_size: usize,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
