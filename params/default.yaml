@@ -41,7 +41,6 @@ annealing:
     tabu_capacity: 4096
   optimize:
     exchange_interval: 2000
-    reheat: null
     positive_tardiness:
       temperature_initial_score_per_block_scale: [0.2, 0.02]
       exchange_threshold:
