@@ -1,5 +1,4 @@
 todo:
-- horizonのブロック数を均等にする
 - horizon x beam-search
   - 複数状態を持って次のhorizonに行く
 - base-scheduleを保持して複数のorderを差分計算で試す
@@ -7,6 +6,7 @@ todo:
 - horizon割り当ての改善
   - 中盤にもっと時間を割り当てて良さそう
   - 温度が高そう
+  - horizonに含まれるblockのscore-13を用いる
 - preopt
   - 近似方法・精度の改善
   - チューニング

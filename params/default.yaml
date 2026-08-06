@@ -114,8 +114,8 @@ neighbor:
   shift:
     dy_range: [-5, 0]
   move:
-    sample_blocks: 16
-    small_pool_size: 8
+    sample_blocks: 1
+    small_pool_size: 1
   rotate:
     dy_range: [-2, 2]
   swap:
