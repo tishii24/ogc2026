@@ -47,23 +47,47 @@ struct SolutionCandidate {
     solution: Solution,
 }
 
-pub(super) struct CandidateEmitter {
+struct EmitState {
     interval_seconds: f64,
-    last_emitted: Mutex<f64>,
+    last_emitted: f64,
+}
+
+pub(super) struct CandidateEmitter {
+    min_interval_seconds: f64,
+    max_count: usize,
+    state: Mutex<EmitState>,
 }
 
 impl CandidateEmitter {
-    pub(super) fn new(interval_seconds: f64) -> Self {
+    pub(super) fn new(min_interval_seconds: f64, max_count: usize) -> Self {
         Self {
-            interval_seconds,
-            last_emitted: Mutex::new(f64::NEG_INFINITY),
+            min_interval_seconds,
+            max_count,
+            state: Mutex::new(EmitState {
+                interval_seconds: f64::INFINITY,
+                last_emitted: f64::NEG_INFINITY,
+            }),
         }
+    }
+
+    pub(super) fn configure(&self, final_horizon_time: f64, timer: Timer) {
+        let interval_seconds = self
+            .min_interval_seconds
+            .max(final_horizon_time / self.max_count as f64);
+        self.state.lock().unwrap().interval_seconds = interval_seconds;
+        log!(
+            "[{:.4}] [candidate-emit] interval={:.3}s, final_horizon_time={:.3}s, max_count={}",
+            timer.elapsed_seconds(),
+            interval_seconds,
+            final_horizon_time,
+            self.max_count,
+        );
     }
 
     pub(super) fn emit(&self, state: &OptimizeState, timer: Timer, force: bool) {
         let elapsed = timer.elapsed_seconds();
-        let mut last_emitted = self.last_emitted.lock().unwrap();
-        if !force && elapsed - *last_emitted < self.interval_seconds {
+        let mut emit_state = self.state.lock().unwrap();
+        if !force && elapsed - emit_state.last_emitted < emit_state.interval_seconds {
             return;
         }
 
@@ -96,7 +120,7 @@ impl CandidateEmitter {
         let write_seconds = timer.elapsed_seconds() - write_started;
         let total_seconds = timer.elapsed_seconds() - emit_started;
         if succeeded {
-            *last_emitted = elapsed;
+            emit_state.last_emitted = elapsed;
         }
         log!(
             "[{:.4}] [candidate-emit] score={:.3}, force={}, status={}, bytes={}, serialize={:.6}s, write={:.6}s, total={:.6}s",

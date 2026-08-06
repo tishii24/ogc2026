@@ -408,6 +408,9 @@ pub(super) fn optimize(
             .sum();
         let current_weight = (horizon.end as f64).powf(phase_params.time_allocation_power);
         let horizon_deadline = now + (deadline - now).max(0.0) * current_weight / remaining_weight;
+        if is_last {
+            candidate_emitter.configure(horizon_deadline - now, timer);
+        }
         let expand_duration = ((horizon_deadline - now) * phase_params.expand_time_ratio)
             .min(phase_params.max_expand_seconds);
         state = extend_schedule(

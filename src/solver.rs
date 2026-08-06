@@ -76,20 +76,10 @@ pub fn solve(
         preoptimized.score
     );
 
-    let optimize_start = timer.elapsed_seconds();
-    let optimize_time = (deadline - optimize_start).max(0.0);
-    let interval_seconds = params
-        .runtime
-        .solution_emit_min_interval_seconds
-        .max(optimize_time / params.runtime.solution_emit_max_count as f64);
-    log!(
-        "[{:.4}] [candidate-emit] interval={:.3}s, optimize_time={:.3}s, max_count={}",
-        timer.elapsed_seconds(),
-        interval_seconds,
-        optimize_time,
+    let candidate_emitter = CandidateEmitter::new(
+        params.runtime.solution_emit_min_interval_seconds,
         params.runtime.solution_emit_max_count,
     );
-    let candidate_emitter = CandidateEmitter::new(interval_seconds);
     let best = optimize(
         problem,
         &pre,
