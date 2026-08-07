@@ -1,7 +1,7 @@
 use std::cmp::Reverse;
 
 use crate::{
-    INF, Problem, ScheduledBlock,
+    Problem, ScheduledBlock,
     params::{InsertParams, ReconstructNeighborParams},
     utils::random::{Random, sample_weighted_index},
 };
@@ -166,12 +166,19 @@ pub(super) fn try_large_reconstruct<R: Random>(
             return None;
         }
         let old = original_by_id[block_id]?;
+        let block = &problem.blocks[block_id];
+        let max_tardiness =
+            ((accept_threshold - fixed_score13) / problem.weights.w1).floor() as i64;
+        let max_entry_time = block
+            .due_date
+            .saturating_add(max_tardiness)
+            .saturating_sub(block.processing_time);
         let scheduled = insert_greedy(
             problem,
             pre,
             old,
-            -INF,
-            INF,
+            block.release_time,
+            max_entry_time,
             &cur,
             &loads,
             insert_params,

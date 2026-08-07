@@ -87,8 +87,8 @@ neighbor:
       power: 2.0
     remove_pool_factor: 4
     remove_blocks_per_seed:
-      range: [1, 8]
-      power: 2.0
+      range: [1, 4]
+      power: 1.0
     remove_entry_base_interval_weights: [0.0, 0.0, 1.0, 1.0, 1.0]
     remove_entry_seed_candidate_count: 10
     remove_seed_method_weights:

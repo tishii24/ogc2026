@@ -272,7 +272,7 @@ pub(super) fn try_move_neighbor<R: Random>(
         pre,
         old,
         -INF,
-        INF,
+        old.entry_time,
         &base,
         &loads,
         insert_params,
