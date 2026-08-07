@@ -205,11 +205,7 @@ pub(super) fn sample_removed_count<R: Random>(
     rng: &mut R,
     params: &ReconstructNeighborParams,
 ) -> usize {
-    rng.gen_range_power(
-        params.remove_count.range.0,
-        params.remove_count.range.1 + 1,
-        params.remove_count.power,
-    )
+    params.remove_count.sample(rng)
 }
 
 fn scheduled_center(pre: &Precompute, s: ScheduledBlock) -> (f64, f64) {
@@ -303,12 +299,9 @@ fn choose_local_proximity_seeds<R: Random>(
     let mut seed_sizes = Vec::new();
     let mut seed_size_sum = 0;
     while seed_size_sum < k {
-        let seed_size = rng
-            .gen_range_power(
-                params.remove_blocks_per_seed.range.0,
-                params.remove_blocks_per_seed.range.1 + 1,
-                params.remove_blocks_per_seed.power,
-            )
+        let seed_size = params
+            .remove_blocks_per_seed
+            .sample(rng)
             .min(k - seed_size_sum);
         seed_sizes.push(seed_size);
         seed_size_sum += seed_size;

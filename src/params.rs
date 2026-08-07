@@ -5,6 +5,7 @@ use serde::Deserialize;
 use crate::{
     Problem,
     solver::annealing::{AnnealingParams, AnnealingRegimeParams},
+    utils::random::Random,
 };
 
 #[derive(Clone, Debug, Deserialize)]
@@ -101,7 +102,7 @@ pub struct PreoptimizeNeighborProbabilities {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PreoptimizeNeighborParams {
-    pub remove_count: PoweredUsizeRange,
+    pub remove_count: UsizeRangeDistribution,
     pub bad_block_sample_count: usize,
     pub bad_block_select_probability: f64,
     pub max_relocate_attempts: usize,
@@ -231,9 +232,9 @@ pub struct NeighborParams {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReconstructNeighborParams {
-    pub remove_count: PoweredUsizeRange,
+    pub remove_count: UsizeRangeDistribution,
     pub remove_pool_factor: usize,
-    pub remove_blocks_per_seed: PoweredUsizeRange,
+    pub remove_blocks_per_seed: UsizeRangeDistribution,
     pub remove_entry_base_interval_weights: Vec<f64>,
     pub remove_entry_seed_candidate_count: usize,
     pub remove_seed_method_weights: RemoveSeedMethodWeights,
@@ -255,10 +256,32 @@ pub struct ReconstructNeighborParams {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UsizeRangeDistributionType {
+    Lower,
+    Centered,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PoweredUsizeRange {
+pub struct UsizeRangeDistribution {
+    #[serde(rename = "type")]
+    pub distribution_type: UsizeRangeDistributionType,
     pub range: (usize, usize),
-    pub power: f64,
+    pub shape: f64,
+}
+
+impl UsizeRangeDistribution {
+    pub fn sample(&self, rng: &mut impl Random) -> usize {
+        match self.distribution_type {
+            UsizeRangeDistributionType::Lower => {
+                rng.gen_range_lower(self.range.0, self.range.1 + 1, self.shape)
+            }
+            UsizeRangeDistributionType::Centered => {
+                rng.gen_range_centered(self.range.0, self.range.1 + 1, self.shape)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]

@@ -710,8 +710,7 @@ fn sample_large_reconstruct_count(
     context: &PreoptimizeContext<'_>,
     rng: &mut impl Random,
 ) -> usize {
-    let params = &context.params.neighbor.remove_count;
-    rng.gen_range_power(params.range.0, params.range.1 + 1, params.power)
+    context.params.neighbor.remove_count.sample(rng)
 }
 
 fn choose_large_reconstruct_blocks(

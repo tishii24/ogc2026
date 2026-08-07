@@ -1,10 +1,8 @@
 todo:
-- remove-blocks-per-seedを広げて、powerをつける
 - tardiness>0ならwtを大きく、tardiness=0ならwtは小さくする
 - reconstruct-weightのpowerをつける
 - reconstructのdtにexit-tも使う
 - max-pref-bayをskipする
-- pref/volume, limit-t/volumeの交互作用をorderに入れる
 - obj2
   - reconstructはpreserved-loadsを使う
   - w2を途中から考慮する
@@ -42,3 +40,4 @@ rejected:
 - caseに応じてtimelimitを設定する
 - reconstructでanchorをreconstructごとに固定する
 - 取り出す時刻を変えてABBA <->　ABABを入れ替える
+- pref/volume, limit-t/volumeの交互作用をorderに入れる

@@ -22,11 +22,21 @@ pub trait Random {
     }
 
     #[inline(always)]
-    fn gen_range_power(&mut self, l: usize, r: usize, power: f64) -> usize {
+    fn gen_range_lower(&mut self, l: usize, r: usize, shape: f64) -> usize {
         debug_assert!(l < r);
         let span = r - l;
-        let u = self.next_f64().powf(power);
+        let u = self.next_f64().powf(shape);
         l + ((u * span as f64) as usize).min(span - 1)
+    }
+
+    #[inline(always)]
+    fn gen_range_centered(&mut self, l: usize, r: usize, shape: f64) -> usize {
+        debug_assert!(l < r);
+        let span = r - l;
+        let u = self.next_f64() * 2.0 - 1.0;
+        let centered = u.signum() * u.abs().powf(shape);
+        let normalized = (centered + 1.0) * 0.5;
+        l + ((normalized * span as f64) as usize).min(span - 1)
     }
 
     #[inline(always)]
