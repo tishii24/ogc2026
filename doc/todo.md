@@ -1,10 +1,13 @@
 todo:
-- remove-blockはL^aで削除する
+- remove-blocks-per-seedを広げて、powerをつける
 - tardiness>0ならwtを大きく、tardiness=0ならwtは小さくする
 - reconstruct-weightのpowerをつける
-- reconstructはpreserved-loadsを使う
 - reconstructのdtにexit-tも使う
-- w2を途中から考慮する
+- max-pref-bayをskipする
+- pref/volume, limit-t/volumeの交互作用をorderに入れる
+- obj2
+  - reconstructはpreserved-loadsを使う
+  - w2を途中から考慮する
 
 tuning:
 - preoptのパラメータ調整
@@ -24,7 +27,6 @@ pending:
 - 同時刻の操作順を考慮する
   - block-id順で出す、とすれば半分くらいは考慮できる
 - hashを荒くする
-- pref/volume, limit-t/volumeの交互作用をorderに入れる
 - 上から見た高さ（exit-t）を最小化する
 
 rejected:

@@ -23,6 +23,11 @@ def parse_args() -> argparse.Namespace:
         description="Tune parameter combinations defined in a YAML file."
     )
     parser.add_argument("config", help="Tuning YAML path.")
+    parser.add_argument(
+        "--cloud",
+        action="store_true",
+        help="Run candidates with cloud_runner.py.",
+    )
     return parser.parse_args()
 
 
@@ -123,17 +128,32 @@ def run_candidate(
     params_path: Path,
     suite: Path,
     timelimit: float,
+    use_cloud: bool,
 ) -> None:
-    command = [
-        sys.executable,
-        str(root / "tools" / "runner.py"),
-        candidate_version,
-        "--suite",
-        str(suite),
-        "--timelimit",
-        str(timelimit),
-    ]
-    compose_solution(root, candidate_version, params_path)
+    if use_cloud:
+        command = [
+            sys.executable,
+            str(root / "tools" / "cloud_runner.py"),
+            "run",
+            candidate_version,
+            "--params",
+            str(params_path),
+            "--suite",
+            str(suite),
+            "--timelimit",
+            str(timelimit),
+        ]
+    else:
+        command = [
+            sys.executable,
+            str(root / "tools" / "runner.py"),
+            candidate_version,
+            "--suite",
+            str(suite),
+            "--timelimit",
+            str(timelimit),
+        ]
+        compose_solution(root, candidate_version, params_path)
     try:
         subprocess.run(command, cwd=root, check=True)
     finally:
@@ -200,6 +220,7 @@ def main() -> int:
         "base_params": str(base_params_path),
         "suite": str(suite),
         "timelimit": timelimit,
+        "runner": "cloud" if args.cloud else "local",
         "steps": [],
     }
 
@@ -236,6 +257,7 @@ def main() -> int:
                 params_path,
                 suite,
                 timelimit,
+                args.cloud,
             )
             versions.append(candidate_version)
             candidates.append(

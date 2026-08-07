@@ -47,6 +47,12 @@ python tools/runner.py $VERSION --suite suites/half.json --timelimit $TIMELIMIT 
 # ビジュアライザの作成
 python tools/visualizer.py log/$VERSION/$TIMELIMIT
 
+# パラメータチューニング
+# ローカル
+python tools/tune_params.py params/tune-example.yaml
+# Cloud Run Jobs
+python tools/tune_params.py params/tune-example.yaml --cloud
+
 # stderr.logのscoreと温度を可視化
 python tools/plot_horizon_score.py log/$VERSION/$TIMELIMIT/prob_1/stderr.log
 # 出力先を指定する場合
