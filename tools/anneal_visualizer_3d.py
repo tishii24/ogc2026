@@ -29,6 +29,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out", help="Output HTML path. default: {visualize_dir}/worker_{id}_3d.html"
     )
+    parser.add_argument(
+        "--sampling-ratio",
+        type=float,
+        default=1.0,
+        help="Ratio of snapshots to render (0 < ratio <= 1, default: 1.0)",
+    )
     return parser.parse_args()
 
 
@@ -63,6 +69,22 @@ def load_snapshots(path: Path) -> list[dict[str, Any]]:
                 snapshots.append(item)
     snapshots.sort(key=lambda item: (float(item.get("elapsed", 0)), int(item.get("iter", 0))))
     return snapshots
+
+
+def sample_snapshots(
+    snapshots: list[dict[str, Any]], ratio: float
+) -> list[dict[str, Any]]:
+    if not 0 < ratio <= 1:
+        raise ValueError("sampling ratio must satisfy 0 < ratio <= 1")
+    if len(snapshots) <= 1 or ratio == 1.0:
+        return snapshots
+
+    target_count = min(len(snapshots), max(2, round(len(snapshots) * ratio)))
+    indices = {
+        round(i * (len(snapshots) - 1) / (target_count - 1))
+        for i in range(target_count)
+    }
+    return [snapshots[index] for index in sorted(indices)]
 
 
 def block_color(block_id: int) -> str:
@@ -248,11 +270,18 @@ def build_figure(
         horizontal_spacing=min(0.04, 0.2 / max(1, bay_count)),
     )
 
+    print("building orientation cache...", file=sys.stderr, flush=True)
     orientation_cache = build_orientation_cache(problem)
-    all_meshes = [
-        build_snapshot_meshes(problem, snapshot, orientation_cache)
-        for snapshot in snapshots
-    ]
+    all_meshes = []
+    progress_interval = max(1, len(snapshots) // 20)
+    for index, snapshot in enumerate(snapshots, 1):
+        all_meshes.append(build_snapshot_meshes(problem, snapshot, orientation_cache))
+        if index == 1 or index == len(snapshots) or index % progress_interval == 0:
+            print(
+                f"building meshes: {index}/{len(snapshots)}",
+                file=sys.stderr,
+                flush=True,
+            )
     for bay_id, mesh in enumerate(all_meshes[0]):
         figure.add_trace(
             mesh_trace(mesh, f"scene{bay_id + 1}" if bay_id else "scene", f"Bay {bay_id}"),
@@ -336,7 +365,7 @@ def build_figure(
                         "args": [
                             None,
                             {
-                                "frame": {"duration": 200, "redraw": True},
+                                "frame": {"duration": 50, "redraw": True},
                                 "fromcurrent": True,
                                 "transition": {"duration": 0},
                             },
@@ -387,6 +416,15 @@ def main() -> int:
         snapshots = load_snapshots(worker_path)
         if not snapshots:
             raise ValueError(f"no snapshots in {worker_path}")
+        original_count = len(snapshots)
+        print(f"loaded snapshots: {original_count}", file=sys.stderr, flush=True)
+        snapshots = sample_snapshots(snapshots, args.sampling_ratio)
+        print(
+            f"sampled frames: {len(snapshots)} / {original_count} "
+            f"(ratio={args.sampling_ratio:g})",
+            file=sys.stderr,
+            flush=True,
+        )
         figure = build_figure(problem, snapshots)
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -400,6 +438,7 @@ def main() -> int:
     if not out_path.is_absolute():
         out_path = root / out_path
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"writing HTML: {out_path}", file=sys.stderr, flush=True)
     figure.write_html(out_path, include_plotlyjs=True, full_html=True)
     print(f"created: {out_path}")
     return 0

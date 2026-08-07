@@ -1,17 +1,22 @@
 todo:
-- tardiness>0ならwtを大きく、tardiness=0ならwtは小さくする
-- reconstruct-weightのpowerをつける
+- ブロックが多くなってもちゃんと入れ替えられるようにしたい
+- removeの改善
+  - 直方体に含まれるブロックを選ぶ
+  - wyは小さくする
+  - 無駄なblockをremoveしない
 - reconstructのdtにexit-tも使う
 - max-pref-bayをskipする
+
+tuning:
 - obj2
   - reconstructはpreserved-loadsを使う
   - w2を途中から考慮する
-
-tuning:
 - preoptのパラメータ調整
 - exchange-thresholdの調整
 - neighbor-ratio
   - shift,swapを減らす
+- tardiness>0ならwtを大きく、tardiness=0ならwtは小さくする
+- reconstruct-weightのpowerをつける
 - 温度の調整
   - worker-scale
 - horizonの調整
