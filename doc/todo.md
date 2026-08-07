@@ -1,11 +1,17 @@
 todo:
 - ブロックが多くなってもちゃんと入れ替えられるようにしたい
-- removeの改善
-  - 直方体に含まれるブロックを選ぶ
-  - wyは小さくする
-  - 無駄なblockをremoveしない
-- reconstructのdtにexit-tも使う
-- max-pref-bayをskipする
+  - removeの改善
+    - 直方体に含まれるブロックを選ぶ
+    - wyは小さくする
+    - 無駄なblockをremoveしない
+      - kで区切らない
+    - dtにexit-tも使う
+  - insertの改善
+    - 前の配置との距離が遠いものを優先する
+    - release-tをorderに入れる
+    - loadsを消す
+  - bayから一つだけremoveして、そのbayにだけinsertするのを試す
+- horizonの真ん中でshared-bestを持ってくる
 
 tuning:
 - obj2
