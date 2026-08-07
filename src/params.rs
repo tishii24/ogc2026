@@ -101,9 +101,7 @@ pub struct PreoptimizeNeighborProbabilities {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PreoptimizeNeighborParams {
-    pub min_removed_blocks: usize,
-    pub max_removed_blocks: usize,
-    pub remove_count_sample_power: f64,
+    pub remove_count: PoweredUsizeRange,
     pub bad_block_sample_count: usize,
     pub bad_block_select_probability: f64,
     pub max_relocate_attempts: usize,
@@ -233,11 +231,9 @@ pub struct NeighborParams {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReconstructNeighborParams {
-    pub min_removed_blocks: usize,
-    pub max_removed_blocks: usize,
+    pub remove_count: PoweredUsizeRange,
     pub remove_pool_factor: usize,
-    pub remove_count_sample_power: f64,
-    pub remove_seed_per_block: (usize, usize),
+    pub remove_blocks_per_seed: PoweredUsizeRange,
     pub remove_entry_base_interval_weights: Vec<f64>,
     pub remove_entry_seed_candidate_count: usize,
     pub remove_seed_method_weights: RemoveSeedMethodWeights,
@@ -256,6 +252,13 @@ pub struct ReconstructNeighborParams {
     pub order_random_weight_range: (f64, f64),
     pub insert_candidate_top_k: usize,
     pub insert_candidate_select_p: f64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PoweredUsizeRange {
+    pub range: (usize, usize),
+    pub power: f64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]

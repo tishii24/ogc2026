@@ -22,6 +22,14 @@ pub trait Random {
     }
 
     #[inline(always)]
+    fn gen_range_power(&mut self, l: usize, r: usize, power: f64) -> usize {
+        debug_assert!(l < r);
+        let span = r - l;
+        let u = self.next_f64().powf(power);
+        l + ((u * span as f64) as usize).min(span - 1)
+    }
+
+    #[inline(always)]
     fn gen_range_f64(&mut self, l: f64, r: f64) -> f64 {
         debug_assert!(l <= r);
         l + self.next_u32() as f64 * ((r - l) / ((1u64 << 32) as f64))

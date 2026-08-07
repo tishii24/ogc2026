@@ -3,7 +3,7 @@ repository: ogc2026
 base_image: runner-base
 job: ogc2026-runner
 service_account: ogc2026-runner
-tasks: 31
+tasks: 20
 cpu: 4
 memory: 8Gi
 task_timeout: 30m

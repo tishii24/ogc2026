@@ -66,9 +66,9 @@ preoptimize:
     swap: 0.15
     large_reconstruct: 0.05
   neighbor:
-    min_removed_blocks: 7
-    max_removed_blocks: 13
-    remove_count_sample_power: 2.0
+    remove_count:
+      range: [7, 13]
+      power: 2.0
     bad_block_sample_count: 8
     bad_block_select_probability: 0.75
     max_relocate_attempts: 8
@@ -82,11 +82,13 @@ neighbor:
     rotate: 0.5
     swap: 3.0
   reconstruct:
-    min_removed_blocks: 7
-    max_removed_blocks: 13
+    remove_count:
+      range: [7, 13]
+      power: 2.0
     remove_pool_factor: 4
-    remove_count_sample_power: 2.0
-    remove_seed_per_block: [1, 4]
+    remove_blocks_per_seed:
+      range: [1, 8]
+      power: 2.0
     remove_entry_base_interval_weights: [0.0, 0.0, 1.0, 1.0, 1.0]
     remove_entry_seed_candidate_count: 10
     remove_seed_method_weights:

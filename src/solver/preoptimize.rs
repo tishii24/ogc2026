@@ -710,10 +710,8 @@ fn sample_large_reconstruct_count(
     context: &PreoptimizeContext<'_>,
     rng: &mut impl Random,
 ) -> usize {
-    let params = &context.params.neighbor;
-    let span = params.max_removed_blocks - params.min_removed_blocks + 1;
-    let u = rng.next_f64().powf(params.remove_count_sample_power);
-    params.min_removed_blocks + ((u * span as f64) as usize).min(span - 1)
+    let params = &context.params.neighbor.remove_count;
+    rng.gen_range_power(params.range.0, params.range.1 + 1, params.power)
 }
 
 fn choose_large_reconstruct_blocks(
