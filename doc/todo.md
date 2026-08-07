@@ -1,10 +1,4 @@
 todo:
-- preopt
-  - 近似方法・精度の改善
-  - チューニング
-
-ideas:
-- reconstructでanchorをreconstructごとに固定する
 - remove-blockはL^aで削除する
 - tardiness>0ならwtを大きく、tardiness=0ならwtは小さくする
 - reconstruct-weightのpowerをつける
@@ -13,6 +7,7 @@ ideas:
 - w2を途中から考慮する
 
 tuning:
+- preoptのパラメータ調整
 - exchange-thresholdの調整
 - neighbor-ratio
   - shift,swapを減らす
@@ -43,4 +38,5 @@ rejected:
 - 時刻の優先度だけでなく、bayの優先度を制約に入れて最適化する
 - データ拡張
 - caseに応じてtimelimitを設定する
+- reconstructでanchorをreconstructごとに固定する
 - 取り出す時刻を変えてABBA <->　ABABを入れ替える

@@ -246,6 +246,7 @@ pub struct ReconstructNeighborParams {
     pub remove_x_distance_weight_range: (f64, f64),
     pub remove_y_distance_weight_range: (f64, f64),
     pub remove_t_distance_weight_range: (f64, f64),
+    pub remove_distance_power_range: (f64, f64),
     pub workload_weight_range: (f64, f64),
     pub volume_weight_range: (f64, f64),
     pub pref_spread_weight_range: (f64, f64),
