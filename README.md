@@ -28,7 +28,7 @@
 - horizonの開始時刻、initial score、shared bestも同じグラフに表示する
 - matplotlibが必要
 
-## テスト
+## 使い方
 
 ```bash
 VERSION=v1
@@ -51,6 +51,8 @@ python tools/visualizer.py log/$VERSION/$TIMELIMIT
 python tools/plot_horizon_score.py log/$VERSION/$TIMELIMIT/prob_1/stderr.log
 # 出力先を指定する場合
 python tools/plot_horizon_score.py log/$VERSION/$TIMELIMIT/prob_1/stderr.log --out horizon-score.png
+# versionごとにまとめた画像を出力する場合
+python tools/plot_horizon_score.py log/$VERSION/$TIMELIMIT
 
 # 統計情報の表示
 python tools/stats.py --suite suites/half.json
@@ -87,7 +89,7 @@ docker run --rm \
 zipinfo "$VERSION.zip"
 ```
 
-## 可視化
+## 焼きなまし過程の可視化
 
 ```bash
 PROB=in/preliminary_test/prob_5.json

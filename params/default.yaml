@@ -54,9 +54,9 @@ annealing:
     tabu_capacity: 4096
 
 preoptimize:
-  alpha: 0.8
+  alpha: 0.5
   beta: 0.1
-  bay_padding: 0.0
+  bay_padding: 0.5
   congestion_weight: 0.001
   initial_build:
     time_ratio: 0.1
