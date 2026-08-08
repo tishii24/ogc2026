@@ -8,7 +8,6 @@ todo:
     - 無駄なblockをremoveしない
       - kで区切らず、直方体に含まれるブロックは全て削除する
       - removed-block(-range)は、その数を超えるまで直方体を追加する、という意味に変える
-    - dtにexit-tも使う
   - insertの改善
     - 前の配置との距離が遠いものを優先する
     - release-tをorderに入れる
@@ -17,6 +16,7 @@ todo:
 - horizonの真ん中でshared-bestを持ってくる
 
 tuning:
+- dtにexit-tも考慮する
 - obj2
   - reconstructはpreserved-loadsを使う
   - w2を途中から考慮する
