@@ -1,18 +1,5 @@
 todo:
-- ブロックが多くなってもちゃんと入れ替えられるようにしたい
-  - removeの改善
-    - 直方体に含まれるブロックを選ぶ
-      - bayはheightが小さいのでyは[0,height]に固定する
-      - 今まで通り、seedを使って中心座標を決めてから、[x_min,x_max], [t_min,t_max] を決める
-      - bboxが完全に含まれるblockを削除対象とする
-    - 無駄なblockをremoveしない
-      - kで区切らず、直方体に含まれるブロックは全て削除する
-      - removed-block(-range)は、その数を超えるまで直方体を追加する、という意味に変える
-  - insertの改善
-    - 前の配置との距離が遠いものを優先する
-    - release-tをorderに入れる
-    - loadsを消す
-  - bayから一つだけremoveして、そのbayにだけinsertする
+- bayから一つだけremoveして、そのbayにだけinsertする
 - horizonの真ん中でshared-bestを持ってくる
 
 tuning:
