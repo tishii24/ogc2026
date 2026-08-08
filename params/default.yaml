@@ -78,10 +78,10 @@ preoptimize:
 neighbor:
   probabilities:
     large_reconstruct: 0.2
-    shift: 3.0
-    move: 0.1
-    rotate: 0.5
-    swap: 0.1
+    shift: 1.0
+    move: 0.2
+    rotate: 0.2
+    swap: 0.0
   reconstruct:
     remove_count:
       type: lower
