@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use crate::{
     Bay, Orientation, Problem,
-    params::{AnnealingParamsConfig, PreoptimizeSolverParams, ReconstructParams},
+    params::{AnnealingParamsConfig, PreoptimizeSolverParams, ReconstructNeighborParams},
     solver::{
         PreoptimizeState, PreoptimizedBlock,
         annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
@@ -120,7 +120,7 @@ impl PreoptimizePrecompute {
 struct PreoptimizeContext<'a> {
     pre: &'a PreoptimizePrecompute,
     params: &'a PreoptimizeSolverParams,
-    reconstruct_order_params: &'a ReconstructParams,
+    reconstruct_order_params: &'a ReconstructNeighborParams,
     occupancy: Vec<Vec<Option<f64>>>,
     block_areas: Vec<f64>,
     bay_capacities: Vec<f64>,
@@ -894,7 +894,7 @@ pub fn preoptimize(
     pre: &PreoptimizePrecompute,
     params: &PreoptimizeSolverParams,
     annealing: &AnnealingParamsConfig,
-    reconstruct_order_params: &ReconstructParams,
+    reconstruct_order_params: &ReconstructNeighborParams,
     time_limit: f64,
     max_worker_count: usize,
     seed: u64,

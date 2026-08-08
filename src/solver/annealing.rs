@@ -23,8 +23,6 @@ use crate::{
 };
 
 const STATUS_LOG_INTERVAL_SECONDS: f64 = 1.0;
-#[cfg(feature = "anneal-visualizer")]
-const ANNEAL_VISUALIZER_SAMPLING_RATIO: f64 = 1.0;
 
 pub(crate) trait AnnealingState: Clone + Send + Sync {
     fn annealing_score(&self) -> f64;
@@ -545,38 +543,36 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 accepted_candidate && candidate_score + EPS < local.local_best_score;
             #[cfg(feature = "anneal-visualizer")]
             if let Some(selected_block_ids) = attempt.selected_block_ids.as_deref() {
-                if context.rng.next_f64() < ANNEAL_VISUALIZER_SAMPLING_RATIO {
-                    self.visualize_snapshot(
-                        &mut visualizer,
-                        &local.current,
-                        &candidate,
-                        SnapshotMeta {
-                            worker: worker_id,
-                            iter: context.iterations(),
-                            elapsed,
-                            reason: if tabu_rejected {
-                                "tabu"
-                            } else if accepted_candidate {
-                                "accepted"
-                            } else {
-                                "rejected"
-                            },
-                            neighbor: Some(self.delegate.neighbor_kinds()[neighbor_kind]),
-                            accepted: accepted_candidate,
-                            improved_current: delta < -EPS,
-                            improved_best,
-                            score: candidate_score,
-                            current_score,
-                            best_score: if improved_best {
-                                candidate_score
-                            } else {
-                                local.local_best_score
-                            },
-                            delta,
-                            selected_block_ids,
+                self.visualize_snapshot(
+                    &mut visualizer,
+                    &local.current,
+                    &candidate,
+                    SnapshotMeta {
+                        worker: worker_id,
+                        iter: context.iterations(),
+                        elapsed,
+                        reason: if tabu_rejected {
+                            "tabu"
+                        } else if accepted_candidate {
+                            "accepted"
+                        } else {
+                            "rejected"
                         },
-                    );
-                }
+                        neighbor: Some(self.delegate.neighbor_kinds()[neighbor_kind]),
+                        accepted: accepted_candidate,
+                        improved_current: delta < -EPS,
+                        improved_best,
+                        score: candidate_score,
+                        current_score,
+                        best_score: if improved_best {
+                            candidate_score
+                        } else {
+                            local.local_best_score
+                        },
+                        delta,
+                        selected_block_ids,
+                    },
+                );
             }
             if tabu_rejected {
                 stats.time_sec += neighbor_start.elapsed().as_secs_f64();

@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 
 use crate::{
     Problem, ScheduledBlock,
-    params::{InsertParams, LargeNeighborParams, ReconstructParams, VerticalNeighborParams},
+    params::{InsertParams, ReconstructNeighborParams},
     utils::random::{Random, sample_weighted_index},
 };
 
@@ -50,7 +50,7 @@ struct BlockOrderContext {
 
 pub(super) fn sample_reconstruct_order_weights(
     rng: &mut impl Random,
-    params: &ReconstructParams,
+    params: &ReconstructNeighborParams,
 ) -> BlockOrderWeights {
     BlockOrderWeights {
         workload: rng.gen_range_f64(
@@ -117,7 +117,7 @@ pub(super) fn build_reconstruct_base(
     }
 }
 
-pub(super) struct ReconstructResult {
+pub(super) struct LargeReconstructResult {
     pub(super) schedule: Vec<ScheduledBlock>,
     #[cfg(feature = "anneal-visualizer")]
     pub(super) selected_block_ids: Vec<usize>,
@@ -129,37 +129,13 @@ pub(super) fn try_large_reconstruct<R: Random>(
     schedule: &[ScheduledBlock],
     rng: &mut R,
     accept_threshold: f64,
-    large_params: &LargeNeighborParams,
-    reconstruct_params: &ReconstructParams,
+    params: &ReconstructNeighborParams,
     insert_params: &InsertParams,
     w2: f64,
-) -> Option<ReconstructResult> {
-    let k = sample_removed_count(rng, large_params).min(schedule.len());
-    let removed_ids = choose_removed_blocks(problem, pre, schedule, k, w2, rng, large_params)?;
-    reconstruct_removed_blocks(
-        problem,
-        pre,
-        schedule,
-        removed_ids,
-        rng,
-        accept_threshold,
-        reconstruct_params,
-        insert_params,
-        w2,
-    )
-}
+) -> Option<LargeReconstructResult> {
+    let k = sample_removed_count(rng, params).min(schedule.len());
 
-fn reconstruct_removed_blocks<R: Random>(
-    problem: &Problem,
-    pre: &Precompute,
-    schedule: &[ScheduledBlock],
-    mut removed_ids: Vec<usize>,
-    rng: &mut R,
-    accept_threshold: f64,
-    params: &ReconstructParams,
-    insert_params: &InsertParams,
-    w2: f64,
-) -> Option<ReconstructResult> {
+    let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, w2, rng, params)?;
     if removed_ids.is_empty() {
         return None;
     }
@@ -225,14 +201,17 @@ fn reconstruct_removed_blocks<R: Random>(
         cur.push(scheduled);
     }
 
-    Some(ReconstructResult {
+    Some(LargeReconstructResult {
         schedule: cur,
         #[cfg(feature = "anneal-visualizer")]
         selected_block_ids: removed_ids,
     })
 }
 
-pub(super) fn sample_removed_count<R: Random>(rng: &mut R, params: &LargeNeighborParams) -> usize {
+pub(super) fn sample_removed_count<R: Random>(
+    rng: &mut R,
+    params: &ReconstructNeighborParams,
+) -> usize {
     params.remove_count.sample(rng)
 }
 
@@ -287,7 +266,7 @@ fn choose_local_proximity_seeds<R: Random>(
     k: usize,
     bad_pool: &[usize],
     rng: &mut R,
-    params: &LargeNeighborParams,
+    params: &ReconstructNeighborParams,
 ) -> Option<Vec<RemoveSeed>> {
     let pool_len = (k * params.remove_pool_factor).min(schedule.len()).max(k);
     let slack_weight = rng.gen_range_f64(
@@ -470,7 +449,7 @@ pub(super) fn choose_removed_blocks<R: Random>(
     k: usize,
     w2: f64,
     rng: &mut R,
-    params: &LargeNeighborParams,
+    params: &ReconstructNeighborParams,
 ) -> Option<Vec<usize>> {
     if schedule.is_empty() || k == 0 {
         return None;
@@ -522,92 +501,6 @@ pub(super) fn choose_removed_blocks<R: Random>(
         rng,
     );
     Some(blocks)
-}
-
-fn choose_vertical_removed_blocks<R: Random>(
-    pre: &Precompute,
-    schedule: &[ScheduledBlock],
-    rng: &mut R,
-    params: &VerticalNeighborParams,
-) -> Vec<usize> {
-    let target_count = params.remove_count.sample(rng).min(schedule.len());
-    let rectangle_count = params.rectangle_count.sample(rng).min(target_count);
-    let mut removed = Vec::with_capacity(target_count);
-    let mut used = vec![false; pre.max_footprint_area.len()];
-
-    for rectangle_index in 0..rectangle_count {
-        if removed.len() >= target_count {
-            break;
-        }
-        let mut seed_pool: Vec<_> = schedule
-            .iter()
-            .copied()
-            .filter(|scheduled| !used[scheduled.block_id])
-            .collect();
-        rng.shuffle(&mut seed_pool);
-        let Some(seed) = seed_pool.first().copied() else {
-            break;
-        };
-        let remaining_rectangles = rectangle_count - rectangle_index;
-        let rectangle_target = (target_count - removed.len()).div_ceil(remaining_rectangles);
-        let (center_x, _) = scheduled_center(pre, seed);
-        let mut candidates: Vec<(f64, usize)> = schedule
-            .iter()
-            .filter(|candidate| candidate.bay_id == seed.bay_id && !used[candidate.block_id])
-            .map(|candidate| {
-                let bounds = pre.orientation_bbox_bounds[candidate.block_id][candidate.orient_idx];
-                let min_x = candidate.x as f64 + bounds.min_x;
-                let max_x = candidate.x as f64 + bounds.max_x;
-                let radius = if center_x < min_x {
-                    min_x - center_x
-                } else if center_x > max_x {
-                    center_x - max_x
-                } else {
-                    0.0
-                };
-                (radius, candidate.block_id)
-            })
-            .collect();
-        candidates.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        let Some(&(radius, _)) = candidates.get(rectangle_target.min(candidates.len()) - 1) else {
-            continue;
-        };
-        for (required_radius, block_id) in candidates {
-            if required_radius <= radius {
-                used[block_id] = true;
-                removed.push(block_id);
-            }
-        }
-    }
-    removed
-}
-
-pub(super) fn try_vertical_reconstruct<R: Random>(
-    problem: &Problem,
-    pre: &Precompute,
-    schedule: &[ScheduledBlock],
-    rng: &mut R,
-    accept_threshold: f64,
-    vertical_params: &VerticalNeighborParams,
-    reconstruct_params: &ReconstructParams,
-    insert_params: &InsertParams,
-    w2: f64,
-) -> Option<ReconstructResult> {
-    if schedule.is_empty() {
-        return None;
-    }
-    let removed_ids = choose_vertical_removed_blocks(pre, schedule, rng, vertical_params);
-    reconstruct_removed_blocks(
-        problem,
-        pre,
-        schedule,
-        removed_ids,
-        rng,
-        accept_threshold,
-        reconstruct_params,
-        insert_params,
-        w2,
-    )
 }
 
 fn block_volume(problem: &Problem, block_areas: &[f64], block_id: usize) -> f64 {
@@ -790,7 +683,7 @@ pub(super) fn sort_default_reconstruct_order<R: Random>(
     pref_spread: &[i64],
     order: &mut [usize],
     rng: &mut R,
-    params: &ReconstructParams,
+    params: &ReconstructNeighborParams,
 ) {
     let weights = sample_reconstruct_order_weights(rng, params);
     sort_block_order(

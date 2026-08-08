@@ -5,7 +5,8 @@ use rayon::prelude::*;
 use crate::{
     EPS, INF, Problem, ScheduledBlock,
     params::{
-        AnnealingParamsConfig, InsertParams, NeighborParams, OptimizePhaseParams, ReconstructParams,
+        AnnealingParamsConfig, InsertParams, NeighborParams, OptimizePhaseParams,
+        ReconstructNeighborParams,
     },
     utils::{random::RandPcg64Mcg, time::Timer},
 };
@@ -21,9 +22,7 @@ use super::{
     objective::{ScheduleScore, score_schedule, score13_block},
     output::CandidateEmitter,
     precompute::Precompute,
-    reconstruct::{
-        sort_default_reconstruct_order, try_large_reconstruct, try_vertical_reconstruct,
-    },
+    reconstruct::{sort_default_reconstruct_order, try_large_reconstruct},
 };
 
 #[derive(Clone, Debug)]
@@ -172,25 +171,12 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
         #[cfg(feature = "anneal-visualizer")]
         let mut selected_block_ids = None;
         let schedule = match neighbor {
-            NeighborKind::Large => try_large_reconstruct(
+            NeighborKind::LargeReconstruct => try_large_reconstruct(
                 self.problem,
                 self.pre,
                 &current.schedule,
                 rng,
                 accept_threshold,
-                &params.large,
-                &params.reconstruct,
-                self.insert_params,
-                self.w2,
-            )
-            .map(|result| result.schedule),
-            NeighborKind::Vertical => try_vertical_reconstruct(
-                self.problem,
-                self.pre,
-                &current.schedule,
-                rng,
-                accept_threshold,
-                &params.vertical,
                 &params.reconstruct,
                 self.insert_params,
                 self.w2,
@@ -287,7 +273,7 @@ fn extend_schedule(
     state: OptimizeState,
     added_block_ids: &[usize],
     insert_params: &InsertParams,
-    reconstruct_params: &ReconstructParams,
+    reconstruct_params: &ReconstructNeighborParams,
     w2: f64,
     timer: Timer,
     deadline: f64,
