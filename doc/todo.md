@@ -1,4 +1,6 @@
 todo:
+- いくつかのreconstructを追加する
+  - 区間[x_min,x_max][0,height][0,inf]を全てremoveする
 - swap
 
 nits:
@@ -16,7 +18,6 @@ params:
     - horizonの真ん中で必ずshared-bestを持ってくる
     - horizonに含まれるblockのscore-13を用いる
     - exchange-thresholdの調整
-    - block数に応じて小さくする
   - worker-scale
 
 solver:

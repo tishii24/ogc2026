@@ -6,9 +6,6 @@ struct InsertCandidate {
     scheduled: ScheduledBlock,
     score_delta: f64,
     bbox: Boundsf,
-    same_bay_as_original: bool,
-    same_orientation_as_original: bool,
-    distance_from_original: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -45,14 +42,12 @@ pub(crate) fn insert_greedy<R: Random>(
     candidate_select_p: f64,
     w2: f64,
     anchor: InsertAnchor,
-    prefer_far_from_original: bool,
     rng: &mut R,
 ) -> Option<ScheduledBlock> {
     fn insert_candidate_cmp(
         a: &InsertCandidate,
         b: &InsertCandidate,
         anchor: InsertAnchor,
-        prefer_far_from_original: bool,
     ) -> std::cmp::Ordering {
         let bbox_order = match anchor {
             InsertAnchor::BottomLeft => a
@@ -76,26 +71,11 @@ pub(crate) fn insert_greedy<R: Random>(
                 .total_cmp(&a.bbox.min_x)
                 .then(b.bbox.min_y.total_cmp(&a.bbox.min_y)),
         };
-        if prefer_far_from_original {
-            a.score_delta
-                .total_cmp(&b.score_delta)
-                .then(a.same_bay_as_original.cmp(&b.same_bay_as_original))
-                .then(
-                    a.same_orientation_as_original
-                        .cmp(&b.same_orientation_as_original),
-                )
-                .then(
-                    b.distance_from_original
-                        .total_cmp(&a.distance_from_original),
-                )
-                .then(a.scheduled.block_id.cmp(&b.scheduled.block_id))
-        } else {
-            a.score_delta
-                .total_cmp(&b.score_delta)
-                .then(a.scheduled.entry_time.cmp(&b.scheduled.entry_time))
-                .then(bbox_order)
-                .then(a.scheduled.block_id.cmp(&b.scheduled.block_id))
-        }
+        a.score_delta
+            .total_cmp(&b.score_delta)
+            .then(a.scheduled.entry_time.cmp(&b.scheduled.entry_time))
+            .then(bbox_order)
+            .then(a.scheduled.block_id.cmp(&b.scheduled.block_id))
     }
 
     let block_id = original.block_id;
@@ -113,12 +93,6 @@ pub(crate) fn insert_greedy<R: Random>(
         score_z2(loads, &pre.bay_load_scale)
     };
     let original_tardiness = (original.exit_time - block.due_date).max(0);
-    let original_score13 = problem.weights.w1 * original_tardiness as f64
-        + problem.weights.w3 * pre.pref_penalty[block_id][original.bay_id] as f64;
-    let (original_center_x, original_center_y) =
-        pre.orientation_bbox_center[block_id][original.orient_idx];
-    let original_center_x = original.x as f64 + original_center_x;
-    let original_center_y = original.y as f64 + original_center_y;
     let mut candidates = Vec::new();
     let mut best_score_delta = f64::INFINITY;
 
@@ -137,7 +111,7 @@ pub(crate) fn insert_greedy<R: Random>(
             .saturating_sub(block.due_date)
             .max(0);
         let lower_score_delta = problem.weights.w1 * min_tardiness as f64 + delta_obj23;
-        if !prefer_far_from_original && lower_score_delta > best_score_delta {
+        if lower_score_delta > best_score_delta {
             continue;
         }
 
@@ -162,38 +136,25 @@ pub(crate) fn insert_greedy<R: Random>(
 
                 let valid_y = scanner.scan_y(orient_idx, y, |scheduled| {
                     let tardiness = (scheduled.exit_time - block.due_date).max(0);
-                    let candidate_score13 = problem.weights.w1 * tardiness as f64
-                        + problem.weights.w3 * pre.pref_penalty[block_id][bay_id] as f64;
-                    if prefer_far_from_original && candidate_score13 > original_score13 + 1e-9 {
-                        return false;
-                    }
                     let score_delta = problem.weights.w1 * tardiness as f64 + delta_obj23;
                     best_score_delta = best_score_delta.min(score_delta);
-                    let bbox = Boundsf {
-                        min_x: scheduled.x as f64 + bounds.min_x,
-                        min_y: scheduled.y as f64 + bounds.min_y,
-                        max_x: scheduled.x as f64 + bounds.max_x,
-                        max_y: scheduled.y as f64 + bounds.max_y,
-                    };
-                    let center_x = (bbox.min_x + bbox.max_x) * 0.5;
-                    let center_y = (bbox.min_y + bbox.max_y) * 0.5;
-                    let dx = center_x - original_center_x;
-                    let dy = center_y - original_center_y;
                     let candidate = InsertCandidate {
                         scheduled,
                         score_delta,
-                        bbox,
-                        same_bay_as_original: bay_id == original.bay_id,
-                        same_orientation_as_original: orient_idx == original.orient_idx,
-                        distance_from_original: dx * dx + dy * dy,
+                        bbox: Boundsf {
+                            min_x: scheduled.x as f64 + bounds.min_x,
+                            min_y: scheduled.y as f64 + bounds.min_y,
+                            max_x: scheduled.x as f64 + bounds.max_x,
+                            max_y: scheduled.y as f64 + bounds.max_y,
+                        },
                     };
-                    if group_best.as_ref().is_none_or(|best| {
-                        insert_candidate_cmp(&candidate, best, anchor, prefer_far_from_original)
-                            .is_lt()
-                    }) {
+                    if group_best
+                        .as_ref()
+                        .is_none_or(|best| insert_candidate_cmp(&candidate, best, anchor).is_lt())
+                    {
                         group_best = Some(candidate);
                     }
-                    prefer_far_from_original || tardiness <= original_tardiness
+                    tardiness <= original_tardiness
                 });
 
                 match &mut remaining_y_buffer {
@@ -209,21 +170,15 @@ pub(crate) fn insert_greedy<R: Random>(
         }
     }
 
-    if !prefer_far_from_original {
-        candidates.retain(|candidate| candidate.score_delta <= best_score_delta + 1e-9);
-    }
+    candidates.retain(|candidate| candidate.score_delta <= best_score_delta + 1e-9);
     if candidates.is_empty() {
         return None;
     }
-    candidates.sort_by(|a, b| insert_candidate_cmp(a, b, anchor, prefer_far_from_original));
+    candidates.sort_by(|a, b| insert_candidate_cmp(a, b, anchor));
     candidates.truncate(candidate_top_k);
-    let selected = if prefer_far_from_original {
-        0
-    } else {
-        candidates
-            .iter()
-            .position(|_| rng.next_f64() < candidate_select_p)
-            .unwrap_or(0)
-    };
+    let selected = candidates
+        .iter()
+        .position(|_| rng.next_f64() < candidate_select_p)
+        .unwrap_or(0);
     Some(candidates.swap_remove(selected).scheduled)
 }
