@@ -281,6 +281,7 @@ pub(super) fn try_move_neighbor<R: Random>(
         1.0,
         w2,
         anchor,
+        false,
         rng,
     )?;
     if scheduled == old {

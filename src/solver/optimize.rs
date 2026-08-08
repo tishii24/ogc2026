@@ -339,6 +339,7 @@ fn extend_schedule(
                 1.0,
                 w2,
                 anchor,
+                false,
                 rng,
             ) else {
                 continue 'trial;
