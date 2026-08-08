@@ -203,7 +203,6 @@ pub(crate) struct AnnealingAttempt<S> {
 pub(crate) struct NeighborStats {
     pub(crate) selected: usize,
     pub(crate) succeeded: usize,
-    pub(crate) changed: usize,
     pub(crate) improved: usize,
     pub(crate) accepted: usize,
     pub(crate) improved_delta_sum: f64,
@@ -237,13 +236,10 @@ fn format_neighbor_stats(stats: &[NeighborStats], kinds: &[&str]) -> String {
         .zip(stats)
         .map(|(kind, stat)| {
             format!(
-                "  {kind:<16}: selected={:7}, succeeded={:7} ({:7.3}%), changed={:7}/{:7} ({:7.3}%), improved={:7} ({:7.3}%, avg={:10.2}), accepted={:7} ({:7.3}%), time={:7.3}s, avg={:7.3}ms",
+                "  {kind:<16}: selected={:7}, succeeded={:7} ({:7.3}%), improved={:7} ({:7.3}%, avg={:10.2}), accepted={:7} ({:7.3}%), time={:7.3}s, avg={:7.3}ms",
                 stat.selected,
                 stat.succeeded,
                 ratio(stat.succeeded, stat.selected),
-                stat.changed,
-                stat.selected,
-                ratio(stat.changed, stat.selected),
                 stat.improved,
                 ratio(stat.improved, stat.succeeded),
                 avg_sum(stat.improved_delta_sum, stat.improved),
@@ -523,7 +519,6 @@ impl<D: AnnealingDelegate> Annealer<D> {
             }
             let accept_threshold =
                 acceptance_threshold(current_score, current_temperature, &mut context.rng);
-            let current_tabu_key = local.current.tabu_key();
             let neighbor_start = Instant::now();
             let attempt = self
                 .delegate
@@ -540,9 +535,6 @@ impl<D: AnnealingDelegate> Annealer<D> {
             stats.succeeded += 1;
             let candidate_score = candidate.annealing_score();
             let candidate_tabu_key = candidate.tabu_key();
-            if candidate_tabu_key != current_tabu_key {
-                stats.changed += 1;
-            }
             let tabu = candidate_tabu_key.is_some_and(|key| local.tabu.contains(key));
             let tabu_rejected = tabu && candidate_score + EPS >= local.local_best_score;
             let delta = candidate_score - current_score;
