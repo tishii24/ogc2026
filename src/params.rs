@@ -223,7 +223,9 @@ impl AnnealingParamsConfig {
 #[serde(deny_unknown_fields)]
 pub struct NeighborParams {
     pub probabilities: NeighborProbabilities,
-    pub reconstruct: ReconstructNeighborParams,
+    pub large: LargeNeighborParams,
+    pub vertical: VerticalNeighborParams,
+    pub reconstruct: ReconstructParams,
     pub shift: ShiftNeighborParams,
     pub rotate: RotateNeighborParams,
     pub swap: SwapNeighborParams,
@@ -231,7 +233,7 @@ pub struct NeighborParams {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ReconstructNeighborParams {
+pub struct LargeNeighborParams {
     pub remove_count: UsizeRangeDistribution,
     pub remove_pool_factor: usize,
     pub remove_blocks_per_seed: UsizeRangeDistribution,
@@ -244,6 +246,18 @@ pub struct ReconstructNeighborParams {
     pub remove_y_distance_weight_range: (f64, f64),
     pub remove_t_distance_weight_range: (f64, f64),
     pub remove_distance_power_range: (f64, f64),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerticalNeighborParams {
+    pub remove_count: UsizeRangeDistribution,
+    pub rectangle_count: UsizeRangeDistribution,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReconstructParams {
     pub workload_weight_range: (f64, f64),
     pub volume_weight_range: (f64, f64),
     pub pref_spread_weight_range: (f64, f64),
@@ -315,7 +329,8 @@ pub struct RemoveSeedMethodWeights {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NeighborProbabilities {
-    pub large_reconstruct: f64,
+    pub large: f64,
+    pub vertical: f64,
     pub shift: f64,
     #[serde(rename = "move")]
     pub move_block: f64,
@@ -324,9 +339,10 @@ pub struct NeighborProbabilities {
 }
 
 impl NeighborProbabilities {
-    pub(crate) fn weights(&self) -> [f64; 5] {
+    pub(crate) fn weights(&self) -> [f64; 6] {
         [
-            self.large_reconstruct,
+            self.large,
+            self.vertical,
             self.shift,
             self.move_block,
             self.rotate,
