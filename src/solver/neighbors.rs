@@ -1,6 +1,6 @@
 use crate::{
     INF, Problem, ScheduledBlock,
-    params::{InsertParams, RotateNeighborParams, ShiftNeighborParams, SwapNeighborParams},
+    params::{InsertParams, RotateNeighborParams, ShiftNeighborParams},
     utils::random::Random,
 };
 
@@ -17,25 +17,23 @@ pub(super) enum NeighborKind {
     Shift,
     Move,
     Rotate,
-    Swap,
 }
 
 impl NeighborKind {
-    pub(super) const ALL: [Self; 5] = [
+    pub(super) const ALL: [Self; 4] = [
         Self::LargeReconstruct,
         Self::Shift,
         Self::Move,
         Self::Rotate,
-        Self::Swap,
     ];
-    pub(super) const NAMES: &'static [&'static str] = &["Large", "Shift", "Move", "Rotate", "Swap"];
+    pub(super) const NAMES: &'static [&'static str] = &["Large", "Shift", "Move", "Rotate"];
 
     pub(super) fn index(self) -> usize {
         self as usize
     }
 }
 
-pub(super) fn sample_neighbor<R: Random>(rng: &mut R, weights: &[f64; 5]) -> NeighborKind {
+pub(super) fn sample_neighbor<R: Random>(rng: &mut R, weights: &[f64; 4]) -> NeighborKind {
     let total = weights.iter().sum::<f64>();
     debug_assert!(total > 0.0);
 
@@ -146,99 +144,6 @@ pub(super) fn try_rotate_neighbor<R: Random>(
     let rotated = best?.2;
     base.push(rotated);
     Some(base)
-}
-
-fn try_swap_place(
-    problem: &Problem,
-    pre: &Precompute,
-    old: ScheduledBlock,
-    schedule: &[ScheduledBlock],
-    bay_id: usize,
-    orient_idx: usize,
-    base_y: i64,
-    min_entry_time: i64,
-    max_entry_time: i64,
-    params: &SwapNeighborParams,
-) -> Option<ScheduledBlock> {
-    let mut scanner = PlacementXScanner::new(
-        problem,
-        pre,
-        schedule,
-        old.block_id,
-        bay_id,
-        min_entry_time,
-        max_entry_time,
-    )?;
-    let mut best: Option<(i64, i64, ScheduledBlock)> = None;
-    for dy in params.dy_range.0..=params.dy_range.1 {
-        scanner.scan_y(orient_idx, base_y + dy, |scheduled| {
-            update_best(problem, &mut best, scheduled);
-            false
-        });
-    }
-
-    Some(best?.2)
-}
-
-pub(super) fn try_swap_neighbor<R: Random>(
-    problem: &Problem,
-    pre: &Precompute,
-    schedule: &[ScheduledBlock],
-    rng: &mut R,
-    params: &SwapNeighborParams,
-) -> Option<Vec<ScheduledBlock>> {
-    if schedule.len() < 2 {
-        return None;
-    }
-
-    let a_idx = rng.gen_index(schedule.len());
-    let a_old = schedule[a_idx];
-    let candidates: Vec<_> = pre.swap_neighbors[a_old.block_id][a_old.orient_idx]
-        .iter()
-        .filter_map(|&candidate| {
-            let b_idx = schedule
-                .iter()
-                .position(|s| s.block_id == candidate.block_id)?;
-            Some((candidate, b_idx))
-        })
-        .take(params.neighbor_top_k)
-        .collect();
-    if candidates.is_empty() {
-        return None;
-    }
-    let (candidate, b_idx) = candidates[rng.gen_index(candidates.len())];
-    let b_old = schedule[b_idx];
-
-    let mut cur = Vec::with_capacity(schedule.len());
-    for (idx, &s) in schedule.iter().enumerate() {
-        if idx != a_idx && idx != b_idx {
-            cur.push(s);
-        }
-    }
-
-    let targets = [
-        (
-            a_old,
-            b_old.bay_id,
-            a_old.orient_idx,
-            b_old.y - candidate.dy,
-        ),
-        (
-            b_old,
-            a_old.bay_id,
-            candidate.orient_idx,
-            a_old.y + candidate.dy,
-        ),
-    ];
-
-    for (old, bay_id, orient_idx, base_y) in targets {
-        let new = try_swap_place(
-            problem, pre, old, &cur, bay_id, orient_idx, base_y, -INF, INF, params,
-        )?;
-        cur.push(new);
-    }
-
-    Some(cur)
 }
 
 pub(super) fn try_move_neighbor<R: Random>(

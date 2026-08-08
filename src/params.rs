@@ -68,8 +68,6 @@ pub struct OptimizePhaseParams {
 #[serde(deny_unknown_fields)]
 pub struct PrecomputeParams {
     pub orientation_neighbor_limit: usize,
-    pub swap_neighbor_area_top_k: usize,
-    pub swap_neighbor_align_delta: i64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -226,7 +224,6 @@ pub struct NeighborParams {
     pub reconstruct: ReconstructNeighborParams,
     pub shift: ShiftNeighborParams,
     pub rotate: RotateNeighborParams,
-    pub swap: SwapNeighborParams,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -299,13 +296,6 @@ pub struct RotateNeighborParams {
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SwapNeighborParams {
-    pub neighbor_top_k: usize,
-    pub dy_range: (i64, i64),
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct RemoveSeedMethodWeights {
     pub badness: f64,
     pub fluidity: f64,
@@ -320,17 +310,15 @@ pub struct NeighborProbabilities {
     #[serde(rename = "move")]
     pub move_block: f64,
     pub rotate: f64,
-    pub swap: f64,
 }
 
 impl NeighborProbabilities {
-    pub(crate) fn weights(&self) -> [f64; 5] {
+    pub(crate) fn weights(&self) -> [f64; 4] {
         [
             self.large_reconstruct,
             self.shift,
             self.move_block,
             self.rotate,
-            self.swap,
         ]
     }
 }

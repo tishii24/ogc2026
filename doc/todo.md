@@ -12,7 +12,6 @@ params:
 - reconstruct
   - remove-distance-powerを大きくするのを試す
   - reconstruct-weightにそれぞれpowerをつける
-- neighbor-ratio: shift,swapを減らす
 - SAの調整
   - horizonの調整
     - horizonの真ん中で必ずshared-bestを持ってくる

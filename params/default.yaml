@@ -18,8 +18,6 @@ phases:
 
 precompute:
   orientation_neighbor_limit: 100
-  swap_neighbor_area_top_k: 16
-  swap_neighbor_align_delta: 3
 
 insert:
   y_buffer: 10
@@ -78,10 +76,9 @@ preoptimize:
 neighbor:
   probabilities:
     large_reconstruct: 0.2
-    shift: 3.0
-    move: 0.1
-    rotate: 0.5
-    swap: 3.0
+    shift: 1.0
+    move: 0.2
+    rotate: 0.2
   reconstruct:
     remove_count:
       type: lower
@@ -117,7 +114,4 @@ neighbor:
   shift:
     dy_range: [-5, 0]
   rotate:
-    dy_range: [-2, 2]
-  swap:
-    neighbor_top_k: 32
     dy_range: [-2, 2]

@@ -17,7 +17,6 @@ use super::{
     insert::{insert_greedy, sample_insert_anchor},
     neighbors::{
         NeighborKind, sample_neighbor, try_move_neighbor, try_rotate_neighbor, try_shift_neighbor,
-        try_swap_neighbor,
     },
     objective::{ScheduleScore, score_schedule, score13_block},
     output::CandidateEmitter,
@@ -210,9 +209,6 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
                 rng,
                 &params.rotate,
             ),
-            NeighborKind::Swap => {
-                try_swap_neighbor(self.problem, self.pre, &current.schedule, rng, &params.swap)
-            }
         };
         AnnealingAttempt {
             neighbor_kind: neighbor.index(),
