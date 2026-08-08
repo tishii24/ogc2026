@@ -220,13 +220,6 @@ fn scheduled_center(pre: &Precompute, s: ScheduledBlock) -> (f64, f64) {
     (s.x as f64 + cx, s.y as f64 + cy)
 }
 
-fn push_removed_block(selected: &mut Vec<usize>, used: &mut [bool], block_id: usize, limit: usize) {
-    if selected.len() < limit && !used[block_id] {
-        selected.push(block_id);
-        used[block_id] = true;
-    }
-}
-
 fn remove_badness(
     problem: &Problem,
     pre: &Precompute,
@@ -388,56 +381,107 @@ fn choose_local_proximity_seeds<R: Random>(
     Some(seeds)
 }
 
+fn add_remove_rectangle(
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    by_block: &[Option<ScheduledBlock>],
+    seed: RemoveSeed,
+    t_per_x: f64,
+    selected: &mut Vec<usize>,
+    used: &mut [bool],
+) {
+    let seed_scheduled = by_block[seed.block_id].unwrap();
+    let (center_x, _) = scheduled_center(pre, seed_scheduled);
+    let center_t = (seed_scheduled.entry_time + seed_scheduled.exit_time) as f64 * 0.5;
+    let mut candidates: Vec<(f64, ScheduledBlock)> = schedule
+        .iter()
+        .copied()
+        .filter(|candidate| candidate.bay_id == seed_scheduled.bay_id && !used[candidate.block_id])
+        .map(|candidate| {
+            let bounds = pre.orientation_bbox_bounds[candidate.block_id][candidate.orient_idx];
+            let min_x = candidate.x as f64 + bounds.min_x;
+            let max_x = candidate.x as f64 + bounds.max_x;
+            let required_x = (center_x - min_x).max(max_x - center_x);
+            let required_t =
+                (center_t - candidate.entry_time as f64).max(candidate.exit_time as f64 - center_t);
+            (required_x.max(required_t / t_per_x), candidate)
+        })
+        .collect();
+    candidates.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.block_id.cmp(&b.1.block_id)));
+    if candidates.is_empty() {
+        return;
+    }
+    let Some(&(scale, _)) = candidates.get(seed.remove_count.min(candidates.len()) - 1) else {
+        return;
+    };
+    let min_x = center_x - scale;
+    let max_x = center_x + scale;
+    let min_t = center_t - scale * t_per_x;
+    let max_t = center_t + scale * t_per_x;
+
+    for (_, candidate) in candidates {
+        let bounds = pre.orientation_bbox_bounds[candidate.block_id][candidate.orient_idx];
+        if candidate.x as f64 + bounds.min_x >= min_x
+            && candidate.x as f64 + bounds.max_x <= max_x
+            && candidate.entry_time as f64 >= min_t
+            && candidate.exit_time as f64 <= max_t
+        {
+            used[candidate.block_id] = true;
+            selected.push(candidate.block_id);
+        }
+    }
+}
+
 fn collect_removed_blocks<R: Random>(
-    problem: &Problem,
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     by_block: &[Option<ScheduledBlock>],
     k: usize,
     seeds: &[RemoveSeed],
-    bad_pool: &[usize],
-    remove_x_distance_weight: f64,
-    remove_y_distance_weight: f64,
-    remove_t_distance_weight: f64,
-    remove_distance_power: f64,
+    t_per_x: f64,
     rng: &mut R,
+    params: &ReconstructNeighborParams,
 ) -> Vec<usize> {
     let mut selected = Vec::with_capacity(k);
-    let mut used = vec![false; problem.blocks.len()];
-    for seed in seeds {
-        push_removed_block(&mut selected, &mut used, seed.block_id, k);
-    }
-
-    for seed in seeds {
-        let scheduled = by_block[seed.block_id].unwrap();
-        let (sx, sy) = scheduled_center(pre, scheduled);
-        let st = scheduled.entry_time as f64;
-        let mut neighbors: Vec<(f64, usize)> = schedule
-            .iter()
-            .filter(|s| s.bay_id == scheduled.bay_id && !used[s.block_id])
-            .map(|&candidate| {
-                let (x, y) = scheduled_center(pre, candidate);
-                let dx = x - sx;
-                let dy = y - sy;
-                let dt = candidate.entry_time as f64 - st;
-                (
-                    remove_x_distance_weight * dx.abs().powf(remove_distance_power)
-                        + remove_y_distance_weight * dy.abs().powf(remove_distance_power)
-                        + remove_t_distance_weight * dt.abs().powf(remove_distance_power),
-                    candidate.block_id,
-                )
-            })
-            .collect();
-        neighbors.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        for (_, block_id) in neighbors.into_iter().take(seed.remove_count - 1) {
-            push_removed_block(&mut selected, &mut used, block_id, k);
+    let mut used = vec![false; by_block.len()];
+    for &seed in seeds {
+        if selected.len() >= k {
+            break;
         }
+        add_remove_rectangle(
+            pre,
+            schedule,
+            by_block,
+            seed,
+            t_per_x,
+            &mut selected,
+            &mut used,
+        );
     }
 
-    let mut fill_pool = bad_pool.to_vec();
-    rng.shuffle(&mut fill_pool);
-    for block_id in fill_pool {
-        push_removed_block(&mut selected, &mut used, block_id, k);
+    while selected.len() < k {
+        let mut seed_pool: Vec<_> = schedule
+            .iter()
+            .filter(|scheduled| !used[scheduled.block_id])
+            .map(|scheduled| scheduled.block_id)
+            .collect();
+        rng.shuffle(&mut seed_pool);
+        let Some(&block_id) = seed_pool.first() else {
+            break;
+        };
+        let seed = RemoveSeed {
+            block_id,
+            remove_count: params.remove_blocks_per_seed.sample(rng),
+        };
+        add_remove_rectangle(
+            pre,
+            schedule,
+            by_block,
+            seed,
+            t_per_x,
+            &mut selected,
+            &mut used,
+        );
     }
     selected
 }
@@ -456,22 +500,7 @@ pub(super) fn choose_removed_blocks<R: Random>(
     }
 
     let k = k.min(schedule.len());
-    let remove_x_distance_weight = rng.gen_range_f64(
-        params.remove_x_distance_weight_range.0,
-        params.remove_x_distance_weight_range.1,
-    );
-    let remove_y_distance_weight = rng.gen_range_f64(
-        params.remove_y_distance_weight_range.0,
-        params.remove_y_distance_weight_range.1,
-    );
-    let remove_t_distance_weight = rng.gen_range_f64(
-        params.remove_t_distance_weight_range.0,
-        params.remove_t_distance_weight_range.1,
-    );
-    let remove_distance_power = rng.gen_range_f64(
-        params.remove_distance_power_range.0,
-        params.remove_distance_power_range.1,
-    );
+    let t_per_x = rng.gen_range_f64(params.remove_t_per_x_range.0, params.remove_t_per_x_range.1);
     let badness = remove_badness(problem, pre, schedule, w2);
     let mut by_block = vec![None; problem.blocks.len()];
     for &scheduled in schedule {
@@ -486,20 +515,7 @@ pub(super) fn choose_removed_blocks<R: Random>(
 
     let seeds =
         choose_local_proximity_seeds(problem, pre, schedule, &by_block, k, &bad_pool, rng, params)?;
-    let blocks = collect_removed_blocks(
-        problem,
-        pre,
-        schedule,
-        &by_block,
-        k,
-        &seeds,
-        &bad_pool,
-        remove_x_distance_weight,
-        remove_y_distance_weight,
-        remove_t_distance_weight,
-        remove_distance_power,
-        rng,
-    );
+    let blocks = collect_removed_blocks(pre, schedule, &by_block, k, &seeds, t_per_x, rng, params);
     Some(blocks)
 }
 

@@ -85,7 +85,7 @@ neighbor:
   reconstruct:
     remove_count:
       type: lower
-      range: [7, 13]
+      range: [5, 10]
       shape: 2.0
     remove_blocks_per_seed:
       type: lower
@@ -100,10 +100,7 @@ neighbor:
       random: 2.0
     remove_fluidity_slack_weight_range: [0.5, 2.0]
     remove_fluidity_pref_spread_weight_range: [0.5, 2.0]
-    remove_x_distance_weight_range: [0.1, 4.0]
-    remove_y_distance_weight_range: [0.1, 4.0]
-    remove_t_distance_weight_range: [0.5, 1.5]
-    remove_distance_power_range: [1.0, 3.0]
+    remove_t_per_x_range: [0.5, 4.0]
     volume_weight_range: [0.5, 2.0]
     pref_spread_weight_range: [0.0, 0.3]
     limit_time_urgency_weight_range: [0.5, 2.0]
