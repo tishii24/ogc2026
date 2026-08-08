@@ -1,6 +1,9 @@
 todo:
 - 進捗、問題サイズに応じて近傍サイズを大きくする係数の導入
 
+nits:
+- tabuを削除
+
 tuning:
 - preoptのパラメータ調整
 - horizon-size, horizon-power
@@ -8,7 +11,7 @@ tuning:
   - remove-distance-powerを大きくするのを試す
   - reconstruct-weightにそれぞれpowerをつける
 - SAの調整
-  - exchange-thresholdの調整
+  - exchange-threshold, exchange-interval
   - worker-scale
 
 solver:

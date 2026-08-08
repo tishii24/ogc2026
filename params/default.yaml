@@ -38,17 +38,17 @@ annealing:
         w3_scale: 500.0
     tabu_capacity: 4096
   optimize:
-    exchange_interval: 20000
+    exchange_interval: 2000
     positive_tardiness:
       temperature_initial_score_per_block_scale: [0.2, 0.02]
       exchange_threshold:
-        w1_scale: 2.0
-        w3_scale: 100.0
+        w1_scale: 10.0
+        w3_scale: 500.0
     zero_tardiness:
       temperature_w3_scale: [5.0, 0.5]
       exchange_threshold:
-        w1_scale: 2.0
-        w3_scale: 100.0
+        w1_scale: 10.0
+        w3_scale: 500.0
     tabu_capacity: 4096
 
 preoptimize:
@@ -107,7 +107,7 @@ neighbor:
     release_time_weight_range: [0.0, 0.0]
     current_penalty_weight_range: [0.0, 2.0]
     order_random_weight_range: [0.0, 0.3]
-    workload_weight_range: [0.0, 0.3]
+    workload_weight_range: [0.0, 0.0]
     slack_tightness_weight_range: [0.0, 0.3]
     insert_candidate_top_k: 4
     insert_candidate_select_p: 0.7
