@@ -5,14 +5,6 @@ use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use std::cmp::Reverse;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct SwapNeighbor {
-    pub(crate) block_id: usize,
-    pub(crate) orient_idx: usize,
-    pub(crate) dx: i64,
-    pub(crate) dy: i64,
-}
-
-#[derive(Clone, Copy, Debug)]
 pub(crate) struct OrientationNeighbor {
     pub(crate) orient_idx: usize,
     pub(crate) dy: i64,
@@ -28,7 +20,6 @@ pub(crate) struct Precompute {
     pub(crate) orientation_bbox_center: Vec<Vec<(f64, f64)>>,
     pub(crate) orientation_bbox_bounds: Vec<Vec<Boundsf>>,
     pub(crate) orientation_neighbors: Vec<Vec<Vec<OrientationNeighbor>>>,
-    pub(crate) swap_neighbors: Vec<Vec<Vec<SwapNeighbor>>>,
     pub(crate) max_footprint_area: Vec<f64>,
 }
 
@@ -207,102 +198,6 @@ fn build_orientation_neighbors(
         .collect()
 }
 
-fn area_neighbor_blocks(max_footprint_area: &[f64], from_block: usize, top_k: usize) -> Vec<usize> {
-    let from_area = max_footprint_area[from_block];
-    let mut order: Vec<usize> = (0..max_footprint_area.len())
-        .filter(|&block_id| block_id != from_block)
-        .collect();
-    order.sort_by(|&a, &b| {
-        (from_area - max_footprint_area[a])
-            .abs()
-            .total_cmp(&(from_area - max_footprint_area[b]).abs())
-            .then(a.cmp(&b))
-    });
-    order.truncate(top_k.min(order.len()));
-    order
-}
-
-fn best_bbox_neighbor_offset(
-    from: Boundsf,
-    to: Boundsf,
-    align_delta: i64,
-) -> Option<(f64, i64, i64)> {
-    let from_cx = (from.min_x + from.max_x) * 0.5;
-    let from_cy = (from.min_y + from.max_y) * 0.5;
-    let to_cx = (to.min_x + to.max_x) * 0.5;
-    let to_cy = (to.min_y + to.max_y) * 0.5;
-    let base_dx = (from_cx - to_cx).round() as i64;
-    let base_dy = (from_cy - to_cy).round() as i64;
-
-    let mut best: Option<(f64, i64, i64)> = None;
-    for dx in base_dx - align_delta..=base_dx + align_delta {
-        for dy in base_dy - align_delta..=base_dy + align_delta {
-            let iou = bbox_iou(from, to, dx, dy);
-            if iou <= 0.0 {
-                continue;
-            }
-            if best.as_ref().map_or(true, |&(best_iou, best_dx, best_dy)| {
-                iou.total_cmp(&best_iou)
-                    .then(best_dx.cmp(&dx))
-                    .then(best_dy.cmp(&dy))
-                    .is_gt()
-            }) {
-                best = Some((iou, dx, dy));
-            }
-        }
-    }
-    best
-}
-
-fn build_swap_neighbors(
-    orientation_bbox_bounds: &[Vec<Boundsf>],
-    max_footprint_area: &[f64],
-    top_k: usize,
-    align_delta: i64,
-) -> Vec<Vec<Vec<SwapNeighbor>>> {
-    (0..orientation_bbox_bounds.len())
-        .map(|from_block| {
-            let to_blocks = area_neighbor_blocks(max_footprint_area, from_block, top_k);
-            orientation_bbox_bounds[from_block]
-                .iter()
-                .map(|&from_bbox| {
-                    let mut candidates = Vec::new();
-                    for &to_block in &to_blocks {
-                        for (to_orient, &to_bbox) in
-                            orientation_bbox_bounds[to_block].iter().enumerate()
-                        {
-                            if let Some((iou, dx, dy)) =
-                                best_bbox_neighbor_offset(from_bbox, to_bbox, align_delta)
-                            {
-                                candidates.push((
-                                    SwapNeighbor {
-                                        block_id: to_block,
-                                        orient_idx: to_orient,
-                                        dx,
-                                        dy,
-                                    },
-                                    iou,
-                                ));
-                            }
-                        }
-                    }
-                    candidates.sort_by(|a, b| {
-                        b.1.total_cmp(&a.1)
-                            .then(a.0.block_id.cmp(&b.0.block_id))
-                            .then(a.0.orient_idx.cmp(&b.0.orient_idx))
-                            .then(a.0.dx.cmp(&b.0.dx))
-                            .then(a.0.dy.cmp(&b.0.dy))
-                    });
-                    candidates
-                        .into_iter()
-                        .map(|(neighbor, _)| neighbor)
-                        .collect()
-                })
-                .collect()
-        })
-        .collect()
-}
-
 impl Precompute {
     pub(crate) fn build(problem: &Problem, params: &PrecomputeParams) -> Self {
         let collision = CollisionPrecompute::build(problem);
@@ -363,12 +258,6 @@ impl Precompute {
             params.orientation_neighbor_limit,
         );
         let max_footprint_area: Vec<f64> = problem.blocks.iter().map(max_footprint_area).collect();
-        let swap_neighbors = build_swap_neighbors(
-            &orientation_bbox_bounds,
-            &max_footprint_area,
-            params.swap_neighbor_area_top_k,
-            params.swap_neighbor_align_delta,
-        );
 
         Self {
             collision,
@@ -380,7 +269,6 @@ impl Precompute {
             orientation_bbox_center,
             orientation_bbox_bounds,
             orientation_neighbors,
-            swap_neighbors,
             max_footprint_area,
         }
     }

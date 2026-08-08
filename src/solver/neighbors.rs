@@ -148,44 +148,14 @@ pub(super) fn try_rotate_neighbor<R: Random>(
     Some(base)
 }
 
-fn try_swap_place(
-    problem: &Problem,
-    pre: &Precompute,
-    old: ScheduledBlock,
-    schedule: &[ScheduledBlock],
-    bay_id: usize,
-    orient_idx: usize,
-    base_y: i64,
-    min_entry_time: i64,
-    max_entry_time: i64,
-    params: &SwapNeighborParams,
-) -> Option<ScheduledBlock> {
-    let mut scanner = PlacementXScanner::new(
-        problem,
-        pre,
-        schedule,
-        old.block_id,
-        bay_id,
-        min_entry_time,
-        max_entry_time,
-    )?;
-    let mut best: Option<(i64, i64, ScheduledBlock)> = None;
-    for dy in params.dy_range.0..=params.dy_range.1 {
-        scanner.scan_y(orient_idx, base_y + dy, |scheduled| {
-            update_best(problem, &mut best, scheduled);
-            false
-        });
-    }
-
-    Some(best?.2)
-}
-
 pub(super) fn try_swap_neighbor<R: Random>(
     problem: &Problem,
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     rng: &mut R,
     params: &SwapNeighborParams,
+    insert_params: &InsertParams,
+    w2: f64,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.len() < 2 {
         return None;
@@ -193,51 +163,68 @@ pub(super) fn try_swap_neighbor<R: Random>(
 
     let a_idx = rng.gen_index(schedule.len());
     let a_old = schedule[a_idx];
-    let candidates: Vec<_> = pre.swap_neighbors[a_old.block_id][a_old.orient_idx]
-        .iter()
-        .filter_map(|&candidate| {
-            let b_idx = schedule
-                .iter()
-                .position(|s| s.block_id == candidate.block_id)?;
-            Some((candidate, b_idx))
-        })
-        .take(params.neighbor_top_k)
-        .collect();
-    if candidates.is_empty() {
-        return None;
-    }
-    let (candidate, b_idx) = candidates[rng.gen_index(candidates.len())];
+    let a_release_time = problem.blocks[a_old.block_id].release_time;
+    let mut candidates: Vec<_> = (0..schedule.len()).filter(|&idx| idx != a_idx).collect();
+    rng.shuffle(&mut candidates);
+    candidates.sort_by_key(|&idx| {
+        problem.blocks[schedule[idx].block_id]
+            .release_time
+            .abs_diff(a_release_time)
+    });
+    candidates.truncate(params.neighbor_top_k.min(candidates.len()));
+    let b_idx = candidates[rng.gen_index(candidates.len())];
     let b_old = schedule[b_idx];
 
     let mut cur = Vec::with_capacity(schedule.len());
-    for (idx, &s) in schedule.iter().enumerate() {
-        if idx != a_idx && idx != b_idx {
-            cur.push(s);
+    let mut loads = vec![0.0; problem.bays.len()];
+    for (idx, &scheduled) in schedule.iter().enumerate() {
+        if idx == a_idx || idx == b_idx {
+            continue;
         }
+        loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
+        cur.push(scheduled);
     }
 
-    let targets = [
-        (
-            a_old,
-            b_old.bay_id,
-            a_old.orient_idx,
-            b_old.y - candidate.dy,
-        ),
-        (
-            b_old,
-            a_old.bay_id,
-            candidate.orient_idx,
-            a_old.y + candidate.dy,
-        ),
-    ];
+    let anchor = sample_insert_anchor(rng, insert_params);
+    let a_new = insert_greedy(
+        problem,
+        pre,
+        a_old,
+        a_release_time,
+        INF,
+        &cur,
+        &loads,
+        insert_params,
+        &pre.bay_order_by_pref[a_old.block_id],
+        1,
+        1.0,
+        w2,
+        anchor,
+        true,
+        rng,
+    )?;
+    loads[a_new.bay_id] += problem.blocks[a_new.block_id].workload as f64;
+    cur.push(a_new);
 
-    for (old, bay_id, orient_idx, base_y) in targets {
-        let new = try_swap_place(
-            problem, pre, old, &cur, bay_id, orient_idx, base_y, -INF, INF, params,
-        )?;
-        cur.push(new);
-    }
-
+    let anchor = sample_insert_anchor(rng, insert_params);
+    let b_new = insert_greedy(
+        problem,
+        pre,
+        b_old,
+        problem.blocks[b_old.block_id].release_time,
+        INF,
+        &cur,
+        &loads,
+        insert_params,
+        &pre.bay_order_by_pref[b_old.block_id],
+        1,
+        1.0,
+        w2,
+        anchor,
+        false,
+        rng,
+    )?;
+    cur.push(b_new);
     Some(cur)
 }
 
