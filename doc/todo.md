@@ -1,22 +1,14 @@
 todo:
-- いくつかのreconstructを追加する
-  - 区間[x_min,x_max][0,height][0,inf]を全てremoveする
-- swap
-
-nits:
-- obj2: preserved-loadsを使う
-
-params:
 - 進捗、問題サイズに応じて近傍サイズを大きくする係数の導入
+
+tuning:
 - preoptのパラメータ調整
+- horizon-size, horizon-power
 - reconstruct
   - remove-distance-powerを大きくするのを試す
   - reconstruct-weightにそれぞれpowerをつける
 - SAの調整
-  - horizonの調整
-    - horizonの真ん中で必ずshared-bestを持ってくる
-    - horizonに含まれるblockのscore-13を用いる
-    - exchange-thresholdの調整
+  - exchange-thresholdの調整
   - worker-scale
 
 solver:
@@ -27,6 +19,7 @@ pending:
   - block-id順で出す、とすれば半分くらいは考慮できる
 - hashを荒くする
 - 上から見た高さ（exit-t）を最小化する
+- obj2: preserved-loadsを使う
 
 rejected:
 - adaptive-annealing
@@ -44,3 +37,4 @@ rejected:
 - pref/volume, limit-t/volumeの交互作用をorderに入れる
 - dtにexit-tも考慮する
 - w2を途中から考慮する
+- 直方体[x_min,x_max][0,height][0,inf]をremoveする
