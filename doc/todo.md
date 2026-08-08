@@ -4,20 +4,21 @@ todo:
 
 tuning:
 - dtにexit-tも考慮する
+- horizonの調整
+  - horizonに含まれるblockのscore-13を用いる
+- 進捗、問題サイズに応じて近傍サイズを大きくする係数の導入
 - obj2
   - reconstructはpreserved-loadsを使う
   - w2を途中から考慮する
+- remove-distance-powerを大きくするのを試す
 - preoptのパラメータ調整
 - exchange-thresholdの調整
 - neighbor-ratio
   - shift,swapを減らす
 - tardiness>0ならwtを大きく、tardiness=0ならwtは小さくする
-- reconstruct-weightのpowerをつける
+- reconstruct-weightにそれぞれpowerをつける
 - 温度の調整
   - worker-scale
-- horizonの調整
-  - horizonに含まれるblockのscore-13を用いる
-- 進捗、問題サイズに応じて近傍サイズを大きくする係数の導入
 
 solver:
 - 限界高速化

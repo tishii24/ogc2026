@@ -255,10 +255,11 @@ class StatsHandler(BaseHTTPRequestHandler):
                 ):
                     try:
                         relative_score = max(
-                            0.0, min(1.0, float(relative_rows[len(body_rows)][index]))
+                            0.5, min(1.0, float(relative_rows[len(body_rows)][index]))
                         )
+                        color_ratio = (relative_score - 0.5) / 0.5
                         styles.append(
-                            f"background-color: hsl({120.0 * relative_score:.1f} 70% 90%)"
+                            f"background-color: hsl({120.0 * color_ratio:.1f} 70% 90%)"
                         )
                     except ValueError:
                         pass
