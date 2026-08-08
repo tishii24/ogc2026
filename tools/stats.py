@@ -41,6 +41,11 @@ def parse_args() -> argparse.Namespace:
         help="Show a version/timelimit x testcase score matrix.",
     )
     parser.add_argument(
+        "--relative",
+        action="store_true",
+        help="Show per-case relative scores in the score matrix.",
+    )
+    parser.add_argument(
         "-s",
         "--suite",
         help='Only summarize cases in suite JSON. Format: {"cases": ["train/prob_1.json", ...]}',
@@ -532,12 +537,23 @@ def score_cell(row: dict[str, str] | None) -> str:
     return format_number(objective)
 
 
+def relative_score_cell(row: dict[str, str] | None, best: float | None) -> str:
+    if row is None or best is None:
+        return "-"
+    objective = parse_float(row.get("objective", ""))
+    if not parse_bool(row.get("feasible", "")) or objective is None or objective < 0:
+        return "NG"
+    relative = float(best == 0) if objective == 0 else best / objective
+    return f"{relative:.3f}"
+
+
 def build_score_matrix(
     rows: list[dict[str, str]],
     cases: list[str] | None = None,
     best_rows: list[dict[str, str]] | None = None,
     summaries: list[dict[str, Any]] | None = None,
-) -> tuple[list[str], list[list[str]]]:
+    relative: bool = False,
+) -> tuple[list[str], list[list[str]], list[list[str]]]:
     if cases is None:
         cases = sorted(
             {row.get("case", "") for row in rows if row.get("case", "")},
@@ -574,20 +590,7 @@ def build_score_matrix(
     headers = ["version", "relative_score", "tl"] + [
         case_label(case) for case in cases
     ]
-    table_rows = []
-    for version, timelimit in row_keys:
-        assert timelimit is not None
-        relative_score = relative_scores.get((version, timelimit))
-        table_rows.append(
-            [
-                version,
-                f"{relative_score:.3f}" if relative_score is not None else "-",
-                format_number(timelimit),
-            ]
-            + [score_cell(by_key.get((version, timelimit, case))) for case in cases]
-        )
-
-    best_cells = []
+    best_objectives = []
     for case in cases:
         objectives = []
         for row in (best_rows if best_rows is not None else rows):
@@ -596,9 +599,37 @@ def build_score_matrix(
             objective = parse_float(row.get("objective", ""))
             if parse_bool(row.get("feasible", "")) and objective is not None:
                 objectives.append(objective)
-        best_cells.append(format_number(min(objectives)) if objectives else "-")
-    table_rows.append(["best", "-", "-"] + best_cells)
-    return headers, table_rows
+        best_objectives.append(min(objectives) if objectives else None)
+
+    absolute_rows = []
+    relative_rows = []
+    for version, timelimit in row_keys:
+        assert timelimit is not None
+        summary_relative_score = relative_scores.get((version, timelimit))
+        prefix = [
+            version,
+            f"{summary_relative_score:.3f}" if summary_relative_score is not None else "-",
+            format_number(timelimit),
+        ]
+        case_rows = [by_key.get((version, timelimit, case)) for case in cases]
+        absolute_rows.append(prefix + [score_cell(row) for row in case_rows])
+        relative_rows.append(
+            prefix
+            + [
+                relative_score_cell(row, best)
+                for row, best in zip(case_rows, best_objectives)
+            ]
+        )
+
+    absolute_rows.append(
+        ["best", "-", "-"]
+        + [format_number(best) if best is not None else "-" for best in best_objectives]
+    )
+    relative_rows.append(
+        ["best", "-", "-"]
+        + ["1.000" if best is not None else "-" for best in best_objectives]
+    )
+    return headers, relative_rows if relative else absolute_rows, relative_rows
 
 
 def print_score_matrix(
@@ -607,7 +638,7 @@ def print_score_matrix(
     best_rows: list[dict[str, str]] | None = None,
     summaries: list[dict[str, Any]] | None = None,
 ) -> None:
-    headers, table_rows = build_score_matrix(rows, cases, best_rows, summaries)
+    headers, table_rows, _ = build_score_matrix(rows, cases, best_rows, summaries)
     print_rows(headers, table_rows)
 
 
@@ -684,13 +715,20 @@ def main() -> int:
     if args.json_output:
         output: Any = summaries
         if args.matrix:
-            headers, table_rows = build_score_matrix(
-                rows, suite_cases, best_rows, summaries
+            headers, table_rows, relative_rows = build_score_matrix(
+                rows, suite_cases, best_rows, summaries, args.relative
             )
-            output = {"headers": headers, "rows": table_rows}
+            output = {
+                "headers": headers,
+                "rows": table_rows,
+                "relative_rows": relative_rows,
+            }
         print(json.dumps(output, ensure_ascii=False))
     elif args.matrix:
-        print_score_matrix(rows, suite_cases, best_rows, summaries)
+        headers, table_rows, _ = build_score_matrix(
+            rows, suite_cases, best_rows, summaries, args.relative
+        )
+        print_rows(headers, table_rows)
     else:
         print_table(summaries)
     return 0

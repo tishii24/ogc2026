@@ -70,6 +70,7 @@ class StatsHandler(BaseHTTPRequestHandler):
         timelimit = query_value(query, "tl")
         last_versions = query_value(query, "n")
         matrix = query_value(query, "m") == "1"
+        relative = query_value(query, "relative") == "1"
         include_tune = query_value(query, "include_tune") == "1"
         all_feasible = query_value(query, "all_feasible") == "1"
         sort_by = query_value(query, "sort_by")
@@ -84,6 +85,8 @@ class StatsHandler(BaseHTTPRequestHandler):
             stats_args.extend(["--last-versions", last_versions])
         if matrix:
             stats_args.append("--matrix")
+        if relative:
+            stats_args.append("--relative")
         if include_tune:
             stats_args.append("--include-tune")
         if all_feasible:
@@ -123,6 +126,7 @@ class StatsHandler(BaseHTTPRequestHandler):
             timelimit,
             last_versions,
             matrix,
+            relative,
             include_tune,
             all_feasible,
             sort_by,
@@ -186,8 +190,16 @@ class StatsHandler(BaseHTTPRequestHandler):
     ) -> str:
         headers = [str(value) for value in matrix_data["headers"]]
         rows = [[str(value) for value in row] for row in matrix_data["rows"]]
+        relative_rows = [
+            [str(value) for value in row] for row in matrix_data["relative_rows"]
+        ]
         return StatsHandler.render_table(
-            headers, rows, matrix=True, sort_by=sort_by, sort_order=sort_order
+            headers,
+            rows,
+            matrix=True,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            relative_rows=relative_rows,
         )
 
     @staticmethod
@@ -197,6 +209,7 @@ class StatsHandler(BaseHTTPRequestHandler):
         matrix: bool,
         sort_by: str,
         sort_order: str,
+        relative_rows: list[list[str]] | None = None,
     ) -> str:
         best_row = next((row for row in rows if row and row[0] == "best"), None)
         header_html = "".join(
@@ -212,6 +225,7 @@ class StatsHandler(BaseHTTPRequestHandler):
             cells = []
             for index, value in enumerate(row):
                 classes = []
+                styles = []
                 if index:
                     classes.append("numeric")
                 if value == "NG":
@@ -233,8 +247,26 @@ class StatsHandler(BaseHTTPRequestHandler):
                     and value != "0"
                 ):
                     classes.append("ng")
+                if (
+                    matrix
+                    and relative_rows is not None
+                    and row is not best_row
+                    and index >= 3
+                ):
+                    try:
+                        relative_score = max(
+                            0.0, min(1.0, float(relative_rows[len(body_rows)][index]))
+                        )
+                        styles.append(
+                            f"background-color: hsl({120.0 * relative_score:.1f} 70% 90%)"
+                        )
+                    except ValueError:
+                        pass
                 class_attr = f' class="{" ".join(classes)}"' if classes else ""
-                cells.append(f"<td{class_attr}>{html.escape(value)}</td>")
+                style_attr = f' style="{"; ".join(styles)}"' if styles else ""
+                cells.append(
+                    f"<td{class_attr}{style_attr}>{html.escape(value)}</td>"
+                )
             body_rows.append(
                 f'<tr class="{row_class}">' + "".join(cells) + "</tr>"
             )
@@ -252,6 +284,7 @@ class StatsHandler(BaseHTTPRequestHandler):
         timelimit: str,
         last_versions: str,
         matrix: bool,
+        relative: bool,
         include_tune: bool,
         all_feasible: bool,
         sort_by: str,
@@ -261,6 +294,7 @@ class StatsHandler(BaseHTTPRequestHandler):
         returncode: int,
     ) -> str:
         matrix_checked = " checked" if matrix else ""
+        relative_checked = " checked" if relative else ""
         tune_checked = " checked" if include_tune else ""
         feasible_checked = " checked" if all_feasible else ""
         status_class = "error" if returncode else ""
@@ -336,6 +370,7 @@ pre {{ margin: 0; padding: 12px; border: 1px solid #fecaca; border-radius: 8px; 
 </select>
 </label>
 <label class="checkbox"><input type="checkbox" name="m" value="1"{matrix_checked}>matrix (-m)</label>
+<label class="checkbox"><input type="checkbox" name="relative" value="1"{relative_checked}>relative case scores</label>
 <label class="checkbox"><input type="checkbox" name="include_tune" value="1"{tune_checked}>include tune</label>
 <label class="checkbox"><input type="checkbox" name="all_feasible" value="1"{feasible_checked}>all feasible</label>
 <button type="submit">表示</button>
