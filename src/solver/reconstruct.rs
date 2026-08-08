@@ -367,9 +367,8 @@ fn choose_local_proximity_seeds<R: Random>(
         seed_pool.sort_by_key(|&block_id| {
             let candidate = by_block[block_id].unwrap();
             (
-                candidate.entry_time.abs_diff(base.entry_time)
-                    + candidate.exit_time.abs_diff(base.exit_time),
-                candidate.bay_id != base.bay_id,
+                candidate.entry_time.abs_diff(base.entry_time),
+                candidate.bay_id == base.bay_id,
             )
         });
         seed_pool.truncate(
@@ -420,14 +419,11 @@ fn collect_removed_blocks<R: Random>(
                 let (x, y) = scheduled_center(pre, candidate);
                 let dx = x - sx;
                 let dy = y - sy;
-                let entry_dt = (candidate.entry_time as f64 - st).abs();
-                let exit_dt = (candidate.exit_time as f64 - scheduled.exit_time as f64).abs();
-                let dt_cost = 0.5
-                    * (entry_dt.powf(remove_distance_power) + exit_dt.powf(remove_distance_power));
+                let dt = candidate.entry_time as f64 - st;
                 (
                     remove_x_distance_weight * dx.abs().powf(remove_distance_power)
                         + remove_y_distance_weight * dy.abs().powf(remove_distance_power)
-                        + remove_t_distance_weight * dt_cost,
+                        + remove_t_distance_weight * dt.abs().powf(remove_distance_power),
                     candidate.block_id,
                 )
             })
