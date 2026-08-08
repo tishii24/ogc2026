@@ -1,5 +1,5 @@
 todo:
-- swapを強化
+- swap
 
 nits:
 - obj2: preserved-loadsを使う

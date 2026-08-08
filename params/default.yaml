@@ -81,7 +81,7 @@ neighbor:
     shift: 3.0
     move: 0.1
     rotate: 0.5
-    swap: 0.1
+    swap: 3.0
   reconstruct:
     remove_count:
       type: lower

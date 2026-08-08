@@ -210,15 +210,9 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
                 rng,
                 &params.rotate,
             ),
-            NeighborKind::Swap => try_swap_neighbor(
-                self.problem,
-                self.pre,
-                &current.schedule,
-                rng,
-                &params.swap,
-                self.insert_params,
-                self.w2,
-            ),
+            NeighborKind::Swap => {
+                try_swap_neighbor(self.problem, self.pre, &current.schedule, rng, &params.swap)
+            }
         };
         AnnealingAttempt {
             neighbor_kind: neighbor.index(),

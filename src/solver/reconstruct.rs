@@ -12,6 +12,8 @@ use super::{
     precompute::Precompute,
 };
 
+const PREFER_FAR_RECONSTRUCT_PROBABILITY: f64 = 0.5;
+
 #[derive(Clone, Copy)]
 enum RemoveSeedMethod {
     Badness,
@@ -167,8 +169,8 @@ pub(super) fn try_large_reconstruct<R: Random>(
         weighted_z1_z3: mut fixed_score13,
     } = build_reconstruct_base(problem, pre, schedule, &removed_ids);
     let anchor = sample_insert_anchor(rng, insert_params);
-    let prefer_far_reconstruct = rng.next_f64() < 0.0;
-    let prefer_far_count = (removed_ids.len() as f64 * 0.2).ceil() as usize;
+    let prefer_far_reconstruct = rng.next_f64() < PREFER_FAR_RECONSTRUCT_PROBABILITY;
+    let prefer_far_count = removed_ids.len().div_ceil(2);
 
     for (index, &block_id) in removed_ids.iter().enumerate() {
         if fixed_score13 > accept_threshold + 1e-9 {
