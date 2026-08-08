@@ -104,10 +104,8 @@ neighbor:
     volume_weight_range: [0.5, 2.0]
     pref_spread_weight_range: [0.0, 0.3]
     limit_time_urgency_weight_range: [0.5, 2.0]
-    release_time_weight_range: [0.0, 0.0]
     current_penalty_weight_range: [0.0, 2.0]
     order_random_weight_range: [0.0, 0.3]
-    workload_weight_range: [0.0, 0.0]
     slack_tightness_weight_range: [0.0, 0.3]
     insert_candidate_top_k: 4
     insert_candidate_select_p: 0.7

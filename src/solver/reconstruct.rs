@@ -27,23 +27,18 @@ struct RemoveSeed {
 
 #[derive(Clone, Copy)]
 pub(super) struct BlockOrderWeights {
-    workload: f64,
     volume: f64,
     pref_spread: f64,
     limit_time_urgency: f64,
-    release_time: f64,
     slack_tightness: f64,
     random: f64,
 }
 
 struct BlockOrderContext {
-    max_workload: f64,
     max_volume: f64,
     max_pref_spread: f64,
     max_limit_time: i64,
     limit_time_span: f64,
-    min_release_time: i64,
-    release_time_span: f64,
     max_slack: i64,
     slack_span: f64,
 }
@@ -53,10 +48,6 @@ pub(super) fn sample_reconstruct_order_weights(
     params: &ReconstructNeighborParams,
 ) -> BlockOrderWeights {
     BlockOrderWeights {
-        workload: rng.gen_range_f64(
-            params.workload_weight_range.0,
-            params.workload_weight_range.1,
-        ),
         volume: rng.gen_range_f64(params.volume_weight_range.0, params.volume_weight_range.1),
         pref_spread: rng.gen_range_f64(
             params.pref_spread_weight_range.0,
@@ -65,10 +56,6 @@ pub(super) fn sample_reconstruct_order_weights(
         limit_time_urgency: rng.gen_range_f64(
             params.limit_time_urgency_weight_range.0,
             params.limit_time_urgency_weight_range.1,
-        ),
-        release_time: rng.gen_range_f64(
-            params.release_time_weight_range.0,
-            params.release_time_weight_range.1,
         ),
         slack_tightness: rng.gen_range_f64(
             params.slack_tightness_weight_range.0,
@@ -523,11 +510,6 @@ fn build_block_order_context(
     pref_spread: &[i64],
     order: &[usize],
 ) -> BlockOrderContext {
-    let max_workload = order
-        .iter()
-        .map(|&block_id| problem.blocks[block_id].workload as f64)
-        .fold(0.0, f64::max)
-        .max(1.0);
     let max_volume = order
         .iter()
         .map(|&block_id| block_volume(problem, block_areas, block_id))
@@ -548,16 +530,6 @@ fn build_block_order_context(
         .map(|&block_id| block_limit_time(problem, block_id))
         .max()
         .unwrap_or(min_limit_time);
-    let min_release_time = order
-        .iter()
-        .map(|&block_id| problem.blocks[block_id].release_time)
-        .min()
-        .unwrap_or(0);
-    let max_release_time = order
-        .iter()
-        .map(|&block_id| problem.blocks[block_id].release_time)
-        .max()
-        .unwrap_or(min_release_time);
     let min_slack = order
         .iter()
         .map(|&block_id| block_slack(problem, block_id))
@@ -570,13 +542,10 @@ fn build_block_order_context(
         .unwrap_or(min_slack);
 
     BlockOrderContext {
-        max_workload,
         max_volume,
         max_pref_spread,
         max_limit_time,
         limit_time_span: (max_limit_time - min_limit_time).max(1) as f64,
-        min_release_time,
-        release_time_span: (max_release_time - min_release_time).max(1) as f64,
         max_slack,
         slack_span: (max_slack - min_slack).max(1) as f64,
     }
@@ -593,23 +562,18 @@ fn block_order_score(
     max_current_penalty: f64,
     block_id: usize,
 ) -> f64 {
-    let block = &problem.blocks[block_id];
-    let workload_norm = block.workload as f64 / ctx.max_workload;
     let volume_norm = block_volume(problem, block_areas, block_id) / ctx.max_volume;
     let pref_spread_norm = pref_spread[block_id] as f64 / ctx.max_pref_spread;
     let limit_time_urgency =
         (ctx.max_limit_time - block_limit_time(problem, block_id)) as f64 / ctx.limit_time_span;
-    let release_time = (block.release_time - ctx.min_release_time) as f64 / ctx.release_time_span;
     let slack_tightness = (ctx.max_slack - block_slack(problem, block_id)) as f64 / ctx.slack_span;
     let current_penalty = current_penalties
         .map(|penalties| penalties[block_id] / max_current_penalty)
         .unwrap_or(0.0);
 
-    weights.workload * workload_norm
-        + weights.volume * volume_norm
+    weights.volume * volume_norm
         + weights.pref_spread * pref_spread_norm
         + weights.limit_time_urgency * limit_time_urgency
-        + weights.release_time * release_time
         + weights.slack_tightness * slack_tightness
         + current_penalty_weight * current_penalty
 }
