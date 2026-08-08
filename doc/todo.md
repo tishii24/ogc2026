@@ -1,23 +1,23 @@
 todo:
-- bayから一つだけremoveして、そのbayにだけinsertする
-- horizonの真ん中でshared-bestを持ってくる
+- いくつかのreconstructを追加する
+  - 区間[x_min,x_max][0,height][0,inf]を全てremoveする
+- swap
 
-tuning:
-- dtにexit-tも考慮する
-- horizonの調整
-  - horizonに含まれるblockのscore-13を用いる
+nits:
+- obj2: preserved-loadsを使う
+
+params:
 - 進捗、問題サイズに応じて近傍サイズを大きくする係数の導入
-- obj2
-  - reconstructはpreserved-loadsを使う
-  - w2を途中から考慮する
-- remove-distance-powerを大きくするのを試す
 - preoptのパラメータ調整
-- exchange-thresholdの調整
-- neighbor-ratio
-  - shift,swapを減らす
-- tardiness>0ならwtを大きく、tardiness=0ならwtは小さくする
-- reconstruct-weightにそれぞれpowerをつける
-- 温度の調整
+- reconstruct
+  - remove-distance-powerを大きくするのを試す
+  - reconstruct-weightにそれぞれpowerをつける
+- neighbor-ratio: shift,swapを減らす
+- SAの調整
+  - horizonの調整
+    - horizonの真ん中で必ずshared-bestを持ってくる
+    - horizonに含まれるblockのscore-13を用いる
+    - exchange-thresholdの調整
   - worker-scale
 
 solver:
@@ -43,3 +43,5 @@ rejected:
 - reconstructでanchorをreconstructごとに固定する
 - 取り出す時刻を変えてABBA <->　ABABを入れ替える
 - pref/volume, limit-t/volumeの交互作用をorderに入れる
+- dtにexit-tも考慮する
+- w2を途中から考慮する
