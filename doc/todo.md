@@ -12,6 +12,7 @@ tuning:
   - pref-spread-weightを増やす
 - SA
   - exchange-threshold, exchange-interval
+    - 序盤はexchangeせず、exchange-thresholdを下げる
 
 solver:
 - 限界高速化
