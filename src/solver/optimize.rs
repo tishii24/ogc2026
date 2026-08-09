@@ -13,10 +13,7 @@ use crate::{
 
 use super::{
     PreoptimizeState,
-    annealing::{
-        Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingIsland, AnnealingResult,
-        AnnealingState,
-    },
+    annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingResult, AnnealingState},
     insert::{insert_greedy, sample_insert_anchor},
     neighbors::{
         NeighborKind, sample_neighbor, try_move_neighbor, try_rotate_neighbor, try_shift_neighbor,
@@ -90,6 +87,7 @@ impl<'a> OptimizeAnnealing<'a> {
         max_worker_count: usize,
     ) -> AnnealingResult<OptimizeState, OptimizeState> {
         let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
+        assert_eq!(initial_states.len(), worker_count);
         let initial = initial_states
             .iter()
             .min_by(|a, b| a.objective.total_cmp(&b.objective))
@@ -108,12 +106,8 @@ impl<'a> OptimizeAnnealing<'a> {
             timer: self.timer,
             candidate_emitter,
         };
-        let islands = initial_states
-            .into_iter()
-            .map(|state| AnnealingIsland { seeds: vec![state] })
-            .collect();
         Annealer::new(deadline, worker_count, seed, annealing_params, delegate)
-            .run(islands, self.timer)
+            .run(initial_states, self.timer)
     }
 }
 
@@ -393,38 +387,12 @@ pub(super) fn optimize(
     let horizons = build_horizons(&order, phase_params.base_horizon_size);
     let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
     let initial = make_optimize_state(problem, pre, Vec::new(), 0.0);
-    let mut states = vec![initial.clone(); phase_params.initial_state_count];
+    let mut worker_states = vec![initial.clone(); worker_count];
     let mut best_state = initial;
     let annealer = OptimizeAnnealing::new(problem, pre, timer);
-    let state_count_at = |horizon_index: usize| {
-        let reduction_count =
-            phase_params.initial_state_count.ilog2() - phase_params.final_state_count.ilog2();
-        let applied_reductions = if horizons.len() <= 1 {
-            reduction_count
-        } else {
-            (horizon_index * reduction_count as usize / (horizons.len() - 1)) as u32
-        };
-        phase_params.initial_state_count >> applied_reductions
-    };
 
     for (horizon_index, horizon) in horizons.iter().enumerate() {
         let is_last = horizon_index + 1 == horizons.len();
-        let state_count = state_count_at(horizon_index);
-        states.sort_by(|a, b| a.objective.total_cmp(&b.objective));
-        log!(
-            "[{:.4}] [horizon] select: horizon={}/{}, candidates={}, keep={}, scores=[{}]",
-            timer.elapsed_seconds(),
-            horizon_index + 1,
-            horizons.len(),
-            states.len(),
-            state_count,
-            states
-                .iter()
-                .map(|state| format!("{:.3}", state.objective))
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
-        states.truncate(state_count);
         let horizon_progress = horizon.end as f64 / order.len() as f64;
         let w2 = horizon_w2(
             problem.weights.w2,
@@ -435,136 +403,62 @@ pub(super) fn optimize(
         let now = timer.elapsed_seconds();
         let remaining_weight: f64 = horizons[horizon_index..]
             .iter()
-            .enumerate()
-            .map(|(offset, remaining)| {
-                let remaining_state_count = state_count_at(horizon_index + offset);
-                let states_per_worker = remaining_state_count.div_ceil(worker_count);
-                (remaining.end as f64).powf(phase_params.time_allocation_power)
-                    * states_per_worker as f64
-            })
+            .map(|remaining| (remaining.end as f64).powf(phase_params.time_allocation_power))
             .sum();
-        let states_per_worker = state_count.div_ceil(worker_count);
-        let current_weight = (horizon.end as f64).powf(phase_params.time_allocation_power)
-            * states_per_worker as f64;
-        let remaining_seconds = (deadline - now).max(0.0);
-        let time_plan = horizons[horizon_index..]
-            .iter()
-            .enumerate()
-            .map(|(offset, remaining)| {
-                let index = horizon_index + offset;
-                let planned_state_count = state_count_at(index);
-                let planned_states_per_worker = planned_state_count.div_ceil(worker_count);
-                let weight = (remaining.end as f64).powf(phase_params.time_allocation_power)
-                    * planned_states_per_worker as f64;
-                format!(
-                    "h{}:blocks={},states={},states_per_worker={},weight={:.3},seconds={:.3}",
-                    index + 1,
-                    remaining.end,
-                    planned_state_count,
-                    planned_states_per_worker,
-                    weight,
-                    remaining_seconds * weight / remaining_weight,
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
-        log!(
-            "[{now:.4}] [horizon] time plan: remaining={remaining_seconds:.3}, plans=[{time_plan}]"
-        );
-        let horizon_deadline = now + remaining_seconds * current_weight / remaining_weight;
+        let current_weight = (horizon.end as f64).powf(phase_params.time_allocation_power);
+        let horizon_deadline = now + (deadline - now).max(0.0) * current_weight / remaining_weight;
         if is_last {
             candidate_emitter.configure(horizon_deadline - now, timer);
         }
         let expand_duration = ((horizon_deadline - now) * phase_params.expand_time_ratio)
             .min(phase_params.max_expand_seconds);
         let horizon_seed = seed.wrapping_add(((horizon_index + 1) as u64) << 32);
-        let expand_start = timer.elapsed_seconds();
-        let mut assignments: Vec<Vec<(usize, OptimizeState)>> =
-            (0..worker_count).map(|_| Vec::new()).collect();
-        for (state_id, state) in states.into_iter().enumerate() {
-            assignments[state_id % worker_count].push((state_id, state));
-        }
-        let extended_groups: Vec<_> = assignments
+        worker_states = worker_states
             .into_par_iter()
             .enumerate()
-            .map(|(worker_id, assigned)| {
-                let assigned_count = assigned.len();
+            .map(|(worker_id, state)| {
                 let mut rng = RandPcg64Mcg::new(horizon_seed.wrapping_add(worker_id as u64));
-                assigned
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, (state_id, state))| {
-                        let state_deadline =
-                            now + expand_duration * (index + 1) as f64 / assigned_count as f64;
-                        let state = extend_schedule(
-                            problem,
-                            pre,
-                            preopt,
-                            state,
-                            &order[horizon.clone()],
-                            insert_params,
-                            &neighbor_params.reconstruct,
-                            w2,
-                            timer,
-                            state_deadline,
-                            &mut rng,
-                        );
-                        (state_id, state)
-                    })
-                    .collect::<Vec<_>>()
+                extend_schedule(
+                    problem,
+                    pre,
+                    preopt,
+                    state,
+                    &order[horizon.clone()],
+                    insert_params,
+                    &neighbor_params.reconstruct,
+                    w2,
+                    timer,
+                    now + expand_duration,
+                    &mut rng,
+                )
             })
             .collect();
-        let mut extended_states: Vec<_> = extended_groups.into_iter().flatten().collect();
-        extended_states.sort_by_key(|(state_id, _)| *state_id);
-        states = extended_states
-            .into_iter()
-            .map(|(_, state)| state)
-            .collect();
-        best_state = states
+        best_state = worker_states
             .iter()
             .min_by(|a, b| a.objective.total_cmp(&b.objective))
             .unwrap()
             .clone();
-        let expanded_at = timer.elapsed_seconds();
         log!(
-            "[{expanded_at:.4}] [horizon] expanded: horizon={}/{}, blocks={}, states={}, elapsed={:.3}, w2={:.3}, scores=[{}]",
+            "[{:.4}] [optimize] horizon={}/{}, blocks={}, initial={:.3}, w2={:.3}",
+            timer.elapsed_seconds(),
             horizon_index + 1,
             horizons.len(),
             horizon.end,
-            states.len(),
-            expanded_at - expand_start,
+            best_state.objective,
             w2,
-            states
-                .iter()
-                .map(|state| format!("{:.3}", state.objective))
-                .collect::<Vec<_>>()
-                .join(", "),
         );
 
         if is_last {
             candidate_emitter.emit(&best_state, timer, true);
         }
         if best_state.objective <= EPS {
-            log!(
-                "[{:.4}] [horizon] annealing skipped: horizon={}/{}, reason=objective reached zero",
-                timer.elapsed_seconds(),
-                horizon_index + 1,
-                horizons.len(),
-            );
             continue;
         }
         if timer.elapsed_seconds() >= horizon_deadline {
-            log!(
-                "[{:.4}] [horizon] annealing skipped: horizon={}/{}, reason=deadline reached",
-                timer.elapsed_seconds(),
-                horizon_index + 1,
-                horizons.len(),
-            );
             continue;
         }
-        let annealing_start = timer.elapsed_seconds();
         let result = annealer.run(
-            states,
+            worker_states,
             horizon_deadline,
             annealing_params,
             neighbor_params,
@@ -575,19 +469,7 @@ pub(super) fn optimize(
             max_worker_count,
         );
         best_state = result.best;
-        states = result.island_bests;
-        let annealing_finished_at = timer.elapsed_seconds();
-        log!(
-            "[{annealing_finished_at:.4}] [horizon] finished: horizon={}/{}, elapsed={:.3}, scores=[{}]",
-            horizon_index + 1,
-            horizons.len(),
-            annealing_finished_at - annealing_start,
-            states
-                .iter()
-                .map(|state| format!("{:.3}", state.objective))
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
+        worker_states = result.worker_bests;
     }
 
     make_optimize_state(problem, pre, best_state.schedule, problem.weights.w2)
