@@ -899,8 +899,14 @@ pub fn preoptimize(
     let bay_capacities = problem
         .bays
         .iter()
-        .map(|bay| {
-            (bay.width as f64 - params.bay_padding) * (bay.height as f64 - params.bay_padding)
+        .enumerate()
+        .map(|(bay_id, bay)| {
+            let padded_capacity =
+                (bay.width as f64 - params.bay_padding) * (bay.height as f64 - params.bay_padding);
+            occupancy
+                .iter()
+                .filter_map(|areas| areas[bay_id])
+                .fold(padded_capacity, f64::max)
         })
         .collect();
     let block_areas = occupancy

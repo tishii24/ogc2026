@@ -162,7 +162,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
         let old = original_by_id[block_id]?;
         let block = &problem.blocks[block_id];
         let max_tardiness =
-            ((accept_threshold - fixed_score13) / problem.weights.w1).floor() as i64;
+            ((accept_threshold - fixed_score13) / problem.weights.w1.max(1e-4)).floor() as i64;
         let max_entry_time = block
             .due_date
             .saturating_add(max_tardiness)

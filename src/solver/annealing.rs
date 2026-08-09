@@ -76,7 +76,7 @@ struct TemperatureRegime {
 
 impl TemperatureRegime {
     fn current(&self, progress: f64) -> f64 {
-        self.range.0 * (self.range.1 / self.range.0).powf(progress)
+        self.range.0 * (self.range.1 / self.range.0.max(1e-9)).powf(progress)
     }
 }
 
