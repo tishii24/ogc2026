@@ -1,10 +1,7 @@
 todo:
+- successive halving
 - 進捗、密度に応じて近傍サイズを大きくする係数の導入
-- 分散が大きいケースをなんとかする
-  - beam-search?
-
-nits:
-- worker-scale,tabuを削除
+- opusのレビュー
 
 tuning:
 - horizon-size, horizon-power
