@@ -93,16 +93,6 @@ pub(crate) fn insert_greedy<R: Random>(
         score_z2(loads, &pre.bay_load_scale)
     };
     let original_tardiness = (original.exit_time - block.due_date).max(0);
-    let original_delta_obj2 = if w2 == 0.0 {
-        0.0
-    } else {
-        let mut original_loads = loads.to_vec();
-        original_loads[original.bay_id] += block.workload as f64;
-        w2 * (score_z2(&original_loads, &pre.bay_load_scale) - current_obj2)
-    };
-    let original_score_delta = problem.weights.w1 * original_tardiness as f64
-        + original_delta_obj2
-        + problem.weights.w3 * pre.pref_penalty[block_id][original.bay_id] as f64;
     let mut candidates = Vec::new();
     let mut best_score_delta = f64::INFINITY;
 
@@ -166,12 +156,6 @@ pub(crate) fn insert_greedy<R: Random>(
                     }
                     tardiness <= original_tardiness
                 });
-
-                if let Some(candidate) = &group_best
-                    && candidate.score_delta + 1e-9 < original_score_delta
-                {
-                    return Some(candidate.scheduled);
-                }
 
                 match &mut remaining_y_buffer {
                     None if valid_y => remaining_y_buffer = Some(params.y_buffer),
