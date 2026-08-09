@@ -57,6 +57,8 @@ pub struct LimitedPhaseParams {
 #[serde(deny_unknown_fields)]
 pub struct OptimizePhaseParams {
     pub base_horizon_size: usize,
+    pub initial_state_count: usize,
+    pub final_state_count: usize,
     pub time_allocation_power: f64,
     pub horizon_w2_power: Option<f64>,
     pub expand_time_ratio: f64,

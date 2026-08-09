@@ -5,7 +5,9 @@ use crate::{
     params::{AnnealingParamsConfig, PreoptimizeSolverParams, ReconstructNeighborParams},
     solver::{
         PreoptimizeState, PreoptimizedBlock,
-        annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingState},
+        annealing::{
+            Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingIsland, AnnealingState,
+        },
         objective::score_z2,
         precompute::{
             build_bay_load_scale, build_pref_penalty, build_pref_spread, orientation_bounds,
@@ -939,7 +941,12 @@ pub fn preoptimize(
     let delegate = PreoptimizeAnnealingDelegate { problem, context };
     Ok(
         Annealer::new(time_limit, worker_count, seed, annealing_params, delegate)
-            .run(initial_states, timer)
+            .run(
+                vec![AnnealingIsland {
+                    seeds: initial_states,
+                }],
+                timer,
+            )
             .best,
     )
 }

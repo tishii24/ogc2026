@@ -232,9 +232,13 @@ fn format_neighbor_stats(stats: &[NeighborStats], kinds: &[&str]) -> String {
         .join("\n")
 }
 
+pub(crate) struct AnnealingIsland<S> {
+    pub(crate) seeds: Vec<S>,
+}
+
 pub(crate) struct AnnealingResult<S, O> {
     pub(crate) best: O,
-    pub(crate) worker_bests: Vec<S>,
+    pub(crate) island_bests: Vec<S>,
 }
 
 pub(crate) struct WorkerSummary {
@@ -286,14 +290,22 @@ pub(crate) trait AnnealingDelegate: Sync {
 
 struct WorkerState<S> {
     current: S,
-    personal_best: S,
     local_best_score: f64,
     last_imported_revision: Option<u64>,
 }
 
-struct WorkerResult<S> {
+struct WorkerSeed<S> {
+    island_id: usize,
+    state: S,
+}
+
+struct AssignedState<S> {
+    island_id: usize,
+    local: WorkerState<S>,
+}
+
+struct WorkerResult {
     summary: WorkerSummary,
-    personal_best: S,
 }
 
 fn apply_shared_best<S: AnnealingState>(local: &mut WorkerState<S>, best: S, revision: u64) {
@@ -328,28 +340,68 @@ impl<D: AnnealingDelegate> Annealer<D> {
 
     pub(crate) fn run(
         self,
-        initial_states: Vec<D::State>,
+        islands: Vec<AnnealingIsland<D::State>>,
         timer: Timer,
     ) -> AnnealingResult<D::State, D::Output> {
-        assert_eq!(initial_states.len(), self.worker_count);
+        assert!(!islands.is_empty());
+        assert!(islands.iter().all(|island| !island.seeds.is_empty()));
         assert!(self.worker_count > 0);
         assert!(self.params.exchange_interval > 0);
 
-        let initial_best = initial_states
+        let island_initial_bests: Vec<_> = islands
+            .iter()
+            .map(|island| {
+                island
+                    .seeds
+                    .iter()
+                    .min_by(|a, b| a.annealing_score().total_cmp(&b.annealing_score()))
+                    .unwrap()
+                    .clone()
+            })
+            .collect();
+        let shared: Vec<_> = island_initial_bests
+            .iter()
+            .cloned()
+            .map(SharedBest::new)
+            .collect();
+        let initial_best = island_initial_bests
+            .iter()
+            .min_by(|a, b| a.annealing_score().total_cmp(&b.annealing_score()))
+            .unwrap();
+        let stop = AtomicBool::new(self.delegate.should_stop(initial_best));
+        let mut seeds: Vec<_> = islands
+            .into_iter()
+            .enumerate()
+            .flat_map(|(island_id, island)| {
+                island
+                    .seeds
+                    .into_iter()
+                    .map(move |state| WorkerSeed { island_id, state })
+            })
+            .collect();
+        while seeds.len() < self.worker_count {
+            let island_id = seeds.len() % island_initial_bests.len();
+            seeds.push(WorkerSeed {
+                island_id,
+                state: island_initial_bests[island_id].clone(),
+            });
+        }
+        let mut assignments: Vec<Vec<WorkerSeed<D::State>>> =
+            (0..self.worker_count).map(|_| Vec::new()).collect();
+        for (index, seed) in seeds.into_iter().enumerate() {
+            assignments[index % self.worker_count].push(seed);
+        }
+        let worker_results: Vec<_> = assignments
+            .into_par_iter()
+            .enumerate()
+            .map(|(worker_id, seeds)| self.run_worker(&shared, &stop, timer, worker_id, seeds))
+            .collect();
+        let island_bests: Vec<_> = shared.into_iter().map(SharedBest::into_inner).collect();
+        let state = island_bests
             .iter()
             .min_by(|a, b| a.annealing_score().total_cmp(&b.annealing_score()))
             .unwrap()
             .clone();
-        let shared = SharedBest::new(initial_best.clone());
-        let stop = AtomicBool::new(self.delegate.should_stop(&initial_best));
-        let worker_results: Vec<_> = initial_states
-            .into_par_iter()
-            .enumerate()
-            .map(|(worker_id, initial_state)| {
-                self.run_worker(&initial_state, &shared, &stop, timer, worker_id)
-            })
-            .collect();
-        let state = shared.into_inner();
         for worker in &worker_results {
             let summary = &worker.summary;
             log!(
@@ -378,28 +430,32 @@ impl<D: AnnealingDelegate> Annealer<D> {
         );
         AnnealingResult {
             best: self.delegate.finish(state),
-            worker_bests: worker_results
-                .into_iter()
-                .map(|worker| worker.personal_best)
-                .collect(),
+            island_bests,
         }
     }
 
     fn run_worker(
         &self,
-        initial_state: &D::State,
-        shared: &SharedBest<D::State>,
+        shared: &[SharedBest<D::State>],
         stop: &AtomicBool,
         timer: Timer,
         worker_id: usize,
-    ) -> WorkerResult<D::State> {
-        let score = initial_state.annealing_score();
-        let mut local = WorkerState {
-            current: initial_state.clone(),
-            personal_best: initial_state.clone(),
-            local_best_score: score,
-            last_imported_revision: None,
-        };
+        seeds: Vec<WorkerSeed<D::State>>,
+    ) -> WorkerResult {
+        let mut assigned_states: Vec<_> = seeds
+            .into_iter()
+            .map(|seed| {
+                let score = seed.state.annealing_score();
+                AssignedState {
+                    island_id: seed.island_id,
+                    local: WorkerState {
+                        current: seed.state,
+                        local_best_score: score,
+                        last_imported_revision: None,
+                    },
+                }
+            })
+            .collect();
         let temperature = AnnealingTemperature::new(timer, self.deadline, &self.params);
         let positive_tardiness_temperature = temperature.positive_tardiness.range;
         let zero_tardiness_temperature = temperature.zero_tardiness.range;
@@ -410,7 +466,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
         #[cfg(feature = "anneal-visualizer")]
         let mut visualizer = self
             .delegate
-            .visualizer_schedule(&local.current)
+            .visualizer_schedule(&assigned_states[0].local.current)
             .and_then(|_| AnnealVisualizer::new(self.delegate.name(), worker_id));
 
         let mut accepted = 0usize;
@@ -429,8 +485,12 @@ impl<D: AnnealingDelegate> Annealer<D> {
             let Some(elapsed) = context.next(timer) else {
                 break;
             };
+            let assigned_index = (context.iterations() - 1) % assigned_states.len();
+            let assigned = &mut assigned_states[assigned_index];
+            let local = &mut assigned.local;
+            let shared = &shared[assigned.island_id];
             if context.should_exchange(self.params.exchange_interval)
-                && self.exchange_shared(&mut local, shared)
+                && self.exchange_shared(local, shared)
             {
                 best_imports += 1;
             }
@@ -516,7 +576,6 @@ impl<D: AnnealingDelegate> Annealer<D> {
             stats.accepted += 1;
 
             if improved_best {
-                local.personal_best.clone_from(&local.current);
                 local.local_best_score = candidate_score;
                 improved += 1;
                 log!(
@@ -546,6 +605,16 @@ impl<D: AnnealingDelegate> Annealer<D> {
             stats.time_sec += neighbor_start.elapsed().as_secs_f64();
         }
 
+        let current_score = assigned_states
+            .iter()
+            .map(|assigned| assigned.local.current.annealing_score())
+            .min_by(f64::total_cmp)
+            .unwrap();
+        let local_best_score = assigned_states
+            .iter()
+            .map(|assigned| assigned.local.local_best_score)
+            .min_by(f64::total_cmp)
+            .unwrap();
         WorkerResult {
             summary: WorkerSummary {
                 worker_id,
@@ -555,11 +624,10 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 best_imports,
                 positive_tardiness_temperature,
                 zero_tardiness_temperature,
-                current_score: local.current.annealing_score(),
-                local_best_score: local.local_best_score,
+                current_score,
+                local_best_score,
                 neighbor_stats,
             },
-            personal_best: local.personal_best,
         }
     }
 
