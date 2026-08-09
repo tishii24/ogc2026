@@ -1,6 +1,3 @@
-#[cfg(feature = "profile-reconstruct")]
-use std::time::{Duration, Instant};
-
 use crate::{INF, Problem, ScheduledBlock};
 
 use super::{
@@ -9,33 +6,6 @@ use super::{
 };
 
 pub(super) type Interval = (i64, i64);
-
-#[cfg(feature = "profile-reconstruct")]
-#[derive(Default)]
-pub(super) struct PlacementScanProfile {
-    pub(super) orientation_cache: Duration,
-    pub(super) reset: Duration,
-    pub(super) event_build: Duration,
-    pub(super) event_sort: Duration,
-    pub(super) x_sweep: Duration,
-    pub(super) feasible_time: Duration,
-    pub(super) calls: u64,
-    pub(super) old_blocks: u64,
-    pub(super) active_time_infos: u64,
-    pub(super) crane_pairs: u64,
-    pub(super) dx_intervals: u64,
-    pub(super) events: u64,
-    pub(super) buckets: u64,
-    pub(super) x_groups: u64,
-    pub(super) touched_old_ids: u64,
-    pub(super) feasible_calls: u64,
-    pub(super) interval_visits: u64,
-    pub(super) scans_with_candidate: u64,
-    pub(super) scans_without_candidate: u64,
-    pub(super) first_candidate_group_sum: u64,
-    pub(super) first_candidate_group_max: u64,
-    pub(super) first_candidate_group_histogram: [u64; 32],
-}
 
 #[derive(Clone, Copy)]
 struct XEvent {
@@ -195,7 +165,6 @@ impl ForbiddenIntervals<'_> {
         base: &[Interval],
         min_t: i64,
         max_t: i64,
-        #[cfg(feature = "profile-reconstruct")] interval_visits: &mut u64,
     ) -> Option<i64> {
         let mut t = min_t;
         let mut base_pos = base.partition_point(|&(_, right)| right < t);
@@ -225,10 +194,6 @@ impl ForbiddenIntervals<'_> {
                 (None, None) => return (t <= max_t).then_some(t),
             };
 
-            #[cfg(feature = "profile-reconstruct")]
-            {
-                *interval_visits += 1;
-            }
             let (left, right) = next;
             if right < t {
                 continue;
@@ -322,78 +287,26 @@ impl<'a> PlacementXScanner<'a> {
         orient_idx: usize,
         y: i64,
         mut on_candidate: impl FnMut(ScheduledBlock) -> bool,
-        #[cfg(feature = "profile-reconstruct")] mut profile: Option<&mut PlacementScanProfile>,
     ) -> bool {
         let block_id = self.block_id;
         let bay_id = self.bay_id;
         let process_t = self.process_t;
         let min_t = self.min_t;
         let max_t = self.max_t;
-        #[cfg(feature = "profile-reconstruct")]
-        let mut feasible_time = Duration::ZERO;
-        #[cfg(feature = "profile-reconstruct")]
-        let mut feasible_calls = 0u64;
-        #[cfg(feature = "profile-reconstruct")]
-        let mut interval_visits = 0u64;
-        #[cfg(feature = "profile-reconstruct")]
-        let mut first_candidate_group = None;
-        let accepted = self.scan_y_ranges(
-            orient_idx,
-            y,
-            -INF,
-            INF,
-            #[cfg(feature = "profile-reconstruct")]
-            profile.as_deref_mut(),
-            |x, forbidden| {
-                #[cfg(feature = "profile-reconstruct")]
-                let feasible_start = Instant::now();
-                let entry_time = forbidden.first_feasible_time(
-                    &[],
-                    min_t,
-                    max_t,
-                    #[cfg(feature = "profile-reconstruct")]
-                    &mut interval_visits,
-                );
-                #[cfg(feature = "profile-reconstruct")]
-                {
-                    feasible_time += feasible_start.elapsed();
-                    feasible_calls += 1;
-                }
-                let Some(entry_time) = entry_time else {
-                    return false;
-                };
-                #[cfg(feature = "profile-reconstruct")]
-                if first_candidate_group.is_none() {
-                    first_candidate_group = Some(feasible_calls);
-                }
-                on_candidate(ScheduledBlock {
-                    block_id,
-                    bay_id,
-                    orient_idx,
-                    x,
-                    y,
-                    entry_time,
-                    exit_time: entry_time + process_t,
-                })
-            },
-        );
-        #[cfg(feature = "profile-reconstruct")]
-        if let Some(profile) = profile.as_deref_mut() {
-            profile.feasible_time += feasible_time;
-            profile.feasible_calls += feasible_calls;
-            profile.interval_visits += interval_visits;
-            if let Some(group) = first_candidate_group {
-                profile.scans_with_candidate += 1;
-                profile.first_candidate_group_sum += group;
-                profile.first_candidate_group_max = profile.first_candidate_group_max.max(group);
-                let bucket =
-                    (group as usize).min(profile.first_candidate_group_histogram.len() - 1);
-                profile.first_candidate_group_histogram[bucket] += 1;
-            } else {
-                profile.scans_without_candidate += 1;
-            }
-        }
-        accepted
+        self.scan_y_ranges(orient_idx, y, -INF, INF, |x, forbidden| {
+            let Some(entry_time) = forbidden.first_feasible_time(&[], min_t, max_t) else {
+                return false;
+            };
+            on_candidate(ScheduledBlock {
+                block_id,
+                bay_id,
+                orient_idx,
+                x,
+                y,
+                entry_time,
+                exit_time: entry_time + process_t,
+            })
+        })
     }
 
     fn scan_y_ranges(
@@ -402,7 +315,6 @@ impl<'a> PlacementXScanner<'a> {
         y: i64,
         requested_min_x: i64,
         requested_max_x: i64,
-        #[cfg(feature = "profile-reconstruct")] mut profile: Option<&mut PlacementScanProfile>,
         mut on_x: impl FnMut(i64, ForbiddenIntervals<'_>) -> bool,
     ) -> bool {
         let Some(fit_range) = self
@@ -421,12 +333,6 @@ impl<'a> PlacementXScanner<'a> {
             return false;
         }
 
-        #[cfg(feature = "profile-reconstruct")]
-        if let Some(profile) = profile.as_deref_mut() {
-            profile.calls += 1;
-        }
-        #[cfg(feature = "profile-reconstruct")]
-        let orientation_cache_start = Instant::now();
         if self.prepared_orient_idx != Some(orient_idx) {
             let new_orient = BlockOrient {
                 block_id: self.block_id,
@@ -453,48 +359,18 @@ impl<'a> PlacementXScanner<'a> {
                 );
             self.prepared_orient_idx = Some(orient_idx);
         }
-        #[cfg(feature = "profile-reconstruct")]
-        if let Some(profile) = profile.as_deref_mut() {
-            profile.orientation_cache += orientation_cache_start.elapsed();
-        }
 
-        #[cfg(feature = "profile-reconstruct")]
-        let reset_start = Instant::now();
         self.events.clear();
         self.states.fill(HitState::default());
         self.active_slots.clear();
-        #[cfg(feature = "profile-reconstruct")]
-        if let Some(profile) = profile.as_deref_mut() {
-            profile.reset += reset_start.elapsed();
-        }
-        #[cfg(feature = "profile-reconstruct")]
-        let event_build_start = Instant::now();
-        #[cfg(feature = "profile-reconstruct")]
-        if let Some(profile) = profile.as_deref_mut() {
-            profile.old_blocks += self.bay_old_blocks.len() as u64;
-        }
         for (old_idx, &old) in self.bay_old_blocks.iter().enumerate() {
             if self.old_time_infos[old_idx].is_none() {
                 continue;
             }
-            #[cfg(feature = "profile-reconstruct")]
-            if let Some(profile) = profile.as_deref_mut() {
-                profile.active_time_infos += 1;
-            }
             let Some((new_old_pair, old_new_pair)) = self.crane_pair_cache[old_idx] else {
                 continue;
             };
-            #[cfg(feature = "profile-reconstruct")]
-            if let Some(profile) = profile.as_deref_mut() {
-                profile.crane_pairs += 1;
-            }
-            let new_old_intervals = new_old_pair.crane.dx_intervals(old.y - y);
-            let old_new_intervals = old_new_pair.crane.dx_intervals(y - old.y);
-            #[cfg(feature = "profile-reconstruct")]
-            if let Some(profile) = profile.as_deref_mut() {
-                profile.dx_intervals += (new_old_intervals.len() + old_new_intervals.len()) as u64;
-            }
-            for &(lo, hi) in new_old_intervals {
+            for &(lo, hi) in new_old_pair.crane.dx_intervals(old.y - y) {
                 push_x_event(
                     old.x - hi,
                     old.x - lo,
@@ -505,7 +381,7 @@ impl<'a> PlacementXScanner<'a> {
                     &mut self.events,
                 );
             }
-            for &(lo, hi) in old_new_intervals {
+            for &(lo, hi) in old_new_pair.crane.dx_intervals(y - old.y) {
                 push_x_event(
                     old.x + lo,
                     old.x + hi,
@@ -517,15 +393,6 @@ impl<'a> PlacementXScanner<'a> {
                 );
             }
         }
-        #[cfg(feature = "profile-reconstruct")]
-        if let Some(profile) = profile.as_deref_mut() {
-            profile.event_build += event_build_start.elapsed();
-            profile.events += self.events.len() as u64;
-        }
-        #[cfg(feature = "profile-reconstruct")]
-        let event_sort_start = Instant::now();
-        #[cfg(feature = "profile-reconstruct")]
-        let bucket_count = (max_x - min_x + 2) as u64;
         counting_sort_x_events(
             &mut self.events,
             &mut self.event_sort_scratch,
@@ -533,23 +400,12 @@ impl<'a> PlacementXScanner<'a> {
             min_x,
             max_x,
         );
-        #[cfg(feature = "profile-reconstruct")]
-        if let Some(profile) = profile.as_deref_mut() {
-            profile.event_sort += event_sort_start.elapsed();
-            profile.buckets += bucket_count;
-        }
 
-        #[cfg(feature = "profile-reconstruct")]
-        let x_sweep_start = Instant::now();
         let mut accepted = false;
         let mut event_pos = 0;
         let mut x_offset = 0u32;
         let mut x = min_x;
         loop {
-            #[cfg(feature = "profile-reconstruct")]
-            if let Some(profile) = profile.as_deref_mut() {
-                profile.x_groups += 1;
-            }
             self.event_group_generation += 1;
             self.touched_old_ids.clear();
             while event_pos < self.events.len() && self.events[event_pos].x_offset == x_offset {
@@ -565,10 +421,6 @@ impl<'a> PlacementXScanner<'a> {
                 }
                 apply_x_event(event, &mut self.states);
                 event_pos += 1;
-            }
-            #[cfg(feature = "profile-reconstruct")]
-            if let Some(profile) = profile.as_deref_mut() {
-                profile.touched_old_ids += self.touched_old_ids.len() as u64;
             }
             for &old_idx in &self.touched_old_ids {
                 self.active_slots.set_all(
@@ -593,10 +445,6 @@ impl<'a> PlacementXScanner<'a> {
             if x > max_x {
                 break;
             }
-        }
-        #[cfg(feature = "profile-reconstruct")]
-        if let Some(profile) = profile.as_deref_mut() {
-            profile.x_sweep += x_sweep_start.elapsed();
         }
 
         accepted

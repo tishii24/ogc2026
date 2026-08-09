@@ -11,9 +11,6 @@ use crate::{
     utils::{random::RandPcg64Mcg, time::Timer},
 };
 
-#[cfg(feature = "profile-reconstruct")]
-use super::reconstruct::{log_reconstruct_profile, reset_reconstruct_profile};
-
 use super::{
     PreoptimizeState,
     annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingResult, AnnealingState},
@@ -359,8 +356,6 @@ fn extend_schedule(
                 w2,
                 anchor,
                 rng,
-                #[cfg(feature = "profile-reconstruct")]
-                None,
             ) else {
                 continue 'trial;
             };
@@ -494,8 +489,6 @@ pub(super) fn optimize(
         if timer.elapsed_seconds() >= horizon_deadline {
             continue;
         }
-        #[cfg(feature = "profile-reconstruct")]
-        reset_reconstruct_profile();
         let result = annealer.run(
             worker_states,
             horizon_deadline,
@@ -509,8 +502,6 @@ pub(super) fn optimize(
         );
         best_state = result.best;
         worker_states = result.worker_bests;
-        #[cfg(feature = "profile-reconstruct")]
-        log_reconstruct_profile(horizon_index + 1);
     }
 
     make_optimize_state(problem, pre, best_state.schedule, problem.weights.w2)
