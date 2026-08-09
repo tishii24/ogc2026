@@ -27,10 +27,6 @@ pub(crate) trait AnnealingState: Clone + Send + Sync {
     fn annealing_score(&self) -> f64;
 
     fn has_tardiness(&self) -> bool;
-
-    fn is_better_than(&self, other: &Self) -> bool {
-        self.annealing_score() + EPS < other.annealing_score()
-    }
 }
 
 pub(crate) struct SharedBest<S: AnnealingState> {
@@ -48,7 +44,7 @@ impl<S: AnnealingState> SharedBest<S> {
 
     pub(crate) fn update(&self, candidate: &S) -> Option<u64> {
         let mut best = self.state.lock().unwrap();
-        if !candidate.is_better_than(&best) {
+        if candidate.annealing_score() + EPS >= best.annealing_score() {
             return None;
         }
         best.clone_from(candidate);
@@ -341,13 +337,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
 
         let initial_best = initial_states
             .iter()
-            .reduce(|best, candidate| {
-                if candidate.is_better_than(best) {
-                    candidate
-                } else {
-                    best
-                }
-            })
+            .min_by(|a, b| a.annealing_score().total_cmp(&b.annealing_score()))
             .unwrap()
             .clone();
         let shared = SharedBest::new(initial_best.clone());
@@ -479,7 +469,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
             let delta = candidate_score - current_score;
             let accepted_candidate = candidate_score <= accept_threshold;
             let improved_best =
-                accepted_candidate && candidate.is_better_than(&local.personal_best);
+                accepted_candidate && candidate_score + EPS < local.local_best_score;
             #[cfg(feature = "anneal-visualizer")]
             if let Some(selected_block_ids) = attempt.selected_block_ids.as_deref() {
                 self.visualize_snapshot(
