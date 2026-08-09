@@ -1,4 +1,9 @@
 use std::cmp::Reverse;
+#[cfg(feature = "profile-reconstruct")]
+use std::{
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 use crate::{
     Problem, ScheduledBlock,
@@ -6,11 +11,264 @@ use crate::{
     utils::random::{Random, sample_weighted_index},
 };
 
+#[cfg(feature = "profile-reconstruct")]
+use super::insert::InsertGreedyProfile;
+
 use super::{
     insert::{insert_greedy, sample_insert_anchor},
     objective::score13_block,
     precompute::Precompute,
 };
+
+#[cfg(feature = "profile-reconstruct")]
+#[derive(Default)]
+struct ReconstructProfile {
+    total: Duration,
+    choose_removed: Duration,
+    order: Duration,
+    base: Duration,
+    insert: Duration,
+    calls: u64,
+    successes: u64,
+    removed_blocks: u64,
+    inserted_blocks: u64,
+    remove_failed: u64,
+    fixed_score_cutoff: u64,
+    original_missing: u64,
+    insert_failed: u64,
+    insert_failure_positions: [u64; 32],
+    insert_profile: InsertGreedyProfile,
+}
+
+#[cfg(feature = "profile-reconstruct")]
+impl ReconstructProfile {
+    fn merge(&mut self, other: &Self) {
+        self.total += other.total;
+        self.choose_removed += other.choose_removed;
+        self.order += other.order;
+        self.base += other.base;
+        self.insert += other.insert;
+        self.calls += other.calls;
+        self.successes += other.successes;
+        self.removed_blocks += other.removed_blocks;
+        self.inserted_blocks += other.inserted_blocks;
+        self.remove_failed += other.remove_failed;
+        self.fixed_score_cutoff += other.fixed_score_cutoff;
+        self.original_missing += other.original_missing;
+        self.insert_failed += other.insert_failed;
+        for (total, value) in self
+            .insert_failure_positions
+            .iter_mut()
+            .zip(other.insert_failure_positions)
+        {
+            *total += value;
+        }
+        let target = &mut self.insert_profile;
+        let source = &other.insert_profile;
+        target.setup += source.setup;
+        target.bay_scoring += source.bay_scoring;
+        target.scanner_new += source.scanner_new;
+        target.orientation_prepare += source.orientation_prepare;
+        target.scan_y += source.scan_y;
+        target.finalize += source.finalize;
+        target.calls += source.calls;
+        target.successes += source.successes;
+        target.bays += source.bays;
+        target.scanners += source.scanners;
+        target.orientations += source.orientations;
+        target.y_values += source.y_values;
+        target.scan_y_calls += source.scan_y_calls;
+        target.candidates += source.candidates;
+        let target_scan = &mut target.placement_scan;
+        let source_scan = &source.placement_scan;
+        target_scan.orientation_cache += source_scan.orientation_cache;
+        target_scan.reset += source_scan.reset;
+        target_scan.event_build += source_scan.event_build;
+        target_scan.event_sort += source_scan.event_sort;
+        target_scan.x_sweep += source_scan.x_sweep;
+        target_scan.feasible_time += source_scan.feasible_time;
+        target_scan.calls += source_scan.calls;
+        target_scan.old_blocks += source_scan.old_blocks;
+        target_scan.active_time_infos += source_scan.active_time_infos;
+        target_scan.crane_pairs += source_scan.crane_pairs;
+        target_scan.dx_intervals += source_scan.dx_intervals;
+        target_scan.events += source_scan.events;
+        target_scan.buckets += source_scan.buckets;
+        target_scan.x_groups += source_scan.x_groups;
+        target_scan.touched_old_ids += source_scan.touched_old_ids;
+        target_scan.feasible_calls += source_scan.feasible_calls;
+        target_scan.interval_visits += source_scan.interval_visits;
+        target_scan.scans_with_candidate += source_scan.scans_with_candidate;
+        target_scan.scans_without_candidate += source_scan.scans_without_candidate;
+        target_scan.first_candidate_group_sum += source_scan.first_candidate_group_sum;
+        target_scan.first_candidate_group_max = target_scan
+            .first_candidate_group_max
+            .max(source_scan.first_candidate_group_max);
+        for (target, source) in target_scan
+            .first_candidate_group_histogram
+            .iter_mut()
+            .zip(source_scan.first_candidate_group_histogram)
+        {
+            *target += source;
+        }
+    }
+}
+
+#[cfg(feature = "profile-reconstruct")]
+static RECONSTRUCT_PROFILE: Mutex<Option<ReconstructProfile>> = Mutex::new(None);
+
+#[cfg(feature = "profile-reconstruct")]
+pub(super) fn reset_reconstruct_profile() {
+    *RECONSTRUCT_PROFILE.lock().unwrap() = Some(ReconstructProfile::default());
+}
+
+#[cfg(feature = "profile-reconstruct")]
+pub(super) fn log_reconstruct_profile(horizon_index: usize) {
+    let profile = RECONSTRUCT_PROFILE.lock().unwrap();
+    let Some(profile) = profile.as_ref() else {
+        return;
+    };
+    let total = profile.total.as_secs_f64();
+    let ratio = |duration: Duration| {
+        if total > 0.0 {
+            100.0 * duration.as_secs_f64() / total
+        } else {
+            0.0
+        }
+    };
+    let insert = &profile.insert_profile;
+    let insert_total = profile.insert.as_secs_f64();
+    let insert_ratio = |duration: Duration| {
+        if insert_total > 0.0 {
+            100.0 * duration.as_secs_f64() / insert_total
+        } else {
+            0.0
+        }
+    };
+    let scan = &insert.placement_scan;
+    let scan_total = insert.scan_y.as_secs_f64();
+    let scan_ratio = |duration: Duration| {
+        if scan_total > 0.0 {
+            100.0 * duration.as_secs_f64() / scan_total
+        } else {
+            0.0
+        }
+    };
+    let per_insert = |value: u64| {
+        if insert.calls > 0 {
+            value as f64 / insert.calls as f64
+        } else {
+            0.0
+        }
+    };
+    let per_scan = |value: u64| {
+        if scan.calls > 0 {
+            value as f64 / scan.calls as f64
+        } else {
+            0.0
+        }
+    };
+    let first_candidate_histogram = scan
+        .first_candidate_group_histogram
+        .iter()
+        .enumerate()
+        .filter(|(_, count)| **count > 0)
+        .map(|(index, count)| format!("{}:{count}", index + 1))
+        .collect::<Vec<_>>()
+        .join(",");
+    let failures = profile
+        .insert_failure_positions
+        .iter()
+        .enumerate()
+        .filter(|(_, count)| **count > 0)
+        .map(|(index, count)| format!("{index}:{count}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    log!(
+        "[reconstruct-profile] horizon={} calls={} success={} success_rate={:.2}% total={:.6}s avg={:.3}ms removed={} inserted={} failures(remove={},cutoff={},missing={},insert={}) failure_positions=[{}]\n  choose_removed={:.6}s ({:.2}%) order={:.6}s ({:.2}%) base={:.6}s ({:.2}%) insert={:.6}s ({:.2}%)\n  insert_greedy calls={} success={} setup={:.6}s ({:.2}%) bay_scoring={:.6}s ({:.2}%) scanner_new={:.6}s ({:.2}%) orientation_prepare={:.6}s ({:.2}%) scan_y={:.6}s ({:.2}%) finalize={:.6}s ({:.2}%)\n  per_insert bays={:.2} scanners={:.2} orientations={:.2} y_values={:.2} scan_y_calls={:.2} candidates={:.2}\n  scan_y calls={} orientation_cache={:.6}s ({:.2}%) reset={:.6}s ({:.2}%) event_build={:.6}s ({:.2}%) event_sort={:.6}s ({:.2}%) x_sweep={:.6}s ({:.2}%) feasible_time={:.6}s ({:.2}%)\n  per_scan old_blocks={:.2} active_time_infos={:.2} crane_pairs={:.2} dx_intervals={:.2} events={:.2} buckets={:.2} x_groups={:.2} touched_old_ids={:.2} feasible_calls={:.2} interval_visits={:.2}\n  candidate_scan with={} without={} first_group_avg={:.2} first_group_max={} first_group_histogram=[{}]",
+        horizon_index,
+        profile.calls,
+        profile.successes,
+        if profile.calls > 0 {
+            100.0 * profile.successes as f64 / profile.calls as f64
+        } else {
+            0.0
+        },
+        total,
+        if profile.calls > 0 {
+            1000.0 * total / profile.calls as f64
+        } else {
+            0.0
+        },
+        profile.removed_blocks,
+        profile.inserted_blocks,
+        profile.remove_failed,
+        profile.fixed_score_cutoff,
+        profile.original_missing,
+        profile.insert_failed,
+        failures,
+        profile.choose_removed.as_secs_f64(),
+        ratio(profile.choose_removed),
+        profile.order.as_secs_f64(),
+        ratio(profile.order),
+        profile.base.as_secs_f64(),
+        ratio(profile.base),
+        profile.insert.as_secs_f64(),
+        ratio(profile.insert),
+        insert.calls,
+        insert.successes,
+        insert.setup.as_secs_f64(),
+        insert_ratio(insert.setup),
+        insert.bay_scoring.as_secs_f64(),
+        insert_ratio(insert.bay_scoring),
+        insert.scanner_new.as_secs_f64(),
+        insert_ratio(insert.scanner_new),
+        insert.orientation_prepare.as_secs_f64(),
+        insert_ratio(insert.orientation_prepare),
+        insert.scan_y.as_secs_f64(),
+        insert_ratio(insert.scan_y),
+        insert.finalize.as_secs_f64(),
+        insert_ratio(insert.finalize),
+        per_insert(insert.bays),
+        per_insert(insert.scanners),
+        per_insert(insert.orientations),
+        per_insert(insert.y_values),
+        per_insert(insert.scan_y_calls),
+        per_insert(insert.candidates),
+        scan.calls,
+        scan.orientation_cache.as_secs_f64(),
+        scan_ratio(scan.orientation_cache),
+        scan.reset.as_secs_f64(),
+        scan_ratio(scan.reset),
+        scan.event_build.as_secs_f64(),
+        scan_ratio(scan.event_build),
+        scan.event_sort.as_secs_f64(),
+        scan_ratio(scan.event_sort),
+        scan.x_sweep.as_secs_f64(),
+        scan_ratio(scan.x_sweep),
+        scan.feasible_time.as_secs_f64(),
+        scan_ratio(scan.feasible_time),
+        per_scan(scan.old_blocks),
+        per_scan(scan.active_time_infos),
+        per_scan(scan.crane_pairs),
+        per_scan(scan.dx_intervals),
+        per_scan(scan.events),
+        per_scan(scan.buckets),
+        per_scan(scan.x_groups),
+        per_scan(scan.touched_old_ids),
+        per_scan(scan.feasible_calls),
+        per_scan(scan.interval_visits),
+        scan.scans_with_candidate,
+        scan.scans_without_candidate,
+        if scan.scans_with_candidate > 0 {
+            scan.first_candidate_group_sum as f64 / scan.scans_with_candidate as f64
+        } else {
+            0.0
+        },
+        scan.first_candidate_group_max,
+        first_candidate_histogram,
+    );
+}
 
 #[derive(Clone, Copy)]
 enum RemoveSeedMethod {
@@ -120,12 +378,86 @@ pub(super) fn try_large_reconstruct<R: Random>(
     insert_params: &InsertParams,
     w2: f64,
 ) -> Option<LargeReconstructResult> {
+    #[cfg(feature = "profile-reconstruct")]
+    {
+        let start = Instant::now();
+        let mut profile = ReconstructProfile {
+            calls: 1,
+            ..ReconstructProfile::default()
+        };
+        let result = try_large_reconstruct_impl(
+            problem,
+            pre,
+            schedule,
+            rng,
+            accept_threshold,
+            params,
+            insert_params,
+            w2,
+            Some(&mut profile),
+        );
+        profile.total = start.elapsed();
+        profile.successes = result.is_some() as u64;
+        if let Some(total) = RECONSTRUCT_PROFILE.lock().unwrap().as_mut() {
+            total.merge(&profile);
+        }
+        result
+    }
+    #[cfg(not(feature = "profile-reconstruct"))]
+    {
+        try_large_reconstruct_impl(
+            problem,
+            pre,
+            schedule,
+            rng,
+            accept_threshold,
+            params,
+            insert_params,
+            w2,
+        )
+    }
+}
+
+fn try_large_reconstruct_impl<R: Random>(
+    problem: &Problem,
+    pre: &Precompute,
+    schedule: &[ScheduledBlock],
+    rng: &mut R,
+    accept_threshold: f64,
+    params: &ReconstructNeighborParams,
+    insert_params: &InsertParams,
+    w2: f64,
+    #[cfg(feature = "profile-reconstruct")] mut profile: Option<&mut ReconstructProfile>,
+) -> Option<LargeReconstructResult> {
     let k = sample_removed_count(rng, params).min(schedule.len());
 
-    let mut removed_ids = choose_removed_blocks(problem, pre, schedule, k, w2, rng, params)?;
+    #[cfg(feature = "profile-reconstruct")]
+    let choose_start = Instant::now();
+    let removed_ids = choose_removed_blocks(problem, pre, schedule, k, w2, rng, params);
+    #[cfg(feature = "profile-reconstruct")]
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.choose_removed += choose_start.elapsed();
+    }
+    let Some(mut removed_ids) = removed_ids else {
+        #[cfg(feature = "profile-reconstruct")]
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.remove_failed += 1;
+        }
+        return None;
+    };
     if removed_ids.is_empty() {
+        #[cfg(feature = "profile-reconstruct")]
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.remove_failed += 1;
+        }
         return None;
     }
+    #[cfg(feature = "profile-reconstruct")]
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.removed_blocks += removed_ids.len() as u64;
+    }
+    #[cfg(feature = "profile-reconstruct")]
+    let order_start = Instant::now();
     let weights = sample_reconstruct_order_weights(rng, params);
     let current_penalty_weight = rng.gen_range_f64(
         params.current_penalty_weight_range.0,
@@ -147,19 +479,39 @@ pub(super) fn try_large_reconstruct<R: Random>(
         current_penalty_weight,
         rng,
     );
+    #[cfg(feature = "profile-reconstruct")]
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.order += order_start.elapsed();
+    }
 
+    #[cfg(feature = "profile-reconstruct")]
+    let base_start = Instant::now();
     let ReconstructBase {
         schedule: mut cur,
         mut loads,
         weighted_z1_z3: mut fixed_score13,
     } = build_reconstruct_base(problem, pre, schedule, &removed_ids);
+    #[cfg(feature = "profile-reconstruct")]
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.base += base_start.elapsed();
+    }
     let anchor = sample_insert_anchor(rng, insert_params);
 
-    for &block_id in &removed_ids {
+    for (insert_index, &block_id) in removed_ids.iter().enumerate() {
         if fixed_score13 > accept_threshold + 1e-9 {
+            #[cfg(feature = "profile-reconstruct")]
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.fixed_score_cutoff += 1;
+            }
             return None;
         }
-        let old = original_by_id[block_id]?;
+        let Some(old) = original_by_id[block_id] else {
+            #[cfg(feature = "profile-reconstruct")]
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.original_missing += 1;
+            }
+            return None;
+        };
         let block = &problem.blocks[block_id];
         let max_tardiness =
             ((accept_threshold - fixed_score13) / problem.weights.w1.max(1e-4)).floor() as i64;
@@ -167,6 +519,8 @@ pub(super) fn try_large_reconstruct<R: Random>(
             .due_date
             .saturating_add(max_tardiness)
             .saturating_sub(block.processing_time);
+        #[cfg(feature = "profile-reconstruct")]
+        let insert_start = Instant::now();
         let scheduled = insert_greedy(
             problem,
             pre,
@@ -182,10 +536,31 @@ pub(super) fn try_large_reconstruct<R: Random>(
             w2,
             anchor,
             rng,
-        )?;
+            #[cfg(feature = "profile-reconstruct")]
+            profile
+                .as_deref_mut()
+                .map(|profile| &mut profile.insert_profile),
+        );
+        #[cfg(feature = "profile-reconstruct")]
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.insert += insert_start.elapsed();
+        }
+        let Some(scheduled) = scheduled else {
+            #[cfg(feature = "profile-reconstruct")]
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.insert_failed += 1;
+                let bucket = insert_index.min(profile.insert_failure_positions.len() - 1);
+                profile.insert_failure_positions[bucket] += 1;
+            }
+            return None;
+        };
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
         fixed_score13 += score13_block(problem, pre, scheduled);
         cur.push(scheduled);
+        #[cfg(feature = "profile-reconstruct")]
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.inserted_blocks += 1;
+        }
     }
 
     Some(LargeReconstructResult {

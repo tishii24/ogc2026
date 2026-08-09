@@ -90,12 +90,18 @@ pub(super) fn try_shift_neighbor<R: Random>(
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
     for dy in params.dy_range.0..=params.dy_range.1 {
         let y = old.y + dy;
-        scanner.scan_y(old.orient_idx, y, |moved| {
-            if moved != old {
-                update_best(problem, &mut best, moved);
-            }
-            false
-        });
+        scanner.scan_y(
+            old.orient_idx,
+            y,
+            |moved| {
+                if moved != old {
+                    update_best(problem, &mut best, moved);
+                }
+                false
+            },
+            #[cfg(feature = "profile-reconstruct")]
+            None,
+        );
     }
 
     let moved = best?.2;
@@ -134,10 +140,16 @@ pub(super) fn try_rotate_neighbor<R: Random>(
     for neighbor in &pre.orientation_neighbors[old.block_id][old.orient_idx] {
         for ddy in params.dy_range.0..=params.dy_range.1 {
             let y = old.y + neighbor.dy + ddy;
-            scanner.scan_y(neighbor.orient_idx, y, |rotated| {
-                update_best(problem, &mut best, rotated);
-                false
-            });
+            scanner.scan_y(
+                neighbor.orient_idx,
+                y,
+                |rotated| {
+                    update_best(problem, &mut best, rotated);
+                    false
+                },
+                #[cfg(feature = "profile-reconstruct")]
+                None,
+            );
         }
     }
 
@@ -187,6 +199,8 @@ pub(super) fn try_move_neighbor<R: Random>(
         w2,
         anchor,
         rng,
+        #[cfg(feature = "profile-reconstruct")]
+        None,
     )?;
     if scheduled == old {
         return None;
