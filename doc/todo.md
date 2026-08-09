@@ -1,16 +1,18 @@
 todo:
 - 進捗、密度に応じて近傍サイズを大きくする係数の導入
+- 分散が大きいケースをなんとかする
+  - beam-search?
 
 nits:
 - tabuを削除
 
 tuning:
-- preoptのパラメータ調整
 - horizon-size, horizon-power
 - reconstruct
   - remove-distance-powerを大きくするのを試す
   - reconstruct-weightにそれぞれpowerをつける
-- SAの調整
+  - pref-spread-weightを増やす
+- SA
   - exchange-threshold, exchange-interval
   - worker-scale
 

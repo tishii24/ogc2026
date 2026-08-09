@@ -27,12 +27,15 @@ SUMMARY_SORT_COLUMNS = [
     "best",
     "rank_score",
     "relative_score",
+    "tardiness_gap",
     "total_objective",
     "total_obj1",
     "total_obj2",
     "total_obj3",
     "total_elapsed",
 ]
+
+CELL_MODES = ["absolute", "relative", "gap_w1"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -70,7 +73,9 @@ class StatsHandler(BaseHTTPRequestHandler):
         timelimit = query_value(query, "tl")
         last_versions = query_value(query, "n")
         matrix = query_value(query, "m") == "1"
-        relative = query_value(query, "relative") == "1"
+        cell_mode = query_value(query, "cell_mode") or "absolute"
+        if cell_mode not in CELL_MODES:
+            cell_mode = "absolute"
         include_tune = query_value(query, "include_tune") == "1"
         all_feasible = query_value(query, "all_feasible") == "1"
         sort_by = query_value(query, "sort_by")
@@ -85,8 +90,8 @@ class StatsHandler(BaseHTTPRequestHandler):
             stats_args.extend(["--last-versions", last_versions])
         if matrix:
             stats_args.append("--matrix")
-        if relative:
-            stats_args.append("--relative")
+        if cell_mode != "absolute":
+            stats_args.extend(["--cell-mode", cell_mode])
         if include_tune:
             stats_args.append("--include-tune")
         if all_feasible:
@@ -126,7 +131,7 @@ class StatsHandler(BaseHTTPRequestHandler):
             timelimit,
             last_versions,
             matrix,
-            relative,
+            cell_mode,
             include_tune,
             all_feasible,
             sort_by,
@@ -156,6 +161,7 @@ class StatsHandler(BaseHTTPRequestHandler):
             "best",
             "rank_score",
             "relative_score",
+            "tardiness_gap",
             "total_objective",
             "total_obj1",
             "total_obj2",
@@ -172,6 +178,7 @@ class StatsHandler(BaseHTTPRequestHandler):
                 str(item["best"]),
                 str(item["rank_score"]),
                 f'{item["relative_score"]:.3f}',
+                f'{item["tardiness_gap"]:.1f}',
                 str(round(item["total_objective"])),
                 str(round(item["total_obj1"])),
                 str(round(item["total_obj2"])),
@@ -212,6 +219,7 @@ class StatsHandler(BaseHTTPRequestHandler):
         relative_rows: list[list[str]] | None = None,
     ) -> str:
         best_row = next((row for row in rows if row and row[0] == "best"), None)
+        case_column_start = headers.index("tl") + 1 if "tl" in headers else 3
         header_html = "".join(
             f'<th class="{"numeric" if index else ""}">'
             f'{html.escape(header)}'
@@ -236,7 +244,7 @@ class StatsHandler(BaseHTTPRequestHandler):
                     matrix
                     and best_row is not None
                     and row is not best_row
-                    and headers[index] not in {"version", "relative_score", "tl"}
+                    and headers[index] not in {"version", "relative_score", "gap_w1_total", "tl"}
                     and value not in {"NG", "-"}
                     and value == best_row[index]
                 ):
@@ -251,7 +259,7 @@ class StatsHandler(BaseHTTPRequestHandler):
                     matrix
                     and relative_rows is not None
                     and row is not best_row
-                    and index >= 3
+                    and index >= case_column_start
                 ):
                     try:
                         relative_score = max(
@@ -285,7 +293,7 @@ class StatsHandler(BaseHTTPRequestHandler):
         timelimit: str,
         last_versions: str,
         matrix: bool,
-        relative: bool,
+        cell_mode: str,
         include_tune: bool,
         all_feasible: bool,
         sort_by: str,
@@ -295,7 +303,6 @@ class StatsHandler(BaseHTTPRequestHandler):
         returncode: int,
     ) -> str:
         matrix_checked = " checked" if matrix else ""
-        relative_checked = " checked" if relative else ""
         tune_checked = " checked" if include_tune else ""
         feasible_checked = " checked" if all_feasible else ""
         status_class = "error" if returncode else ""
@@ -306,6 +313,13 @@ class StatsHandler(BaseHTTPRequestHandler):
             selected = " selected" if option == suite else ""
             escaped = html.escape(option, quote=True)
             suite_option_html.append(
+                f'<option value="{escaped}"{selected}>{escaped}</option>'
+            )
+        cell_mode_option_html = []
+        for option in CELL_MODES:
+            selected = " selected" if option == cell_mode else ""
+            escaped = html.escape(option, quote=True)
+            cell_mode_option_html.append(
                 f'<option value="{escaped}"{selected}>{escaped}</option>'
             )
         sort_option_html = ['<option value="">default</option>']
@@ -371,7 +385,9 @@ pre {{ margin: 0; padding: 12px; border: 1px solid #fecaca; border-radius: 8px; 
 </select>
 </label>
 <label class="checkbox"><input type="checkbox" name="m" value="1"{matrix_checked}>matrix (-m)</label>
-<label class="checkbox"><input type="checkbox" name="relative" value="1"{relative_checked}>relative case scores</label>
+<label>cell mode
+<select name="cell_mode">{"".join(cell_mode_option_html)}</select>
+</label>
 <label class="checkbox"><input type="checkbox" name="include_tune" value="1"{tune_checked}>include tune</label>
 <label class="checkbox"><input type="checkbox" name="all_feasible" value="1"{feasible_checked}>all feasible</label>
 <button type="submit">表示</button>

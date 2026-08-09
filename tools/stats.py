@@ -24,6 +24,7 @@ SUMMARY_SORT_COLUMNS = [
     "best",
     "rank_score",
     "relative_score",
+    "tardiness_gap",
     "total_objective",
     "total_obj1",
     "total_obj2",
@@ -41,9 +42,14 @@ def parse_args() -> argparse.Namespace:
         help="Show a version/timelimit x testcase score matrix.",
     )
     parser.add_argument(
-        "--relative",
-        action="store_true",
-        help="Show per-case relative scores in the score matrix.",
+        "--cell-mode",
+        choices=("absolute", "relative", "gap_w1"),
+        default="absolute",
+        help=(
+            "Score matrix cell values: absolute objective, best/objective, "
+            "or (objective-best)/w1 (tardiness-equivalent gap; lower is better). "
+            "default: absolute"
+        ),
     )
     parser.add_argument(
         "-s",
@@ -271,6 +277,23 @@ def load_case_weights(root: Path, case: str) -> tuple[float, float, float]:
     )
 
 
+def compute_best_by_case(
+    rows: list[dict[str, str]], cases: list[str]
+) -> dict[str, float]:
+    best_by_case: dict[str, float] = {}
+    for case in cases:
+        objectives = [
+            objective
+            for row in rows
+            if row.get("case", "") == case
+            and parse_bool(row.get("feasible", ""))
+            and (objective := parse_float(row.get("objective", ""))) is not None
+        ]
+        if objectives:
+            best_by_case[case] = min(objectives)
+    return best_by_case
+
+
 def compute_relative_scores(
     rows: list[dict[str, str]],
     cases: list[str] | None = None,
@@ -294,17 +317,7 @@ def compute_relative_scores(
         if (key := row_key(row)) is not None and row.get("case", "")
     }
 
-    best_by_case: dict[str, float] = {}
-    for case in cases:
-        objectives = []
-        for row in (best_rows if best_rows is not None else rows):
-            if row.get("case", "") != case:
-                continue
-            objective = parse_float(row.get("objective", ""))
-            if parse_bool(row.get("feasible", "")) and objective is not None:
-                objectives.append(objective)
-        if objectives:
-            best_by_case[case] = min(objectives)
+    best_by_case = compute_best_by_case(best_rows if best_rows is not None else rows, cases)
 
     relative_scores = {key: 0.0 for key in row_keys}
     for version, timelimit in row_keys:
@@ -326,6 +339,58 @@ def compute_relative_scores(
                     relative_scores[(version, timelimit)] += best / objective
 
     return relative_scores
+
+
+def compute_gap_w1_scores(
+    root: Path,
+    rows: list[dict[str, str]],
+    cases: list[str] | None = None,
+    best_rows: list[dict[str, str]] | None = None,
+) -> dict[tuple[str, float], float]:
+    """Sum of (objective-best)/w1 per case: a tardiness-equivalent regret.
+
+    This is NOT a pure tardiness gap: it also absorbs any w2/w3 (obj2/obj3)
+    differences from the best-known solution, just expressed in w1 units.
+    """
+    row_keys = sorted(
+        {key for row in rows if (key := row_key(row)) is not None},
+        key=lambda key: (natural_key(key[0]), key[1]),
+    )
+    if cases is None:
+        cases = sorted(
+            {row.get("case", "") for row in rows if row.get("case", "")},
+            key=lambda case: natural_key(case_label(case)),
+        )
+    if not row_keys or not cases:
+        return {}
+
+    by_key = {
+        (key[0], key[1], row.get("case", "")): row
+        for row in rows
+        if (key := row_key(row)) is not None and row.get("case", "")
+    }
+
+    best_by_case = compute_best_by_case(best_rows if best_rows is not None else rows, cases)
+    w1_by_case = {case: load_case_weights(root, case)[0] for case in cases}
+
+    gap_scores = {key: 0.0 for key in row_keys}
+    for version, timelimit in row_keys:
+        for case in cases:
+            best = best_by_case.get(case)
+            w1 = w1_by_case.get(case)
+            if best is None or not w1:
+                continue
+            row = by_key.get((version, timelimit, case))
+            objective = parse_float(row.get("objective", "")) if row else None
+            if (
+                row
+                and parse_bool(row.get("feasible", ""))
+                and objective is not None
+                and objective >= 0
+            ):
+                gap_scores[(version, timelimit)] += (objective - best) / w1
+
+    return gap_scores
 
 
 def compute_rank_scores(
@@ -392,6 +457,7 @@ def summarize(
     )
     rank_scores = compute_rank_scores(rows, cases)
     relative_scores = compute_relative_scores(rows, cases, best_rows)
+    gap_w1_scores = compute_gap_w1_scores(root, rows, cases, best_rows)
     groups: dict[tuple[str, float], dict[str, Any]] = {}
     weights_by_case: dict[str, tuple[float, float, float]] = {}
 
@@ -413,6 +479,7 @@ def summarize(
                 "best": 0,
                 "rank_score": 0,
                 "relative_score": 0.0,
+                "tardiness_gap": 0.0,
                 "total_objective": 0.0,
                 "total_obj1": 0.0,
                 "total_obj2": 0.0,
@@ -451,6 +518,7 @@ def summarize(
         group["best"] = best_counts.get(key, 0)
         group["rank_score"] = rank_scores.get(key, 0)
         group["relative_score"] = relative_scores.get(key, 0.0)
+        group["tardiness_gap"] = gap_w1_scores.get(key, 0.0)
 
     return sorted(
         groups.values(),
@@ -499,6 +567,7 @@ def print_table(summaries: list[dict[str, Any]]) -> None:
         "best",
         "rank_score",
         "relative_score",
+        "tardiness_gap",
         "total_objective",
         "total_obj1",
         "total_obj2",
@@ -517,6 +586,7 @@ def print_table(summaries: list[dict[str, Any]]) -> None:
                 str(item["best"]),
                 str(item["rank_score"]),
                 f"{item['relative_score']:.3f}",
+                f"{item['tardiness_gap']:.1f}",
                 format_number(item["total_objective"]),
                 format_number(item["total_obj1"]),
                 format_number(item["total_obj2"]),
@@ -547,12 +617,22 @@ def relative_score_cell(row: dict[str, str] | None, best: float | None) -> str:
     return f"{relative:.3f}"
 
 
+def gap_w1_cell(row: dict[str, str] | None, best: float | None, w1: float | None) -> str:
+    if row is None or best is None or not w1:
+        return "-"
+    objective = parse_float(row.get("objective", ""))
+    if not parse_bool(row.get("feasible", "")) or objective is None or objective < 0:
+        return "NG"
+    return f"{(objective - best) / w1:.1f}"
+
+
 def build_score_matrix(
+    root: Path,
     rows: list[dict[str, str]],
     cases: list[str] | None = None,
     best_rows: list[dict[str, str]] | None = None,
     summaries: list[dict[str, Any]] | None = None,
-    relative: bool = False,
+    cell_mode: str = "absolute",
 ) -> tuple[list[str], list[list[str]], list[list[str]]]:
     if cases is None:
         cases = sorted(
@@ -587,28 +667,29 @@ def build_score_matrix(
         (item["version"], item["timelimit"]): item["relative_score"]
         for item in summaries or []
     }
-    headers = ["version", "relative_score", "tl"] + [
+    summary_gap_w1_scores = {
+        (item["version"], item["timelimit"]): item["tardiness_gap"]
+        for item in summaries or []
+    }
+    headers = ["version", "relative_score", "gap_w1", "tl"] + [
         case_label(case) for case in cases
     ]
-    best_objectives = []
-    for case in cases:
-        objectives = []
-        for row in (best_rows if best_rows is not None else rows):
-            if row.get("case", "") != case:
-                continue
-            objective = parse_float(row.get("objective", ""))
-            if parse_bool(row.get("feasible", "")) and objective is not None:
-                objectives.append(objective)
-        best_objectives.append(min(objectives) if objectives else None)
+    best_by_case = compute_best_by_case(best_rows if best_rows is not None else rows, cases)
+    best_objectives = [best_by_case.get(case) for case in cases]
+    w1_by_case = {case: load_case_weights(root, case)[0] for case in cases}
+    w1_values = [w1_by_case.get(case) for case in cases]
 
     absolute_rows = []
     relative_rows = []
+    gap_w1_rows = []
     for version, timelimit in row_keys:
         assert timelimit is not None
         summary_relative_score = relative_scores.get((version, timelimit))
+        summary_gap_w1 = summary_gap_w1_scores.get((version, timelimit))
         prefix = [
             version,
             f"{summary_relative_score:.3f}" if summary_relative_score is not None else "-",
+            f"{summary_gap_w1:.1f}" if summary_gap_w1 is not None else "-",
             format_number(timelimit),
         ]
         case_rows = [by_key.get((version, timelimit, case)) for case in cases]
@@ -620,25 +701,42 @@ def build_score_matrix(
                 for row, best in zip(case_rows, best_objectives)
             ]
         )
+        gap_w1_rows.append(
+            prefix
+            + [
+                gap_w1_cell(row, best, w1)
+                for row, best, w1 in zip(case_rows, best_objectives, w1_values)
+            ]
+        )
 
     absolute_rows.append(
-        ["best", "-", "-"]
+        ["best", "-", "-", "-"]
         + [format_number(best) if best is not None else "-" for best in best_objectives]
     )
     relative_rows.append(
-        ["best", "-", "-"]
+        ["best", "-", "-", "-"]
         + ["1.000" if best is not None else "-" for best in best_objectives]
     )
-    return headers, relative_rows if relative else absolute_rows, relative_rows
+    gap_w1_rows.append(
+        ["best", "-", "-", "-"]
+        + ["0.0" if best is not None else "-" for best in best_objectives]
+    )
+    table_rows = {
+        "absolute": absolute_rows,
+        "relative": relative_rows,
+        "gap_w1": gap_w1_rows,
+    }[cell_mode]
+    return headers, table_rows, relative_rows
 
 
 def print_score_matrix(
+    root: Path,
     rows: list[dict[str, str]],
     cases: list[str] | None = None,
     best_rows: list[dict[str, str]] | None = None,
     summaries: list[dict[str, Any]] | None = None,
 ) -> None:
-    headers, table_rows, _ = build_score_matrix(rows, cases, best_rows, summaries)
+    headers, table_rows, _ = build_score_matrix(root, rows, cases, best_rows, summaries)
     print_rows(headers, table_rows)
 
 
@@ -716,7 +814,7 @@ def main() -> int:
         output: Any = summaries
         if args.matrix:
             headers, table_rows, relative_rows = build_score_matrix(
-                rows, suite_cases, best_rows, summaries, args.relative
+                root, rows, suite_cases, best_rows, summaries, args.cell_mode
             )
             output = {
                 "headers": headers,
@@ -726,7 +824,7 @@ def main() -> int:
         print(json.dumps(output, ensure_ascii=False))
     elif args.matrix:
         headers, table_rows, _ = build_score_matrix(
-            rows, suite_cases, best_rows, summaries, args.relative
+            root, rows, suite_cases, best_rows, summaries, args.cell_mode
         )
         print_rows(headers, table_rows)
     else:
