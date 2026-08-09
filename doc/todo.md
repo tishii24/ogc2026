@@ -1,15 +1,13 @@
 todo:
-- successive halving
-- 進捗、密度に応じて近傍サイズを大きくする係数の導入
-- opusのレビュー
+- reconstruct
+  - reconstruct-weightにそれぞれpowerをつける
 
 tuning:
 - horizon-size, horizon-power
 - congestion-weight
-- reconstruct
-  - remove-distance-powerを大きくするのを試す
-  - reconstruct-weightにそれぞれpowerをつける
-  - pref-spread-weightを増やす
+  - 0.1, 0.01, 0.001, 0.0
+- pref-spread-weightを増やす
+- remove-distance-powerを大きくするのを試す
 - SA
   - exchange-threshold, exchange-interval
     - 序盤はexchangeせず、exchange-thresholdを下げる
