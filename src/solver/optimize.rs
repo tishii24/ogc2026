@@ -11,9 +11,6 @@ use crate::{
     utils::{random::RandPcg64Mcg, time::Timer},
 };
 
-#[cfg(feature = "profile-reconstruct-weight")]
-use super::reconstruct_weight_profile;
-
 use super::{
     PreoptimizeState,
     annealing::{Annealer, AnnealingAttempt, AnnealingDelegate, AnnealingResult, AnnealingState},
@@ -88,7 +85,6 @@ impl<'a> OptimizeAnnealing<'a> {
         candidate_emitter: Option<&CandidateEmitter>,
         seed: u64,
         max_worker_count: usize,
-        collect_reconstruct_weight_stats: bool,
     ) -> AnnealingResult<OptimizeState, OptimizeState> {
         let worker_count = rayon::current_num_threads().clamp(1, max_worker_count);
         assert_eq!(initial_states.len(), worker_count);
@@ -109,7 +105,6 @@ impl<'a> OptimizeAnnealing<'a> {
             insert_params,
             timer: self.timer,
             candidate_emitter,
-            collect_reconstruct_weight_stats,
         };
         Annealer::new(deadline, worker_count, seed, annealing_params, delegate)
             .run(initial_states, self.timer)
@@ -125,7 +120,6 @@ struct OptimizeAnnealingDelegate<'a> {
     insert_params: &'a InsertParams,
     timer: Timer,
     candidate_emitter: Option<&'a CandidateEmitter>,
-    collect_reconstruct_weight_stats: bool,
 }
 
 impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
@@ -181,7 +175,6 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
                 &params.reconstruct,
                 self.insert_params,
                 self.w2,
-                self.collect_reconstruct_weight_stats,
             )
             .map(|result| {
                 #[cfg(feature = "anneal-visualizer")]
@@ -464,11 +457,6 @@ pub(super) fn optimize(
         if timer.elapsed_seconds() >= horizon_deadline {
             continue;
         }
-        let collect_reconstruct_weight_stats = horizon_index * 2 >= horizons.len();
-        #[cfg(feature = "profile-reconstruct-weight")]
-        if collect_reconstruct_weight_stats {
-            reconstruct_weight_profile::reset();
-        }
         let result = annealer.run(
             worker_states,
             horizon_deadline,
@@ -479,14 +467,9 @@ pub(super) fn optimize(
             is_last.then_some(candidate_emitter),
             horizon_seed,
             max_worker_count,
-            collect_reconstruct_weight_stats,
         );
         best_state = result.best;
         worker_states = result.worker_bests;
-        #[cfg(feature = "profile-reconstruct-weight")]
-        if collect_reconstruct_weight_stats {
-            reconstruct_weight_profile::log_stats(horizon_index + 1);
-        }
     }
 
     make_optimize_state(problem, pre, best_state.schedule, problem.weights.w2)

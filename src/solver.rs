@@ -11,8 +11,6 @@ mod placement_scan;
 mod precompute;
 mod preoptimize;
 mod reconstruct;
-#[cfg(feature = "profile-reconstruct-weight")]
-mod reconstruct_weight_profile;
 
 use optimize::optimize;
 use output::{CandidateEmitter, schedule_to_solution};
