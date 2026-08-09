@@ -96,12 +96,12 @@ neighbor:
     remove_y_distance_weight_range: [0.1, 0.2]
     remove_t_distance_weight_range: [0.5, 1.5]
     remove_distance_power_range: [2.0, 4.0]
-    volume_weight_range: [0.5, 2.0]
-    pref_spread_weight_range: [0.0, 0.3]
-    limit_time_urgency_weight_range: [0.5, 2.0]
-    current_penalty_weight_range: [0.0, 2.0]
-    order_random_weight_range: [0.0, 0.3]
-    slack_tightness_weight_range: [0.0, 0.3]
+    volume_weight_range: [0.0, 1.0]
+    pref_spread_weight_range: [0.0, 1.0]
+    limit_time_urgency_weight_range: [0.0, 1.0]
+    current_penalty_weight_range: [0.0, 1.0]
+    order_random_weight_range: [0.0, 1.0]
+    slack_tightness_weight_range: [0.0, 1.0]
     insert_candidate_top_k: 4
     insert_candidate_select_p: 0.7
   shift:

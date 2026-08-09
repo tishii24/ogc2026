@@ -6,6 +6,9 @@ use crate::{
     utils::random::{Random, sample_weighted_index},
 };
 
+#[cfg(feature = "profile-reconstruct-weight")]
+use super::reconstruct_weight_profile::{self, Outcome};
+
 use super::{
     insert::{insert_greedy, sample_insert_anchor},
     objective::score13_block,
@@ -32,6 +35,60 @@ pub(super) struct BlockOrderWeights {
     limit_time_urgency: f64,
     slack_tightness: f64,
     random: f64,
+}
+
+impl BlockOrderWeights {
+    fn normalize(&mut self) {
+        let sum = self.volume
+            + self.pref_spread
+            + self.limit_time_urgency
+            + self.slack_tightness
+            + self.random;
+        self.volume /= sum;
+        self.pref_spread /= sum;
+        self.limit_time_urgency /= sum;
+        self.slack_tightness /= sum;
+        self.random /= sum;
+    }
+
+    fn normalize_with_current_penalty(&mut self, current_penalty: &mut f64) -> [f64; 6] {
+        let sum = self.volume
+            + self.pref_spread
+            + self.limit_time_urgency
+            + self.slack_tightness
+            + self.random
+            + *current_penalty;
+        self.volume /= sum;
+        self.pref_spread /= sum;
+        self.limit_time_urgency /= sum;
+        self.slack_tightness /= sum;
+        *current_penalty /= sum;
+        self.random /= sum;
+        [
+            self.volume,
+            self.pref_spread,
+            self.limit_time_urgency,
+            self.slack_tightness,
+            *current_penalty,
+            self.random,
+        ]
+    }
+}
+
+#[cfg(feature = "profile-reconstruct-weight")]
+struct WeightOutcomeGuard {
+    enabled: bool,
+    weights: [f64; 6],
+    outcome: Outcome,
+}
+
+#[cfg(feature = "profile-reconstruct-weight")]
+impl Drop for WeightOutcomeGuard {
+    fn drop(&mut self) {
+        if self.enabled {
+            reconstruct_weight_profile::record(self.weights, self.outcome);
+        }
+    }
 }
 
 struct BlockOrderContext {
@@ -119,6 +176,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
     params: &ReconstructNeighborParams,
     insert_params: &InsertParams,
     w2: f64,
+    collect_weight_stats: bool,
 ) -> Option<LargeReconstructResult> {
     let k = sample_removed_count(rng, params).min(schedule.len());
 
@@ -126,11 +184,20 @@ pub(super) fn try_large_reconstruct<R: Random>(
     if removed_ids.is_empty() {
         return None;
     }
-    let weights = sample_reconstruct_order_weights(rng, params);
-    let current_penalty_weight = rng.gen_range_f64(
+    let mut weights = sample_reconstruct_order_weights(rng, params);
+    let mut current_penalty_weight = rng.gen_range_f64(
         params.current_penalty_weight_range.0,
         params.current_penalty_weight_range.1,
     );
+    let weight_vector = weights.normalize_with_current_penalty(&mut current_penalty_weight);
+    #[cfg(feature = "profile-reconstruct-weight")]
+    let mut weight_outcome = WeightOutcomeGuard {
+        enabled: collect_weight_stats,
+        weights: weight_vector,
+        outcome: Outcome::Failed,
+    };
+    #[cfg(not(feature = "profile-reconstruct-weight"))]
+    let _ = (collect_weight_stats, weight_vector);
     let mut current_penalties = vec![0.0; problem.blocks.len()];
     let mut original_by_id = vec![None; problem.blocks.len()];
     for &scheduled in schedule {
@@ -154,6 +221,8 @@ pub(super) fn try_large_reconstruct<R: Random>(
         weighted_z1_z3: mut fixed_score13,
     } = build_reconstruct_base(problem, pre, schedule, &removed_ids);
     let anchor = sample_insert_anchor(rng, insert_params);
+    #[cfg(feature = "profile-reconstruct-weight")]
+    let mut changed = false;
 
     for &block_id in &removed_ids {
         if fixed_score13 > accept_threshold + 1e-9 {
@@ -183,11 +252,23 @@ pub(super) fn try_large_reconstruct<R: Random>(
             anchor,
             rng,
         )?;
+        #[cfg(feature = "profile-reconstruct-weight")]
+        {
+            changed |= scheduled != old;
+        }
         loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
         fixed_score13 += score13_block(problem, pre, scheduled);
         cur.push(scheduled);
     }
 
+    #[cfg(feature = "profile-reconstruct-weight")]
+    {
+        weight_outcome.outcome = if changed {
+            Outcome::Changed
+        } else {
+            Outcome::Unchanged
+        };
+    }
     Some(LargeReconstructResult {
         schedule: cur,
         #[cfg(feature = "anneal-visualizer")]
@@ -649,7 +730,8 @@ pub(super) fn sort_default_reconstruct_order<R: Random>(
     rng: &mut R,
     params: &ReconstructNeighborParams,
 ) {
-    let weights = sample_reconstruct_order_weights(rng, params);
+    let mut weights = sample_reconstruct_order_weights(rng, params);
+    weights.normalize();
     sort_block_order(
         problem,
         block_areas,
