@@ -663,6 +663,10 @@ def build_score_matrix(
         for row in rows
     }
 
+    rank_scores = {
+        (item["version"], item["timelimit"]): item["rank_score"]
+        for item in summaries or []
+    }
     relative_scores = {
         (item["version"], item["timelimit"]): item["relative_score"]
         for item in summaries or []
@@ -671,7 +675,7 @@ def build_score_matrix(
         (item["version"], item["timelimit"]): item["tardiness_gap"]
         for item in summaries or []
     }
-    headers = ["version", "relative_score", "gap_w1", "tl"] + [
+    headers = ["version", "rank_score", "relative_score", "gap_w1", "tl"] + [
         case_label(case) for case in cases
     ]
     best_by_case = compute_best_by_case(best_rows if best_rows is not None else rows, cases)
@@ -684,10 +688,12 @@ def build_score_matrix(
     gap_w1_rows = []
     for version, timelimit in row_keys:
         assert timelimit is not None
+        summary_rank_score = rank_scores.get((version, timelimit))
         summary_relative_score = relative_scores.get((version, timelimit))
         summary_gap_w1 = summary_gap_w1_scores.get((version, timelimit))
         prefix = [
             version,
+            str(summary_rank_score) if summary_rank_score is not None else "-",
             f"{summary_relative_score:.3f}" if summary_relative_score is not None else "-",
             f"{summary_gap_w1:.1f}" if summary_gap_w1 is not None else "-",
             format_number(timelimit),
@@ -710,15 +716,15 @@ def build_score_matrix(
         )
 
     absolute_rows.append(
-        ["best", "-", "-", "-"]
+        ["best", "-", "-", "-", "-"]
         + [format_number(best) if best is not None else "-" for best in best_objectives]
     )
     relative_rows.append(
-        ["best", "-", "-", "-"]
+        ["best", "-", "-", "-", "-"]
         + ["1.000" if best is not None else "-" for best in best_objectives]
     )
     gap_w1_rows.append(
-        ["best", "-", "-", "-"]
+        ["best", "-", "-", "-", "-"]
         + ["0.0" if best is not None else "-" for best in best_objectives]
     )
     table_rows = {

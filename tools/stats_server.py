@@ -244,7 +244,7 @@ class StatsHandler(BaseHTTPRequestHandler):
                     matrix
                     and best_row is not None
                     and row is not best_row
-                    and headers[index] not in {"version", "relative_score", "gap_w1_total", "tl"}
+                    and headers[index] not in {"version", "rank_score", "relative_score", "gap_w1", "tl"}
                     and value not in {"NG", "-"}
                     and value == best_row[index]
                 ):

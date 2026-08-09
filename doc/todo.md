@@ -4,17 +4,17 @@ todo:
   - beam-search?
 
 nits:
-- tabuを削除
+- worker-scale,tabuを削除
 
 tuning:
 - horizon-size, horizon-power
+- congestion-weight
 - reconstruct
   - remove-distance-powerを大きくするのを試す
   - reconstruct-weightにそれぞれpowerをつける
   - pref-spread-weightを増やす
 - SA
   - exchange-threshold, exchange-interval
-  - worker-scale
 
 solver:
 - 限界高速化
