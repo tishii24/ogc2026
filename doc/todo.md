@@ -1,7 +1,6 @@
 todo:
-- successive halving
 - 進捗、密度に応じて近傍サイズを大きくする係数の導入
-- opusのレビュー
+- 限界高速化
 
 tuning:
 - horizon-size, horizon-power
@@ -14,13 +13,9 @@ tuning:
   - exchange-threshold, exchange-interval
     - 序盤はexchangeせず、exchange-thresholdを下げる
 
-solver:
-- 限界高速化
-
 pending:
 - 同時刻の操作順を考慮する
   - block-id順で出す、とすれば半分くらいは考慮できる
-- hashを荒くする
 - 上から見た高さ（exit-t）を最小化する
 - obj2: preserved-loadsを使う
 
@@ -41,3 +36,4 @@ rejected:
 - dtにexit-tも考慮する
 - w2を途中から考慮する
 - 直方体[x_min,x_max][0,height][0,inf]をremoveする
+- hashを荒くする

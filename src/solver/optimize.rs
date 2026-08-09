@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{cmp::Ordering, ops::Range};
 
 use rayon::prelude::*;
 
@@ -27,6 +27,7 @@ use super::{
 #[derive(Clone, Debug)]
 pub(super) struct OptimizeState {
     pub(super) objective: f64,
+    pub(super) entry_delay_area: f64,
     pub(super) total_tardiness: i64,
     pub(super) schedule: Vec<ScheduledBlock>,
 }
@@ -38,6 +39,14 @@ impl AnnealingState for OptimizeState {
 
     fn has_tardiness(&self) -> bool {
         self.total_tardiness > 0
+    }
+
+    fn is_better_than(&self, other: &Self) -> bool {
+        match self.objective.total_cmp(&other.objective) {
+            Ordering::Less => true,
+            Ordering::Greater => false,
+            Ordering::Equal => self.entry_delay_area < other.entry_delay_area,
+        }
     }
 }
 
@@ -51,8 +60,17 @@ pub(super) fn make_optimize_state(
         objective,
         total_tardiness,
     } = score_schedule(problem, pre, &schedule, w2);
+    let entry_delay_area = schedule
+        .iter()
+        .map(|scheduled| {
+            let block = &problem.blocks[scheduled.block_id];
+            (scheduled.entry_time - block.release_time) as f64
+                * pre.max_footprint_area[scheduled.block_id]
+        })
+        .sum();
     OptimizeState {
         objective,
+        entry_delay_area,
         total_tardiness,
         schedule,
     }
@@ -90,7 +108,13 @@ impl<'a> OptimizeAnnealing<'a> {
         assert_eq!(initial_states.len(), worker_count);
         let initial = initial_states
             .iter()
-            .min_by(|a, b| a.objective.total_cmp(&b.objective))
+            .reduce(|best, candidate| {
+                if candidate.is_better_than(best) {
+                    candidate
+                } else {
+                    best
+                }
+            })
             .unwrap();
         let annealing_params = annealing.make(
             self.problem,
@@ -343,13 +367,14 @@ fn extend_schedule(
         let candidate = make_optimize_state(problem, pre, schedule, w2);
         if best
             .as_ref()
-            .is_none_or(|best: &OptimizeState| candidate.objective < best.objective)
+            .is_none_or(|best: &OptimizeState| candidate.is_better_than(best))
         {
             log!(
-                "[{:.4}] [expand] best: trial={}, score={:.3}",
+                "[{:.4}] [expand] best: trial={}, score={:.3}, entry_delay_area={:.3}",
                 timer.elapsed_seconds(),
                 trial_count,
                 candidate.objective,
+                candidate.entry_delay_area,
             );
             best = Some(candidate);
         }
@@ -435,16 +460,23 @@ pub(super) fn optimize(
             .collect();
         best_state = worker_states
             .iter()
-            .min_by(|a, b| a.objective.total_cmp(&b.objective))
+            .reduce(|best, candidate| {
+                if candidate.is_better_than(best) {
+                    candidate
+                } else {
+                    best
+                }
+            })
             .unwrap()
             .clone();
         log!(
-            "[{:.4}] [optimize] horizon={}/{}, blocks={}, initial={:.3}, w2={:.3}",
+            "[{:.4}] [optimize] horizon={}/{}, blocks={}, initial={:.3}, entry_delay_area={:.3}, w2={:.3}",
             timer.elapsed_seconds(),
             horizon_index + 1,
             horizons.len(),
             horizon.end,
             best_state.objective,
+            best_state.entry_delay_area,
             w2,
         );
 
