@@ -1,4 +1,4 @@
-use crate::{Block, Boundsf, Orientation, Problem, params::PrecomputeParams};
+use crate::{Block, Boundsf, Orientation, Problem};
 
 use super::collision::CollisionPrecompute;
 use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
@@ -145,10 +145,7 @@ fn bbox_iou(from: Boundsf, to: Boundsf, dx: i64, dy: i64) -> f64 {
     }
 }
 
-fn orientation_neighbors_for_block(
-    bboxes: &[Boundsf],
-    limit: usize,
-) -> Vec<Vec<OrientationNeighbor>> {
+fn orientation_neighbors_for_block(bboxes: &[Boundsf]) -> Vec<Vec<OrientationNeighbor>> {
     let mut result = vec![Vec::new(); bboxes.len()];
     for from_orient in 0..bboxes.len() {
         let from = bboxes[from_orient];
@@ -179,7 +176,6 @@ fn orientation_neighbors_for_block(
                 .then(a.3.cmp(&b.3))
         });
         candidates.dedup_by_key(|(to_orient, _, _, _)| *to_orient);
-        candidates.truncate(limit);
         result[from_orient] = candidates
             .into_iter()
             .map(|(orient_idx, _, _, dy)| OrientationNeighbor { orient_idx, dy })
@@ -190,16 +186,15 @@ fn orientation_neighbors_for_block(
 
 fn build_orientation_neighbors(
     orientation_bbox_bounds: &[Vec<Boundsf>],
-    limit: usize,
 ) -> Vec<Vec<Vec<OrientationNeighbor>>> {
     orientation_bbox_bounds
         .iter()
-        .map(|bboxes| orientation_neighbors_for_block(bboxes, limit))
+        .map(|bboxes| orientation_neighbors_for_block(bboxes))
         .collect()
 }
 
 impl Precompute {
-    pub(crate) fn build(problem: &Problem, params: &PrecomputeParams) -> Self {
+    pub(crate) fn build(problem: &Problem) -> Self {
         let collision = CollisionPrecompute::build(problem);
 
         let bay_load_scale = build_bay_load_scale(problem);
@@ -253,10 +248,7 @@ impl Precompute {
             })
             .collect();
 
-        let orientation_neighbors = build_orientation_neighbors(
-            &orientation_bbox_bounds,
-            params.orientation_neighbor_limit,
-        );
+        let orientation_neighbors = build_orientation_neighbors(&orientation_bbox_bounds);
         let max_footprint_area: Vec<f64> = problem.blocks.iter().map(max_footprint_area).collect();
 
         Self {

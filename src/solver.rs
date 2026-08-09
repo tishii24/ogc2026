@@ -42,7 +42,7 @@ pub fn solve(
     let deadline = timelimit - params.runtime.solve_time_buffer_seconds;
 
     log!("[{:.4}] building precompute...", timer.elapsed_seconds());
-    let pre = Precompute::build(problem, &params.precompute);
+    let pre = Precompute::build(problem);
     log!("[{:.4}] precompute built", timer.elapsed_seconds());
 
     log!(

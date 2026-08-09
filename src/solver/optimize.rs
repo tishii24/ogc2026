@@ -39,10 +39,6 @@ impl AnnealingState for OptimizeState {
     fn has_tardiness(&self) -> bool {
         self.total_tardiness > 0
     }
-
-    fn tabu_key(&self) -> Option<u64> {
-        Some(hash_schedule(&self.schedule))
-    }
 }
 
 pub(super) fn make_optimize_state(
@@ -477,28 +473,4 @@ pub(super) fn optimize(
     }
 
     make_optimize_state(problem, pre, best_state.schedule, problem.weights.w2)
-}
-
-fn hash_schedule(schedule: &[ScheduledBlock]) -> u64 {
-    let mut hash = mix_hash(1469598103934665603, schedule.len() as u64);
-    for &block in schedule {
-        hash ^= hash_scheduled_block(block);
-    }
-    hash
-}
-
-fn hash_scheduled_block(block: ScheduledBlock) -> u64 {
-    let mut hash = 1469598103934665603;
-    hash = mix_hash(hash, block.block_id as u64);
-    hash = mix_hash(hash, block.bay_id as u64);
-    hash = mix_hash(hash, block.orient_idx as u64);
-    hash = mix_hash(hash, block.x as u64);
-    hash = mix_hash(hash, block.y as u64);
-    hash = mix_hash(hash, block.entry_time as u64);
-    mix_hash(hash, block.exit_time as u64)
-}
-
-fn mix_hash(mut hash: u64, value: u64) -> u64 {
-    hash ^= value;
-    hash.wrapping_mul(1099511628211)
 }

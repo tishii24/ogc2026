@@ -16,9 +16,6 @@ phases:
     expand_time_ratio: 0.05
     max_expand_seconds: 5.0
 
-precompute:
-  orientation_neighbor_limit: 100
-
 insert:
   y_buffer: 10
   anchor_randomness: 0.2
@@ -36,7 +33,6 @@ annealing:
       exchange_threshold:
         w1_scale: 10.0
         w3_scale: 500.0
-    tabu_capacity: 4096
   optimize:
     exchange_interval: 2000
     positive_tardiness:
@@ -49,7 +45,6 @@ annealing:
       exchange_threshold:
         w1_scale: 10.0
         w3_scale: 500.0
-    tabu_capacity: 4096
 
 preoptimize:
   alpha: 0.5

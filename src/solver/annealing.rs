@@ -1,5 +1,4 @@
 use std::{
-    collections::{HashSet, VecDeque},
     sync::{
         Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -28,8 +27,6 @@ pub(crate) trait AnnealingState: Clone + Send + Sync {
     fn annealing_score(&self) -> f64;
 
     fn has_tardiness(&self) -> bool;
-
-    fn tabu_key(&self) -> Option<u64>;
 }
 
 pub(crate) struct SharedBest<S: AnnealingState> {
@@ -91,28 +88,20 @@ struct AnnealingTemperature {
 }
 
 impl AnnealingTemperature {
-    fn new(
-        timer: Timer,
-        deadline: f64,
-        params: &AnnealingParams,
-        worker_id: usize,
-        worker_count: usize,
-    ) -> Self {
-        let scale =
-            worker_temperature_scale(worker_id, worker_count, params.worker_temperature_scale);
+    fn new(timer: Timer, deadline: f64, params: &AnnealingParams) -> Self {
         Self {
             start_time: timer.elapsed_seconds(),
             deadline,
             positive_tardiness: TemperatureRegime {
                 range: (
-                    params.positive_tardiness.temperature.0 * scale,
-                    params.positive_tardiness.temperature.1 * scale,
+                    params.positive_tardiness.temperature.0,
+                    params.positive_tardiness.temperature.1,
                 ),
             },
             zero_tardiness: TemperatureRegime {
                 range: (
-                    params.zero_tardiness.temperature.0 * scale,
-                    params.zero_tardiness.temperature.1 * scale,
+                    params.zero_tardiness.temperature.0,
+                    params.zero_tardiness.temperature.1,
                 ),
             },
         }
@@ -171,14 +160,6 @@ pub(crate) fn acceptance_threshold(
     current_score - temperature * rng.next_f64().ln()
 }
 
-pub(crate) fn worker_temperature_scale(worker_id: usize, worker_count: usize, scale: f64) -> f64 {
-    if worker_count <= 1 {
-        return 1.0;
-    }
-    let ratio = worker_id as f64 / (worker_count - 1) as f64;
-    1.0 + scale * ratio.powf(2.0)
-}
-
 pub(crate) struct AnnealingRegimeParams {
     pub(crate) temperature: (f64, f64),
     pub(crate) exchange_threshold: f64,
@@ -188,8 +169,6 @@ pub(crate) struct AnnealingParams {
     pub(crate) exchange_interval: usize,
     pub(crate) positive_tardiness: AnnealingRegimeParams,
     pub(crate) zero_tardiness: AnnealingRegimeParams,
-    pub(crate) worker_temperature_scale: f64,
-    pub(crate) tabu_capacity: usize,
 }
 
 pub(crate) struct AnnealingAttempt<S> {
@@ -305,44 +284,11 @@ pub(crate) trait AnnealingDelegate: Sync {
     fn finish(&self, state: Self::State) -> Self::Output;
 }
 
-struct TabuList {
-    capacity: usize,
-    queue: VecDeque<u64>,
-    set: HashSet<u64>,
-}
-
-impl TabuList {
-    fn new(capacity: usize) -> Self {
-        Self {
-            capacity,
-            queue: VecDeque::with_capacity(capacity),
-            set: HashSet::with_capacity(capacity * 2),
-        }
-    }
-
-    fn contains(&self, key: u64) -> bool {
-        self.capacity > 0 && self.set.contains(&key)
-    }
-
-    fn insert(&mut self, key: u64) {
-        if self.capacity == 0 || !self.set.insert(key) {
-            return;
-        }
-        self.queue.push_back(key);
-        if self.queue.len() > self.capacity {
-            if let Some(old_key) = self.queue.pop_front() {
-                self.set.remove(&old_key);
-            }
-        }
-    }
-}
-
 struct WorkerState<S> {
     current: S,
     personal_best: S,
     local_best_score: f64,
     last_imported_revision: Option<u64>,
-    tabu: TabuList,
 }
 
 struct WorkerResult<S> {
@@ -351,9 +297,6 @@ struct WorkerResult<S> {
 }
 
 fn apply_shared_best<S: AnnealingState>(local: &mut WorkerState<S>, best: S, revision: u64) {
-    if let Some(key) = best.tabu_key() {
-        local.tabu.insert(key);
-    }
     local.current = best;
     local.last_imported_revision = Some(revision);
 }
@@ -451,24 +394,13 @@ impl<D: AnnealingDelegate> Annealer<D> {
         worker_id: usize,
     ) -> WorkerResult<D::State> {
         let score = initial_state.annealing_score();
-        let mut tabu = TabuList::new(self.params.tabu_capacity);
-        if let Some(key) = initial_state.tabu_key() {
-            tabu.insert(key);
-        }
         let mut local = WorkerState {
             current: initial_state.clone(),
             personal_best: initial_state.clone(),
             local_best_score: score,
             last_imported_revision: None,
-            tabu,
         };
-        let temperature = AnnealingTemperature::new(
-            timer,
-            self.deadline,
-            &self.params,
-            worker_id,
-            self.worker_count,
-        );
+        let temperature = AnnealingTemperature::new(timer, self.deadline, &self.params);
         let positive_tardiness_temperature = temperature.positive_tardiness.range;
         let zero_tardiness_temperature = temperature.zero_tardiness.range;
         let mut context = AnnealingWorkerContext::new(
@@ -534,11 +466,8 @@ impl<D: AnnealingDelegate> Annealer<D> {
             };
             stats.succeeded += 1;
             let candidate_score = candidate.annealing_score();
-            let candidate_tabu_key = candidate.tabu_key();
-            let tabu = candidate_tabu_key.is_some_and(|key| local.tabu.contains(key));
-            let tabu_rejected = tabu && candidate_score + EPS >= local.local_best_score;
             let delta = candidate_score - current_score;
-            let accepted_candidate = !tabu_rejected && candidate_score <= accept_threshold;
+            let accepted_candidate = candidate_score <= accept_threshold;
             let improved_best =
                 accepted_candidate && candidate_score + EPS < local.local_best_score;
             #[cfg(feature = "anneal-visualizer")]
@@ -551,9 +480,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
                         worker: worker_id,
                         iter: context.iterations(),
                         elapsed,
-                        reason: if tabu_rejected {
-                            "tabu"
-                        } else if accepted_candidate {
+                        reason: if accepted_candidate {
                             "accepted"
                         } else {
                             "rejected"
@@ -574,10 +501,6 @@ impl<D: AnnealingDelegate> Annealer<D> {
                     },
                 );
             }
-            if tabu_rejected {
-                stats.time_sec += neighbor_start.elapsed().as_secs_f64();
-                continue;
-            }
 
             if delta < -EPS {
                 stats.improved += 1;
@@ -591,9 +514,6 @@ impl<D: AnnealingDelegate> Annealer<D> {
             local.current = candidate;
             accepted += 1;
             stats.accepted += 1;
-            if let Some(key) = candidate_tabu_key {
-                local.tabu.insert(key);
-            }
 
             if improved_best {
                 local.personal_best.clone_from(&local.current);

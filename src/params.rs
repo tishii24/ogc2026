@@ -13,7 +13,6 @@ use crate::{
 pub struct SolverParams {
     pub runtime: RuntimeParams,
     pub phases: PhaseParams,
-    pub precompute: PrecomputeParams,
     pub insert: InsertParams,
     pub annealing: AnnealingConfigs,
     pub preoptimize: PreoptimizeSolverParams,
@@ -62,12 +61,6 @@ pub struct OptimizePhaseParams {
     pub horizon_w2_power: Option<f64>,
     pub expand_time_ratio: f64,
     pub max_expand_seconds: f64,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PrecomputeParams {
-    pub orientation_neighbor_limit: usize,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -191,9 +184,6 @@ pub struct AnnealingParamsConfig {
     pub exchange_interval: usize,
     pub positive_tardiness: AnnealingRegimeConfig,
     pub zero_tardiness: AnnealingRegimeConfig,
-    #[serde(default)]
-    pub worker_temperature_scale: f64,
-    pub tabu_capacity: usize,
 }
 
 impl AnnealingParamsConfig {
@@ -211,8 +201,6 @@ impl AnnealingParamsConfig {
             zero_tardiness: self
                 .zero_tardiness
                 .make(problem, initial_score, block_count),
-            worker_temperature_scale: self.worker_temperature_scale,
-            tabu_capacity: self.tabu_capacity,
         }
     }
 }
