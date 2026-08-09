@@ -55,7 +55,7 @@ preoptimize:
   alpha: 0.5
   beta: 0.1
   bay_padding: 0.5
-  congestion_weight: 0.001
+  congestion_weight: 0.01
   initial_build:
     time_ratio: 0.1
     max_seconds: 1.0
