@@ -34,7 +34,7 @@ annealing:
         w1_scale: 10.0
         w3_scale: 500.0
   optimize:
-    exchange_interval: 100000
+    exchange_interval: 2000
     positive_tardiness:
       temperature_initial_score_per_block_scale: [0.2, 0.02]
       exchange_threshold:
