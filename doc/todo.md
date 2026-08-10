@@ -1,6 +1,5 @@
 todo:
-- reconstruct
-  - reconstruct-weightにそれぞれpowerをつける
+- last-horizon-reserved-ratio: 0.1を足す
 
 tuning:
 - horizon-size, horizon-power
