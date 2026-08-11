@@ -1,7 +1,11 @@
 tuning:
+- randomness
+- horizon-size, horizon-power
+- congestion-weight
+  - 0.1, 0.01, 0.001, 0.0
 - pref-spread-weightを増やす
-  - [0.0, 0.3]
-  - [0.0, 1.0]
+- remove-distance-powerを大きくするのを試す
+- exchange-threshold, exchange-interval
 
 solver:
 - 限界高速化
