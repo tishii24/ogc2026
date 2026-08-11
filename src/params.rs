@@ -63,11 +63,28 @@ pub struct OptimizePhaseParams {
     pub max_expand_seconds: f64,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[repr(usize)]
+#[serde(rename_all = "snake_case")]
+pub enum InsertAnchor {
+    BottomLeft,
+    BottomRight,
+    TopLeft,
+    TopRight,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InsertParams {
     pub y_buffer: usize,
     pub anchor_randomness: f64,
+    pub worker_primary_anchors: Vec<InsertAnchor>,
+}
+
+impl InsertParams {
+    pub(crate) fn worker_primary_anchor(&self, worker_id: usize) -> InsertAnchor {
+        self.worker_primary_anchors[worker_id % self.worker_primary_anchors.len()]
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

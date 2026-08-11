@@ -5,7 +5,7 @@ use rayon::prelude::*;
 use crate::{
     EPS, INF, Problem, ScheduledBlock,
     params::{
-        AnnealingParamsConfig, InsertParams, NeighborParams, OptimizePhaseParams,
+        AnnealingParamsConfig, InsertAnchor, InsertParams, NeighborParams, OptimizePhaseParams,
         ReconstructNeighborParams,
     },
     utils::{random::RandPcg64Mcg, time::Timer},
@@ -156,11 +156,13 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
 
     fn propose(
         &self,
+        worker_id: usize,
         current: &Self::State,
         accept_threshold: f64,
         rng: &mut RandPcg64Mcg,
     ) -> AnnealingAttempt<Self::State> {
         let params = self.params;
+        let primary_anchor = self.insert_params.worker_primary_anchor(worker_id);
         let probabilities = params.probabilities.weights();
         let neighbor = sample_neighbor(rng, &probabilities);
         #[cfg(feature = "anneal-visualizer")]
@@ -174,6 +176,7 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
                 accept_threshold,
                 &params.reconstruct,
                 self.insert_params,
+                primary_anchor,
                 self.w2,
             )
             .map(|result| {
@@ -196,6 +199,7 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
                 &current.schedule,
                 rng,
                 self.insert_params,
+                primary_anchor,
                 self.w2,
             ),
             NeighborKind::Rotate => try_rotate_neighbor(
@@ -265,6 +269,7 @@ fn extend_schedule(
     state: OptimizeState,
     added_block_ids: &[usize],
     insert_params: &InsertParams,
+    primary_anchor: InsertAnchor,
     reconstruct_params: &ReconstructNeighborParams,
     w2: f64,
     timer: Timer,
@@ -281,7 +286,7 @@ fn extend_schedule(
         }
         trial_count += 1;
 
-        let anchor = sample_insert_anchor(rng, insert_params);
+        let anchor = sample_insert_anchor(rng, insert_params, primary_anchor);
         let mut schedule = base_schedule.clone();
         let mut loads = vec![0.0; problem.bays.len()];
         let mut fixed_score13 = 0.0;
@@ -418,6 +423,7 @@ pub(super) fn optimize(
             .enumerate()
             .map(|(worker_id, state)| {
                 let mut rng = RandPcg64Mcg::new(horizon_seed.wrapping_add(worker_id as u64));
+                let primary_anchor = insert_params.worker_primary_anchor(worker_id);
                 extend_schedule(
                     problem,
                     pre,
@@ -425,6 +431,7 @@ pub(super) fn optimize(
                     state,
                     &order[horizon.clone()],
                     insert_params,
+                    primary_anchor,
                     &neighbor_params.reconstruct,
                     w2,
                     timer,

@@ -19,6 +19,11 @@ phases:
 insert:
   y_buffer: 10
   anchor_randomness: 0.2
+  worker_primary_anchors:
+    - bottom_left
+    - bottom_right
+    - top_left
+    - top_right
 
 annealing:
   preoptimize:

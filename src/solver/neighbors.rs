@@ -1,6 +1,6 @@
 use crate::{
     INF, Problem, ScheduledBlock,
-    params::{InsertParams, RotateNeighborParams, ShiftNeighborParams},
+    params::{InsertAnchor, InsertParams, RotateNeighborParams, ShiftNeighborParams},
     utils::random::Random,
 };
 
@@ -152,6 +152,7 @@ pub(super) fn try_move_neighbor<R: Random>(
     schedule: &[ScheduledBlock],
     rng: &mut R,
     insert_params: &InsertParams,
+    primary_anchor: InsertAnchor,
     w2: f64,
 ) -> Option<Vec<ScheduledBlock>> {
     if schedule.is_empty() {
@@ -171,7 +172,7 @@ pub(super) fn try_move_neighbor<R: Random>(
         base.push(s);
     }
 
-    let anchor = sample_insert_anchor(rng, insert_params);
+    let anchor = sample_insert_anchor(rng, insert_params, primary_anchor);
     let scheduled = insert_greedy(
         problem,
         pre,

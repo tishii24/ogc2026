@@ -260,6 +260,7 @@ pub(crate) trait AnnealingDelegate: Sync {
 
     fn propose(
         &self,
+        worker_id: usize,
         current: &Self::State,
         accept_threshold: f64,
         rng: &mut RandPcg64Mcg,
@@ -452,9 +453,12 @@ impl<D: AnnealingDelegate> Annealer<D> {
             let accept_threshold =
                 acceptance_threshold(current_score, current_temperature, &mut context.rng);
             let neighbor_start = Instant::now();
-            let attempt = self
-                .delegate
-                .propose(&local.current, accept_threshold, &mut context.rng);
+            let attempt = self.delegate.propose(
+                worker_id,
+                &local.current,
+                accept_threshold,
+                &mut context.rng,
+            );
             debug_assert!(attempt.neighbor_kind < neighbor_stats.len());
             let neighbor_kind = attempt.neighbor_kind;
             let stats = &mut neighbor_stats[neighbor_kind];

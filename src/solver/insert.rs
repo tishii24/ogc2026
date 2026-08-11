@@ -1,4 +1,8 @@
-use crate::{Boundsf, Problem, ScheduledBlock, params::InsertParams, utils::random::Random};
+use crate::{
+    Boundsf, Problem, ScheduledBlock,
+    params::{InsertAnchor, InsertParams},
+    utils::random::Random,
+};
 
 use super::{
     objective::score_z2,
@@ -12,24 +16,27 @@ struct InsertCandidate {
     bbox: Boundsf,
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum InsertAnchor {
-    BottomLeft,
-    BottomRight,
-    TopLeft,
-    TopRight,
-}
-
-pub(super) fn sample_insert_anchor(rng: &mut impl Random, params: &InsertParams) -> InsertAnchor {
+pub(super) fn sample_insert_anchor(
+    rng: &mut impl Random,
+    params: &InsertParams,
+    primary_anchor: InsertAnchor,
+) -> InsertAnchor {
     if rng.next_f64() >= params.anchor_randomness {
-        InsertAnchor::BottomLeft
-    } else {
-        match rng.gen_range(0, 3) {
-            0 => InsertAnchor::BottomRight,
-            1 => InsertAnchor::TopLeft,
-            _ => InsertAnchor::TopRight,
-        }
+        return primary_anchor;
     }
+
+    const ANCHORS: [InsertAnchor; 4] = [
+        InsertAnchor::BottomLeft,
+        InsertAnchor::BottomRight,
+        InsertAnchor::TopLeft,
+        InsertAnchor::TopRight,
+    ];
+    let primary_index = primary_anchor as usize;
+    let mut index = rng.gen_range(0, ANCHORS.len() - 1);
+    if index >= primary_index {
+        index += 1;
+    }
+    ANCHORS[index]
 }
 
 pub(crate) fn insert_greedy<R: Random>(

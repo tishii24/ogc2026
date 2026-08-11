@@ -833,6 +833,7 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
 
     fn propose(
         &self,
+        _worker_id: usize,
         current: &Self::State,
         _accept_threshold: f64,
         rng: &mut RandPcg64Mcg,

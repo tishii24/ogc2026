@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 
 use crate::{
     Problem, ScheduledBlock,
-    params::{InsertParams, ReconstructNeighborParams},
+    params::{InsertAnchor, InsertParams, ReconstructNeighborParams},
     utils::random::{Random, sample_weighted_index},
 };
 
@@ -118,6 +118,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
     accept_threshold: f64,
     params: &ReconstructNeighborParams,
     insert_params: &InsertParams,
+    primary_anchor: InsertAnchor,
     w2: f64,
 ) -> Option<LargeReconstructResult> {
     let k = sample_removed_count(rng, params).min(schedule.len());
@@ -153,7 +154,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
         mut loads,
         weighted_z1_z3: mut fixed_score13,
     } = build_reconstruct_base(problem, pre, schedule, &removed_ids);
-    let anchor = sample_insert_anchor(rng, insert_params);
+    let anchor = sample_insert_anchor(rng, insert_params, primary_anchor);
 
     for &block_id in &removed_ids {
         if fixed_score13 > accept_threshold + 1e-9 {
