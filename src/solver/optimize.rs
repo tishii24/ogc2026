@@ -165,7 +165,6 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
         let primary_anchor = self.insert_params.worker_primary_anchor(worker_id);
         let probabilities = params.probabilities.weights();
         let neighbor = sample_neighbor(rng, &probabilities);
-        let anchor = sample_insert_anchor(rng, self.insert_params, primary_anchor);
         #[cfg(feature = "anneal-visualizer")]
         let mut selected_block_ids = None;
         let schedule = match neighbor {
@@ -177,7 +176,7 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
                 accept_threshold,
                 &params.reconstruct,
                 self.insert_params,
-                anchor,
+                primary_anchor,
                 self.w2,
             )
             .map(|result| {
@@ -187,31 +186,40 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
                 }
                 result.schedule
             }),
-            NeighborKind::Shift => try_shift_neighbor(
-                self.problem,
-                self.pre,
-                &current.schedule,
-                rng,
-                anchor,
-                &params.shift,
-            ),
-            NeighborKind::Move => try_move_neighbor(
-                self.problem,
-                self.pre,
-                &current.schedule,
-                rng,
-                self.insert_params,
-                anchor,
-                self.w2,
-            ),
-            NeighborKind::Rotate => try_rotate_neighbor(
-                self.problem,
-                self.pre,
-                &current.schedule,
-                rng,
-                anchor,
-                &params.rotate,
-            ),
+            NeighborKind::Shift => {
+                let anchor = sample_insert_anchor(rng, self.insert_params, primary_anchor);
+                try_shift_neighbor(
+                    self.problem,
+                    self.pre,
+                    &current.schedule,
+                    rng,
+                    anchor,
+                    &params.shift,
+                )
+            }
+            NeighborKind::Move => {
+                let anchor = sample_insert_anchor(rng, self.insert_params, primary_anchor);
+                try_move_neighbor(
+                    self.problem,
+                    self.pre,
+                    &current.schedule,
+                    rng,
+                    self.insert_params,
+                    anchor,
+                    self.w2,
+                )
+            }
+            NeighborKind::Rotate => {
+                let anchor = sample_insert_anchor(rng, self.insert_params, primary_anchor);
+                try_rotate_neighbor(
+                    self.problem,
+                    self.pre,
+                    &current.schedule,
+                    rng,
+                    anchor,
+                    &params.rotate,
+                )
+            }
         };
         AnnealingAttempt {
             neighbor_kind: neighbor.index(),

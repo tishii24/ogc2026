@@ -1,11 +1,11 @@
 use crate::{
-    INF, Problem, ScheduledBlock,
+    Boundsf, INF, Problem, ScheduledBlock,
     params::{InsertAnchor, InsertParams, RotateNeighborParams, ShiftNeighborParams},
     utils::random::Random,
 };
 
 use super::{
-    insert::insert_greedy,
+    insert::{anchor_bbox_cmp, insert_greedy},
     placement_scan::{HorizontalAnchor, PlacementXScanner},
     precompute::Precompute,
 };
@@ -54,30 +54,6 @@ fn horizontal_anchor(anchor: InsertAnchor) -> HorizontalAnchor {
     }
 }
 
-fn anchor_cmp(
-    pre: &Precompute,
-    a: ScheduledBlock,
-    b: ScheduledBlock,
-    anchor: InsertAnchor,
-) -> std::cmp::Ordering {
-    let a_bounds = pre.orientation_bbox_bounds[a.block_id][a.orient_idx];
-    let b_bounds = pre.orientation_bbox_bounds[b.block_id][b.orient_idx];
-    match anchor {
-        InsertAnchor::BottomLeft => (a.x as f64 + a_bounds.max_x)
-            .total_cmp(&(b.x as f64 + b_bounds.max_x))
-            .then((a.y as f64 + a_bounds.max_y).total_cmp(&(b.y as f64 + b_bounds.max_y))),
-        InsertAnchor::BottomRight => (b.x as f64 + b_bounds.min_x)
-            .total_cmp(&(a.x as f64 + a_bounds.min_x))
-            .then((a.y as f64 + a_bounds.max_y).total_cmp(&(b.y as f64 + b_bounds.max_y))),
-        InsertAnchor::TopLeft => (a.x as f64 + a_bounds.max_x)
-            .total_cmp(&(b.x as f64 + b_bounds.max_x))
-            .then((b.y as f64 + b_bounds.min_y).total_cmp(&(a.y as f64 + a_bounds.min_y))),
-        InsertAnchor::TopRight => (b.x as f64 + b_bounds.min_x)
-            .total_cmp(&(a.x as f64 + a_bounds.min_x))
-            .then((b.y as f64 + b_bounds.min_y).total_cmp(&(a.y as f64 + a_bounds.min_y))),
-    }
-}
-
 fn update_best(
     problem: &Problem,
     pre: &Precompute,
@@ -92,7 +68,19 @@ fn update_best(
         .is_none_or(|&(best_tardiness, best_entry_time, best_scheduled)| {
             (tardiness, candidate.entry_time)
                 .cmp(&(best_tardiness, best_entry_time))
-                .then_with(|| anchor_cmp(pre, candidate, best_scheduled, anchor))
+                .then_with(|| {
+                    let bbox = |scheduled: ScheduledBlock| {
+                        let bounds =
+                            pre.orientation_bbox_bounds[scheduled.block_id][scheduled.orient_idx];
+                        Boundsf {
+                            min_x: scheduled.x as f64 + bounds.min_x,
+                            min_y: scheduled.y as f64 + bounds.min_y,
+                            max_x: scheduled.x as f64 + bounds.max_x,
+                            max_y: scheduled.y as f64 + bounds.max_y,
+                        }
+                    };
+                    anchor_bbox_cmp(bbox(candidate), bbox(best_scheduled), anchor)
+                })
                 .is_lt()
         })
     {

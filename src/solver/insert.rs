@@ -16,6 +16,27 @@ struct InsertCandidate {
     bbox: Boundsf,
 }
 
+pub(super) fn anchor_bbox_cmp(a: Boundsf, b: Boundsf, anchor: InsertAnchor) -> std::cmp::Ordering {
+    match anchor {
+        InsertAnchor::BottomLeft => a
+            .max_x
+            .total_cmp(&b.max_x)
+            .then(a.max_y.total_cmp(&b.max_y)),
+        InsertAnchor::BottomRight => b
+            .min_x
+            .total_cmp(&a.min_x)
+            .then(a.max_y.total_cmp(&b.max_y)),
+        InsertAnchor::TopLeft => a
+            .max_x
+            .total_cmp(&b.max_x)
+            .then(b.min_y.total_cmp(&a.min_y)),
+        InsertAnchor::TopRight => b
+            .min_x
+            .total_cmp(&a.min_x)
+            .then(b.min_y.total_cmp(&a.min_y)),
+    }
+}
+
 pub(super) fn sample_insert_anchor(
     rng: &mut impl Random,
     params: &InsertParams,
@@ -60,28 +81,7 @@ pub(crate) fn insert_greedy<R: Random>(
         b: &InsertCandidate,
         anchor: InsertAnchor,
     ) -> std::cmp::Ordering {
-        let bbox_order = match anchor {
-            InsertAnchor::BottomLeft => a
-                .bbox
-                .max_x
-                .total_cmp(&b.bbox.max_x)
-                .then(a.bbox.max_y.total_cmp(&b.bbox.max_y)),
-            InsertAnchor::BottomRight => b
-                .bbox
-                .min_x
-                .total_cmp(&a.bbox.min_x)
-                .then(a.bbox.max_y.total_cmp(&b.bbox.max_y)),
-            InsertAnchor::TopLeft => a
-                .bbox
-                .max_x
-                .total_cmp(&b.bbox.max_x)
-                .then(b.bbox.min_y.total_cmp(&a.bbox.min_y)),
-            InsertAnchor::TopRight => b
-                .bbox
-                .min_x
-                .total_cmp(&a.bbox.min_x)
-                .then(b.bbox.min_y.total_cmp(&a.bbox.min_y)),
-        };
+        let bbox_order = anchor_bbox_cmp(a.bbox, b.bbox, anchor);
         a.score_delta
             .total_cmp(&b.score_delta)
             .then(a.scheduled.entry_time.cmp(&b.scheduled.entry_time))

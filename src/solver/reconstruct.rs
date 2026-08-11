@@ -6,7 +6,11 @@ use crate::{
     utils::random::{Random, sample_weighted_index},
 };
 
-use super::{insert::insert_greedy, objective::score13_block, precompute::Precompute};
+use super::{
+    insert::{insert_greedy, sample_insert_anchor},
+    objective::score13_block,
+    precompute::Precompute,
+};
 
 #[derive(Clone, Copy)]
 enum RemoveSeedMethod {
@@ -114,7 +118,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
     accept_threshold: f64,
     params: &ReconstructNeighborParams,
     insert_params: &InsertParams,
-    anchor: InsertAnchor,
+    primary_anchor: InsertAnchor,
     w2: f64,
 ) -> Option<LargeReconstructResult> {
     let k = sample_removed_count(rng, params).min(schedule.len());
@@ -163,6 +167,7 @@ pub(super) fn try_large_reconstruct<R: Random>(
             .due_date
             .saturating_add(max_tardiness)
             .saturating_sub(block.processing_time);
+        let anchor = sample_insert_anchor(rng, insert_params, primary_anchor);
         let scheduled = insert_greedy(
             problem,
             pre,
