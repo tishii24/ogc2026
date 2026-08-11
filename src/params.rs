@@ -38,7 +38,7 @@ pub struct RuntimeParams {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PhaseParams {
-    pub initial_preoptimize: LimitedPhaseParams,
+    pub preoptimize: LimitedPhaseParams,
     pub optimize: OptimizePhaseParams,
 }
 

@@ -310,14 +310,14 @@ fn extend_schedule(
         trial_count += 1;
 
         let removed_ids = if base_schedule.is_empty() {
-            Vec::new()
+            Vec::with_capacity(added_block_ids.len())
         } else {
             let remove_count =
                 sample_removed_count(rng, reconstruct_params).min(base_schedule.len());
             if remove_count == 0 {
-                Vec::new()
+                Vec::with_capacity(added_block_ids.len())
             } else {
-                choose_removed_blocks(
+                let Some(removed_ids) = choose_removed_blocks(
                     problem,
                     pre,
                     &base_schedule,
@@ -325,8 +325,10 @@ fn extend_schedule(
                     w2,
                     rng,
                     reconstruct_params,
-                )
-                .unwrap()
+                ) else {
+                    continue 'trial;
+                };
+                removed_ids
             }
         };
         let removed_count = removed_ids.len();
@@ -345,7 +347,6 @@ fn extend_schedule(
             rng,
             reconstruct_params,
         );
-        let anchor = sample_insert_anchor(rng, insert_params, primary_anchor);
 
         for block_id in order {
             if best
@@ -356,6 +357,7 @@ fn extend_schedule(
             }
             let block = &problem.blocks[block_id];
             let original = original_by_id[block_id].unwrap();
+            let anchor = sample_insert_anchor(rng, insert_params, primary_anchor);
             let Some(scheduled) = insert_greedy(
                 problem,
                 pre,

@@ -7,7 +7,7 @@ runtime:
   solution_emit_max_count: 10
 
 phases:
-  initial_preoptimize:
+  preoptimize:
     time_ratio: 0.1
     max_seconds: 10.0
   optimize:

@@ -56,8 +56,8 @@ pub fn solve(
     );
     let preoptimize_time_limit = phase_time_limit(
         timelimit,
-        params.phases.initial_preoptimize.time_ratio,
-        params.phases.initial_preoptimize.max_seconds,
+        params.phases.preoptimize.time_ratio,
+        params.phases.preoptimize.max_seconds,
     )
     .min((deadline - timer.elapsed_seconds()).max(1e-4));
     let preoptimized = preoptimize(
