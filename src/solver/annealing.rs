@@ -262,6 +262,11 @@ struct WorkerResult<S> {
 }
 
 fn apply_shared_best<S: AnnealingState>(local: &mut WorkerState<S>, best: S, revision: u64) {
+    let best_score = best.annealing_score();
+    if best_score + EPS < local.local_best_score {
+        local.personal_best.clone_from(&best);
+        local.local_best_score = best_score;
+    }
     local.current = best;
     local.last_imported_revision = Some(revision);
 }
