@@ -21,7 +21,10 @@ use super::{
     objective::{score_schedule, score13_block},
     output::CandidateEmitter,
     precompute::Precompute,
-    reconstruct::{sort_default_reconstruct_order, try_large_reconstruct},
+    reconstruct::{
+        build_reconstruct_base, choose_removed_blocks, sample_removed_count,
+        sort_default_reconstruct_order, try_large_reconstruct,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -279,6 +282,24 @@ fn extend_schedule(
     rng: &mut RandPcg64Mcg,
 ) -> OptimizeState {
     let base_schedule = state.schedule;
+    let mut original_by_id = vec![None; problem.blocks.len()];
+    for &scheduled in &base_schedule {
+        original_by_id[scheduled.block_id] = Some(scheduled);
+    }
+    for &block_id in added_block_ids {
+        let block = &problem.blocks[block_id];
+        let entry_time = preopt.blocks[block_id].entry_time.max(block.release_time);
+        original_by_id[block_id] = Some(ScheduledBlock {
+            block_id,
+            bay_id: preopt.blocks[block_id].bay_id,
+            orient_idx: 0,
+            x: 0,
+            y: 0,
+            entry_time,
+            exit_time: entry_time + block.processing_time,
+        });
+    }
+
     let mut best = None;
     let mut trial_count = 0;
 
@@ -288,15 +309,34 @@ fn extend_schedule(
         }
         trial_count += 1;
 
-        let anchor = sample_insert_anchor(rng, insert_params, primary_anchor);
-        let mut schedule = base_schedule.clone();
-        let mut loads = vec![0.0; problem.bays.len()];
-        let mut fixed_score13 = 0.0;
-        for &scheduled in &schedule {
-            loads[scheduled.bay_id] += problem.blocks[scheduled.block_id].workload as f64;
-            fixed_score13 += score13_block(problem, pre, scheduled);
-        }
-        let mut order = added_block_ids.to_vec();
+        let removed_ids = if base_schedule.is_empty() {
+            Vec::new()
+        } else {
+            let remove_count =
+                sample_removed_count(rng, reconstruct_params).min(base_schedule.len());
+            if remove_count == 0 {
+                Vec::new()
+            } else {
+                choose_removed_blocks(
+                    problem,
+                    pre,
+                    &base_schedule,
+                    remove_count,
+                    w2,
+                    rng,
+                    reconstruct_params,
+                )
+                .unwrap()
+            }
+        };
+        let removed_count = removed_ids.len();
+        let reconstruct_base = build_reconstruct_base(problem, pre, &base_schedule, &removed_ids);
+        let mut schedule = reconstruct_base.schedule;
+        let mut loads = reconstruct_base.loads;
+        let mut fixed_score13 = reconstruct_base.weighted_z1_z3;
+
+        let mut order = removed_ids;
+        order.extend_from_slice(added_block_ids);
         sort_default_reconstruct_order(
             problem,
             &pre.max_footprint_area,
@@ -305,6 +345,7 @@ fn extend_schedule(
             rng,
             reconstruct_params,
         );
+        let anchor = sample_insert_anchor(rng, insert_params, primary_anchor);
 
         for block_id in order {
             if best
@@ -314,16 +355,7 @@ fn extend_schedule(
                 continue 'trial;
             }
             let block = &problem.blocks[block_id];
-            let entry_time = preopt.blocks[block_id].entry_time.max(block.release_time);
-            let original = ScheduledBlock {
-                block_id,
-                bay_id: preopt.blocks[block_id].bay_id,
-                orient_idx: 0,
-                x: 0,
-                y: 0,
-                entry_time,
-                exit_time: entry_time + block.processing_time,
-            };
+            let original = original_by_id[block_id].unwrap();
             let Some(scheduled) = insert_greedy(
                 problem,
                 pre,
@@ -353,9 +385,10 @@ fn extend_schedule(
             .is_none_or(|best: &OptimizeState| candidate.objective < best.objective)
         {
             log!(
-                "[{:.4}] [expand] best: trial={}, score={:.3}",
+                "[{:.4}] [expand] best: trial={}, removed={}, score={:.3}",
                 timer.elapsed_seconds(),
                 trial_count,
+                removed_count,
                 candidate.objective,
             );
             best = Some(candidate);
