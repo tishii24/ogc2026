@@ -8,6 +8,7 @@ local = []
 anneal-visualizer = []
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 geo = "0.30"
 rayon = "1"
 serde = { version = "1", features = ["derive"] }
