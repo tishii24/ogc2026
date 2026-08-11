@@ -7,8 +7,7 @@ Requirements:
 
 From the project root, run:
 
-    python3 tools/composer.py submission \
-        --params params/default.yaml
+    python3 tools/composer.py submission --params params/default.yaml
 
 This command:
 
