@@ -2,12 +2,6 @@ use crate::{Problem, ScheduledBlock};
 
 use super::precompute::Precompute;
 
-#[derive(Clone, Copy, Debug)]
-pub(super) struct ScheduleScore {
-    pub(super) objective: f64,
-    pub(super) total_tardiness: i64,
-}
-
 pub(super) fn score13_block(problem: &Problem, pre: &Precompute, scheduled: ScheduledBlock) -> f64 {
     let block = &problem.blocks[scheduled.block_id];
     let tardiness = (scheduled.exit_time - block.due_date).max(0);
@@ -20,7 +14,7 @@ pub(super) fn score_schedule(
     pre: &Precompute,
     schedule: &[ScheduledBlock],
     w2: f64,
-) -> ScheduleScore {
+) -> f64 {
     let mut obj1 = 0;
     let mut obj3 = 0.0;
     let mut loads = vec![0.0; problem.bays.len()];
@@ -33,10 +27,7 @@ pub(super) fn score_schedule(
     }
 
     let obj2 = score_z2(&loads, &pre.bay_load_scale);
-    ScheduleScore {
-        objective: problem.weights.w1 * obj1 as f64 + w2 * obj2 + problem.weights.w3 * obj3,
-        total_tardiness: obj1,
-    }
+    problem.weights.w1 * obj1 as f64 + w2 * obj2 + problem.weights.w3 * obj3
 }
 
 pub(super) fn score_z2(loads: &[f64], bay_load_scale: &[f64]) -> f64 {

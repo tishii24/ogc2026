@@ -25,8 +25,6 @@ const STATUS_LOG_INTERVAL_SECONDS: f64 = 1.0;
 
 pub(crate) trait AnnealingState: Clone + Send + Sync {
     fn annealing_score(&self) -> f64;
-
-    fn has_tardiness(&self) -> bool;
 }
 
 pub(crate) struct SharedBest<S: AnnealingState> {
@@ -69,22 +67,10 @@ impl<S: AnnealingState> SharedBest<S> {
     }
 }
 
-#[derive(Clone, Copy)]
-struct TemperatureRegime {
-    range: (f64, f64),
-}
-
-impl TemperatureRegime {
-    fn current(&self, progress: f64) -> f64 {
-        self.range.0 * (self.range.1 / self.range.0.max(1e-9)).powf(progress)
-    }
-}
-
 struct AnnealingTemperature {
     start_time: f64,
     deadline: f64,
-    positive_tardiness: TemperatureRegime,
-    zero_tardiness: TemperatureRegime,
+    range: (f64, f64),
 }
 
 impl AnnealingTemperature {
@@ -92,30 +78,14 @@ impl AnnealingTemperature {
         Self {
             start_time: timer.elapsed_seconds(),
             deadline,
-            positive_tardiness: TemperatureRegime {
-                range: (
-                    params.positive_tardiness.temperature.0,
-                    params.positive_tardiness.temperature.1,
-                ),
-            },
-            zero_tardiness: TemperatureRegime {
-                range: (
-                    params.zero_tardiness.temperature.0,
-                    params.zero_tardiness.temperature.1,
-                ),
-            },
+            range: params.temperature,
         }
     }
 
-    fn current(&self, elapsed: f64, has_tardiness: bool) -> f64 {
+    fn current(&self, elapsed: f64) -> f64 {
         let progress = ((elapsed - self.start_time) / (self.deadline - self.start_time).max(1e-4))
             .clamp(0.0, 1.0);
-        let regime = if has_tardiness {
-            self.positive_tardiness
-        } else {
-            self.zero_tardiness
-        };
-        regime.current(progress)
+        self.range.0 * (self.range.1 / self.range.0.max(1e-9)).powf(progress)
     }
 }
 
@@ -160,15 +130,10 @@ pub(crate) fn acceptance_threshold(
     current_score - temperature * rng.next_f64().ln()
 }
 
-pub(crate) struct AnnealingRegimeParams {
-    pub(crate) temperature: (f64, f64),
-    pub(crate) exchange_threshold: f64,
-}
-
 pub(crate) struct AnnealingParams {
     pub(crate) exchange_interval: usize,
-    pub(crate) positive_tardiness: AnnealingRegimeParams,
-    pub(crate) zero_tardiness: AnnealingRegimeParams,
+    pub(crate) temperature: (f64, f64),
+    pub(crate) exchange_threshold: f64,
 }
 
 pub(crate) struct AnnealingAttempt<S> {
@@ -243,8 +208,7 @@ pub(crate) struct WorkerSummary {
     pub(crate) accepted: usize,
     pub(crate) improved: usize,
     pub(crate) best_imports: usize,
-    pub(crate) positive_tardiness_temperature: (f64, f64),
-    pub(crate) zero_tardiness_temperature: (f64, f64),
+    pub(crate) temperature: (f64, f64),
     pub(crate) current_score: f64,
     pub(crate) local_best_score: f64,
     pub(crate) neighbor_stats: Vec<NeighborStats>,
@@ -354,7 +318,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
         for worker in &worker_results {
             let summary = &worker.summary;
             log!(
-                "[{:.4}] [{:8} worker={}] iter={:8}, accepted={:8}, improved={:8}, best_imports={:5}, current={:.3}, local_best={:.3}, temp(z1>0)={:.6}->{:.6}, temp(z1=0)={:.6}->{:.6}\nneighbor stats:\n{}",
+                "[{:.4}] [{:8} worker={}] iter={:8}, accepted={:8}, improved={:8}, best_imports={:5}, current={:.3}, local_best={:.3}, temperature={:.6}->{:.6}\nneighbor stats:\n{}",
                 timer.elapsed_seconds(),
                 self.delegate.name(),
                 summary.worker_id,
@@ -364,10 +328,8 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 summary.best_imports,
                 summary.current_score,
                 summary.local_best_score,
-                summary.positive_tardiness_temperature.0,
-                summary.positive_tardiness_temperature.1,
-                summary.zero_tardiness_temperature.0,
-                summary.zero_tardiness_temperature.1,
+                summary.temperature.0,
+                summary.temperature.1,
                 format_neighbor_stats(&summary.neighbor_stats, self.delegate.neighbor_kinds()),
             );
         }
@@ -402,8 +364,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
             last_imported_revision: None,
         };
         let temperature = AnnealingTemperature::new(timer, self.deadline, &self.params);
-        let positive_tardiness_temperature = temperature.positive_tardiness.range;
-        let zero_tardiness_temperature = temperature.zero_tardiness.range;
+        let temperature_range = temperature.range;
         let mut context = AnnealingWorkerContext::new(
             self.deadline,
             self.rng_seed.wrapping_add(worker_id as u64),
@@ -437,14 +398,12 @@ impl<D: AnnealingDelegate> Annealer<D> {
             }
 
             let current_score = local.current.annealing_score();
-            let has_tardiness = local.current.has_tardiness();
-            let current_temperature = temperature.current(elapsed, has_tardiness);
+            let current_temperature = temperature.current(elapsed);
             if elapsed >= next_status_time {
                 log!(
-                    "[{elapsed:.4}] [{} worker={worker_id}] iter={:8}, current={current_score:.3}, temperature={current_temperature:.6}, regime={}",
+                    "[{elapsed:.4}] [{} worker={worker_id}] iter={:8}, current={current_score:.3}, temperature={current_temperature:.6}",
                     self.delegate.name(),
                     context.iterations(),
-                    if has_tardiness { "T>0" } else { "T=0" },
                 );
                 next_status_time = (elapsed / STATUS_LOG_INTERVAL_SECONDS).floor()
                     * STATUS_LOG_INTERVAL_SECONDS
@@ -557,8 +516,7 @@ impl<D: AnnealingDelegate> Annealer<D> {
                 accepted,
                 improved,
                 best_imports,
-                positive_tardiness_temperature,
-                zero_tardiness_temperature,
+                temperature: temperature_range,
                 current_score: local.current.annealing_score(),
                 local_best_score: local.local_best_score,
                 neighbor_stats,
@@ -590,14 +548,9 @@ impl<D: AnnealingDelegate> Annealer<D> {
         local: &mut WorkerState<D::State>,
         shared: &SharedBest<D::State>,
     ) -> bool {
-        let exchange_threshold = if local.current.has_tardiness() {
-            self.params.positive_tardiness.exchange_threshold
-        } else {
-            self.params.zero_tardiness.exchange_threshold
-        };
         if let Some((best, revision)) = shared.get_if_better(
             local.current.annealing_score(),
-            exchange_threshold,
+            self.params.exchange_threshold,
             local.last_imported_revision,
         ) {
             apply_shared_best(local, best, revision);

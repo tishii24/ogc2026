@@ -144,10 +144,6 @@ impl AnnealingState for PreoptimizeAnnealingState {
     fn annealing_score(&self) -> f64 {
         self.objective
     }
-
-    fn has_tardiness(&self) -> bool {
-        self.z1 > 0.0
-    }
 }
 
 fn evaluate_schedule(

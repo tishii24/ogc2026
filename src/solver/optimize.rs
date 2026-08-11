@@ -18,7 +18,7 @@ use super::{
     neighbors::{
         NeighborKind, sample_neighbor, try_move_neighbor, try_rotate_neighbor, try_shift_neighbor,
     },
-    objective::{ScheduleScore, score_schedule, score13_block},
+    objective::{score_schedule, score13_block},
     output::CandidateEmitter,
     precompute::Precompute,
     reconstruct::{sort_default_reconstruct_order, try_large_reconstruct},
@@ -27,17 +27,12 @@ use super::{
 #[derive(Clone, Debug)]
 pub(super) struct OptimizeState {
     pub(super) objective: f64,
-    pub(super) total_tardiness: i64,
     pub(super) schedule: Vec<ScheduledBlock>,
 }
 
 impl AnnealingState for OptimizeState {
     fn annealing_score(&self) -> f64 {
         self.objective
-    }
-
-    fn has_tardiness(&self) -> bool {
-        self.total_tardiness > 0
     }
 }
 
@@ -47,13 +42,9 @@ pub(super) fn make_optimize_state(
     schedule: Vec<ScheduledBlock>,
     w2: f64,
 ) -> OptimizeState {
-    let ScheduleScore {
-        objective,
-        total_tardiness,
-    } = score_schedule(problem, pre, &schedule, w2);
+    let objective = score_schedule(problem, pre, &schedule, w2);
     OptimizeState {
         objective,
-        total_tardiness,
         schedule,
     }
 }

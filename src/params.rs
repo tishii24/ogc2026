@@ -2,11 +2,7 @@ use std::{fs, path::Path};
 
 use serde::Deserialize;
 
-use crate::{
-    Problem,
-    solver::annealing::{AnnealingParams, AnnealingRegimeParams},
-    utils::random::Random,
-};
+use crate::{Problem, solver::annealing::AnnealingParams, utils::random::Random};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -120,71 +116,13 @@ pub struct PreoptimizeNeighborParams {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WeightScaleConfig {
-    #[serde(default)]
-    pub w1_scale: Option<f64>,
-    #[serde(default)]
-    pub w3_scale: Option<f64>,
+    pub w1_scale: f64,
+    pub w3_scale: f64,
 }
 
 impl WeightScaleConfig {
     fn make(&self, problem: &Problem) -> f64 {
-        [
-            self.w1_scale.map(|scale| scale * problem.weights.w1),
-            self.w3_scale.map(|scale| scale * problem.weights.w3),
-        ]
-        .into_iter()
-        .flatten()
-        .reduce(f64::min)
-        .unwrap_or(0.0)
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AnnealingRegimeConfig {
-    pub temperature_w1_scale: Option<(f64, f64)>,
-    pub temperature_w3_scale: Option<(f64, f64)>,
-    pub temperature_initial_score_per_block_scale: Option<(f64, f64)>,
-    #[serde(default)]
-    pub exchange_threshold: Option<WeightScaleConfig>,
-}
-
-impl AnnealingRegimeConfig {
-    fn make(
-        &self,
-        problem: &Problem,
-        initial_score: f64,
-        block_count: usize,
-    ) -> AnnealingRegimeParams {
-        let initial_score_per_block = initial_score / block_count.max(1) as f64;
-        let candidates = [
-            self.temperature_w1_scale
-                .map(|scale| [scale.0 * problem.weights.w1, scale.1 * problem.weights.w1]),
-            self.temperature_w3_scale
-                .map(|scale| [scale.0 * problem.weights.w3, scale.1 * problem.weights.w3]),
-            self.temperature_initial_score_per_block_scale.map(|scale| {
-                [
-                    scale.0 * initial_score_per_block,
-                    scale.1 * initial_score_per_block,
-                ]
-            }),
-        ];
-        let temperature = [0, 1].map(|index| {
-            candidates
-                .iter()
-                .flatten()
-                .map(|range| range[index])
-                .reduce(f64::min)
-                .unwrap()
-        });
-        AnnealingRegimeParams {
-            temperature: (temperature[0], temperature[1]),
-            exchange_threshold: self
-                .exchange_threshold
-                .as_ref()
-                .map(|threshold| threshold.make(problem))
-                .unwrap_or(0.0),
-        }
+        (self.w1_scale * problem.weights.w1).min(self.w3_scale * problem.weights.w3)
     }
 }
 
@@ -199,8 +137,8 @@ pub struct AnnealingConfigs {
 #[serde(deny_unknown_fields)]
 pub struct AnnealingParamsConfig {
     pub exchange_interval: usize,
-    pub positive_tardiness: AnnealingRegimeConfig,
-    pub zero_tardiness: AnnealingRegimeConfig,
+    pub temperature_initial_score_per_block_scale: (f64, f64),
+    pub exchange_threshold: WeightScaleConfig,
 }
 
 impl AnnealingParamsConfig {
@@ -210,14 +148,14 @@ impl AnnealingParamsConfig {
         initial_score: f64,
         block_count: usize,
     ) -> AnnealingParams {
+        let initial_score_per_block = initial_score / block_count.max(1) as f64;
         AnnealingParams {
             exchange_interval: self.exchange_interval,
-            positive_tardiness: self
-                .positive_tardiness
-                .make(problem, initial_score, block_count),
-            zero_tardiness: self
-                .zero_tardiness
-                .make(problem, initial_score, block_count),
+            temperature: (
+                self.temperature_initial_score_per_block_scale.0 * initial_score_per_block,
+                self.temperature_initial_score_per_block_scale.1 * initial_score_per_block,
+            ),
+            exchange_threshold: self.exchange_threshold.make(problem),
         }
     }
 }
