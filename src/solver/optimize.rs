@@ -368,8 +368,6 @@ fn extend_schedule(
                 &loads,
                 insert_params,
                 &pre.bay_order_by_pref[block_id],
-                1,
-                1.0,
                 w2,
                 anchor,
                 rng,

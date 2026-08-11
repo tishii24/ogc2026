@@ -178,8 +178,6 @@ pub(super) fn try_large_reconstruct<R: Random>(
             &loads,
             insert_params,
             &pre.bay_order_by_pref[old.block_id],
-            params.insert_candidate_top_k,
-            params.insert_candidate_select_p,
             w2,
             anchor,
             rng,

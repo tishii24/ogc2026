@@ -19,6 +19,8 @@ phases:
 insert:
   y_buffer: 10
   anchor_randomness: 0.2
+  candidate_top_k: 4
+  candidate_select_p: 0.7
   worker_primary_anchors:
     - bottom_left
     - bottom_right
@@ -92,8 +94,6 @@ neighbor:
     current_penalty_weight_range: [0.0, 2.0]
     order_random_weight_range: [0.0, 0.3]
     slack_tightness_weight_range: [0.0, 0.3]
-    insert_candidate_top_k: 4
-    insert_candidate_select_p: 0.7
   shift:
     dy_range: [-5, 0]
   rotate:

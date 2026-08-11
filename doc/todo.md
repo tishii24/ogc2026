@@ -1,9 +1,6 @@
-tuning:
-- pref-spread-weightを増やす
-  - [0.0, 1.0]
-
-solver:
-- 限界高速化
+todo:
+- 高速化
+- ワーカーの多様化
 
 rejected:
 - adaptive-annealing

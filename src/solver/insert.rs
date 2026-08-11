@@ -70,8 +70,6 @@ pub(crate) fn insert_greedy<R: Random>(
     loads: &[f64],
     params: &InsertParams,
     bay_order: &[usize],
-    candidate_top_k: usize,
-    candidate_select_p: f64,
     w2: f64,
     anchor: InsertAnchor,
     rng: &mut R,
@@ -190,10 +188,10 @@ pub(crate) fn insert_greedy<R: Random>(
         return None;
     }
     candidates.sort_by(|a, b| insert_candidate_cmp(a, b, anchor));
-    candidates.truncate(candidate_top_k);
+    candidates.truncate(params.candidate_top_k);
     let selected = candidates
         .iter()
-        .position(|_| rng.next_f64() < candidate_select_p)
+        .position(|_| rng.next_f64() < params.candidate_select_p)
         .unwrap_or(0);
     Some(candidates.swap_remove(selected).scheduled)
 }

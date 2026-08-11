@@ -74,6 +74,8 @@ pub enum InsertAnchor {
 pub struct InsertParams {
     pub y_buffer: usize,
     pub anchor_randomness: f64,
+    pub candidate_top_k: usize,
+    pub candidate_select_p: f64,
     pub worker_primary_anchors: Vec<InsertAnchor>,
 }
 
@@ -190,8 +192,6 @@ pub struct ReconstructNeighborParams {
     pub slack_tightness_weight_range: (f64, f64),
     pub current_penalty_weight_range: (f64, f64),
     pub order_random_weight_range: (f64, f64),
-    pub insert_candidate_top_k: usize,
-    pub insert_candidate_select_p: f64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
