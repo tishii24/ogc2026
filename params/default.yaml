@@ -34,7 +34,7 @@ annealing:
         w1_scale: 10.0
         w3_scale: 500.0
     zero_tardiness:
-      temperature_w3_scale: [10.0, 1.0]
+      temperature_initial_score_per_block_scale: [1.0, 0.01]
       exchange_threshold:
         w1_scale: 10.0
         w3_scale: 500.0
@@ -46,7 +46,7 @@ annealing:
         w1_scale: 10.0
         w3_scale: 500.0
     zero_tardiness:
-      temperature_w3_scale: [5.0, 0.5]
+      temperature_initial_score_per_block_scale: [0.2, 0.02]
       exchange_threshold:
         w1_scale: 10.0
         w3_scale: 500.0
