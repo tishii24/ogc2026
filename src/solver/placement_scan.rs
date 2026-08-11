@@ -166,41 +166,9 @@ pub(super) struct ForbiddenIntervals<'a> {
 }
 
 impl ForbiddenIntervals<'_> {
-    pub(super) fn first_feasible_time(
-        self,
-        base: &[Interval],
-        min_t: i64,
-        max_t: i64,
-    ) -> Option<i64> {
+    pub(super) fn first_feasible_time(self, min_t: i64, max_t: i64) -> Option<i64> {
         let mut t = min_t;
-        let mut base_pos = base.partition_point(|&(_, right)| right < t);
-        let mut added = self.active.iter(self.intervals).peekable();
-
-        loop {
-            let base_next = base.get(base_pos).copied();
-            let added_next = added.peek().copied();
-            let next = match (base_next, added_next) {
-                (Some(base_interval), Some(added_interval)) => {
-                    if base_interval <= added_interval {
-                        base_pos += 1;
-                        base_interval
-                    } else {
-                        added.next();
-                        added_interval
-                    }
-                }
-                (Some(base_interval), None) => {
-                    base_pos += 1;
-                    base_interval
-                }
-                (None, Some(added_interval)) => {
-                    added.next();
-                    added_interval
-                }
-                (None, None) => return (t <= max_t).then_some(t),
-            };
-
-            let (left, right) = next;
+        for (left, right) in self.active.iter(self.intervals) {
             if right < t {
                 continue;
             }
@@ -212,6 +180,7 @@ impl ForbiddenIntervals<'_> {
                 return None;
             }
         }
+        (t <= max_t).then_some(t)
     }
 }
 
@@ -307,7 +276,7 @@ impl<'a> PlacementXScanner<'a> {
             INF,
             horizontal_anchor,
             |x, forbidden| {
-                let Some(entry_time) = forbidden.first_feasible_time(&[], min_t, max_t) else {
+                let Some(entry_time) = forbidden.first_feasible_time(min_t, max_t) else {
                     return false;
                 };
                 on_candidate(ScheduledBlock {
