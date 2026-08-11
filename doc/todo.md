@@ -1,15 +1,10 @@
-todo:
-- last-horizon-reserved-ratio: 0.1を足す
-
 tuning:
 - horizon-size, horizon-power
 - congestion-weight
   - 0.1, 0.01, 0.001, 0.0
 - pref-spread-weightを増やす
 - remove-distance-powerを大きくするのを試す
-- SA
-  - exchange-threshold, exchange-interval
-    - 序盤はexchangeせず、exchange-thresholdを下げる
+- exchange-threshold, exchange-interval
 
 solver:
 - 限界高速化
@@ -20,6 +15,7 @@ pending:
 - hashを荒くする
 - 上から見た高さ（exit-t）を最小化する
 - obj2: preserved-loadsを使う
+- last-horizon-reserved-ratio: 0.1を足す
 
 rejected:
 - adaptive-annealing

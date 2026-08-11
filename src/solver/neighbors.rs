@@ -6,7 +6,7 @@ use crate::{
 
 use super::{
     insert::{insert_greedy, sample_insert_anchor},
-    placement_scan::PlacementXScanner,
+    placement_scan::{HorizontalAnchor, PlacementXScanner},
     precompute::Precompute,
 };
 
@@ -90,7 +90,7 @@ pub(super) fn try_shift_neighbor<R: Random>(
     let mut best: Option<(i64, i64, ScheduledBlock)> = None;
     for dy in params.dy_range.0..=params.dy_range.1 {
         let y = old.y + dy;
-        scanner.scan_y(old.orient_idx, y, |moved| {
+        scanner.scan_y(old.orient_idx, y, HorizontalAnchor::Left, |moved| {
             if moved != old {
                 update_best(problem, &mut best, moved);
             }
@@ -134,7 +134,7 @@ pub(super) fn try_rotate_neighbor<R: Random>(
     for neighbor in &pre.orientation_neighbors[old.block_id][old.orient_idx] {
         for ddy in params.dy_range.0..=params.dy_range.1 {
             let y = old.y + neighbor.dy + ddy;
-            scanner.scan_y(neighbor.orient_idx, y, |rotated| {
+            scanner.scan_y(neighbor.orient_idx, y, HorizontalAnchor::Left, |rotated| {
                 update_best(problem, &mut best, rotated);
                 false
             });

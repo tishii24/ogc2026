@@ -8,6 +8,12 @@ use super::{
 pub(super) type Interval = (i64, i64);
 
 #[derive(Clone, Copy)]
+pub(super) enum HorizontalAnchor {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy)]
 struct XEvent {
     x_offset: u32,
     old_idx: u32,
@@ -286,6 +292,7 @@ impl<'a> PlacementXScanner<'a> {
         &mut self,
         orient_idx: usize,
         y: i64,
+        horizontal_anchor: HorizontalAnchor,
         mut on_candidate: impl FnMut(ScheduledBlock) -> bool,
     ) -> bool {
         let block_id = self.block_id;
@@ -293,20 +300,27 @@ impl<'a> PlacementXScanner<'a> {
         let process_t = self.process_t;
         let min_t = self.min_t;
         let max_t = self.max_t;
-        self.scan_y_ranges(orient_idx, y, -INF, INF, |x, forbidden| {
-            let Some(entry_time) = forbidden.first_feasible_time(&[], min_t, max_t) else {
-                return false;
-            };
-            on_candidate(ScheduledBlock {
-                block_id,
-                bay_id,
-                orient_idx,
-                x,
-                y,
-                entry_time,
-                exit_time: entry_time + process_t,
-            })
-        })
+        self.scan_y_ranges(
+            orient_idx,
+            y,
+            -INF,
+            INF,
+            horizontal_anchor,
+            |x, forbidden| {
+                let Some(entry_time) = forbidden.first_feasible_time(&[], min_t, max_t) else {
+                    return false;
+                };
+                on_candidate(ScheduledBlock {
+                    block_id,
+                    bay_id,
+                    orient_idx,
+                    x,
+                    y,
+                    entry_time,
+                    exit_time: entry_time + process_t,
+                })
+            },
+        )
     }
 
     fn scan_y_ranges(
@@ -315,6 +329,7 @@ impl<'a> PlacementXScanner<'a> {
         y: i64,
         requested_min_x: i64,
         requested_max_x: i64,
+        horizontal_anchor: HorizontalAnchor,
         mut on_x: impl FnMut(i64, ForbiddenIntervals<'_>) -> bool,
     ) -> bool {
         let Some(fit_range) = self
@@ -429,22 +444,28 @@ impl<'a> PlacementXScanner<'a> {
                 );
             }
 
+            let next_x = self
+                .events
+                .get(event_pos)
+                .map(|event| min_x + event.x_offset as i64)
+                .unwrap_or(max_x + 1);
+            let candidate_x = match horizontal_anchor {
+                HorizontalAnchor::Left => x,
+                HorizontalAnchor::Right => (next_x - 1).min(max_x),
+            };
             accepted |= on_x(
-                x,
+                candidate_x,
                 ForbiddenIntervals {
                     active: &self.active_slots,
                     intervals: &self.forbidden_slots.intervals,
                 },
             );
 
-            if event_pos >= self.events.len() {
+            if next_x > max_x {
                 break;
             }
-            x_offset = self.events[event_pos].x_offset;
-            x = min_x + x_offset as i64;
-            if x > max_x {
-                break;
-            }
+            x = next_x;
+            x_offset = (x - min_x) as u32;
         }
 
         accepted

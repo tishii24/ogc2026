@@ -1,6 +1,10 @@
 use crate::{Boundsf, Problem, ScheduledBlock, params::InsertParams, utils::random::Random};
 
-use super::{objective::score_z2, placement_scan::PlacementXScanner, precompute::Precompute};
+use super::{
+    objective::score_z2,
+    placement_scan::{HorizontalAnchor, PlacementXScanner},
+    precompute::Precompute,
+};
 
 struct InsertCandidate {
     scheduled: ScheduledBlock,
@@ -78,6 +82,10 @@ pub(crate) fn insert_greedy<R: Random>(
             .then(a.scheduled.block_id.cmp(&b.scheduled.block_id))
     }
 
+    let horizontal_anchor = match anchor {
+        InsertAnchor::BottomLeft | InsertAnchor::TopLeft => HorizontalAnchor::Left,
+        InsertAnchor::BottomRight | InsertAnchor::TopRight => HorizontalAnchor::Right,
+    };
     let block_id = original.block_id;
     let block = &problem.blocks[block_id];
     let process_t = block.processing_time;
@@ -134,7 +142,7 @@ pub(crate) fn insert_greedy<R: Random>(
                     break;
                 }
 
-                let valid_y = scanner.scan_y(orient_idx, y, |scheduled| {
+                let valid_y = scanner.scan_y(orient_idx, y, horizontal_anchor, |scheduled| {
                     let tardiness = (scheduled.exit_time - block.due_date).max(0);
                     let score_delta = problem.weights.w1 * tardiness as f64 + delta_obj23;
                     best_score_delta = best_score_delta.min(score_delta);
