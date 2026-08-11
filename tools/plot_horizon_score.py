@@ -22,7 +22,7 @@ HORIZON_RE = re.compile(
 WORKER_RE = re.compile(
     r"^\[(?P<time>[0-9.]+)\] \[optimize worker=(?P<worker>\d+)\] "
     r"iter=\s*(?P<iter>\d+), current=(?P<current>[-+0-9.eE]+), "
-    r"temperature=(?P<temperature>[-+0-9.eE]+), regime=(?P<regime>\S+)"
+    r"temperature=(?P<temperature>[-+0-9.eE]+)"
 )
 SHARED_BEST_RE = re.compile(
     r"^\[(?P<time>[0-9.]+)\] \[optimize\] shared best: "
@@ -36,7 +36,6 @@ class WorkerPoint:
     time: float
     current: float
     temperature: float
-    regime: str
 
 
 @dataclass
@@ -92,7 +91,6 @@ def parse_log(path: Path) -> tuple[list[Horizon], float | None]:
                         time=float(match.group("time")),
                         current=float(match.group("current")),
                         temperature=float(match.group("temperature")),
-                        regime=match.group("regime"),
                     )
                 )
                 continue

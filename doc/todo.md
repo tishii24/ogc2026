@@ -1,6 +1,5 @@
 todo:
 - 高速化
-- ワーカーの多様化
 
 rejected:
 - adaptive-annealing
