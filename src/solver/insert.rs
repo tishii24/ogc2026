@@ -19,21 +19,21 @@ struct InsertCandidate {
 pub(super) fn anchor_bbox_cmp(a: Boundsf, b: Boundsf, anchor: InsertAnchor) -> std::cmp::Ordering {
     match anchor {
         InsertAnchor::BottomLeft => a
-            .max_y
-            .total_cmp(&b.max_y)
-            .then(a.max_x.total_cmp(&b.max_x)),
-        InsertAnchor::BottomRight => a
-            .max_y
-            .total_cmp(&b.max_y)
-            .then(b.min_x.total_cmp(&a.min_x)),
-        InsertAnchor::TopLeft => b
-            .min_y
-            .total_cmp(&a.min_y)
-            .then(a.max_x.total_cmp(&b.max_x)),
+            .max_x
+            .total_cmp(&b.max_x)
+            .then(a.max_y.total_cmp(&b.max_y)),
+        InsertAnchor::BottomRight => b
+            .min_x
+            .total_cmp(&a.min_x)
+            .then(a.max_y.total_cmp(&b.max_y)),
+        InsertAnchor::TopLeft => a
+            .max_x
+            .total_cmp(&b.max_x)
+            .then(b.min_y.total_cmp(&a.min_y)),
         InsertAnchor::TopRight => b
-            .min_y
-            .total_cmp(&a.min_y)
-            .then(b.min_x.total_cmp(&a.min_x)),
+            .min_x
+            .total_cmp(&a.min_x)
+            .then(b.min_y.total_cmp(&a.min_y)),
     }
 }
 

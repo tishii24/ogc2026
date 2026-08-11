@@ -1,7 +1,3 @@
-todo:
-- anchorをy優先以下えてみる
-- tuning
-
 tuning:
 - horizon-size, horizon-power
 - congestion-weight
