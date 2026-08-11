@@ -195,31 +195,15 @@ pub struct ReconstructNeighborParams {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum UsizeRangeDistributionType {
-    Lower,
-    Centered,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UsizeRangeDistribution {
-    #[serde(rename = "type")]
-    pub distribution_type: UsizeRangeDistributionType,
     pub range: (usize, usize),
-    pub shape: f64,
+    pub power: f64,
 }
 
 impl UsizeRangeDistribution {
     pub fn sample(&self, rng: &mut impl Random) -> usize {
-        match self.distribution_type {
-            UsizeRangeDistributionType::Lower => {
-                rng.gen_range_lower(self.range.0, self.range.1 + 1, self.shape)
-            }
-            UsizeRangeDistributionType::Centered => {
-                rng.gen_range_centered(self.range.0, self.range.1 + 1, self.shape)
-            }
-        }
+        rng.gen_range_lower(self.range.0, self.range.1 + 1, self.power)
     }
 }
 

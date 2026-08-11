@@ -53,9 +53,8 @@ preoptimize:
     large_reconstruct: 0.05
   neighbor:
     remove_count:
-      type: lower
       range: [7, 13]
-      shape: 2.0
+      power: 2.0
     bad_block_sample_count: 8
     bad_block_select_probability: 0.75
     max_relocate_attempts: 8
@@ -69,13 +68,11 @@ neighbor:
     rotate: 0.2
   reconstruct:
     remove_count:
-      type: lower
       range: [7, 13]
-      shape: 2.0
+      power: 2.0
     remove_blocks_per_seed:
-      type: lower
       range: [1, 4]
-      shape: 1.0
+      power: 1.0
     remove_pool_factor: 1
     remove_entry_base_interval_weights: [0.0, 0.0, 1.0, 1.0, 1.0]
     remove_entry_seed_candidate_count: 5
