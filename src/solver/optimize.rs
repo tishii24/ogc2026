@@ -165,6 +165,7 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
         let primary_anchor = self.insert_params.worker_primary_anchor(worker_id);
         let probabilities = params.probabilities.weights();
         let neighbor = sample_neighbor(rng, &probabilities);
+        let anchor = sample_insert_anchor(rng, self.insert_params, primary_anchor);
         #[cfg(feature = "anneal-visualizer")]
         let mut selected_block_ids = None;
         let schedule = match neighbor {
@@ -176,7 +177,7 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
                 accept_threshold,
                 &params.reconstruct,
                 self.insert_params,
-                primary_anchor,
+                anchor,
                 self.w2,
             )
             .map(|result| {
@@ -191,6 +192,7 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
                 self.pre,
                 &current.schedule,
                 rng,
+                anchor,
                 &params.shift,
             ),
             NeighborKind::Move => try_move_neighbor(
@@ -199,7 +201,7 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
                 &current.schedule,
                 rng,
                 self.insert_params,
-                primary_anchor,
+                anchor,
                 self.w2,
             ),
             NeighborKind::Rotate => try_rotate_neighbor(
@@ -207,6 +209,7 @@ impl AnnealingDelegate for OptimizeAnnealingDelegate<'_> {
                 self.pre,
                 &current.schedule,
                 rng,
+                anchor,
                 &params.rotate,
             ),
         };
