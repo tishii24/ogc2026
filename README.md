@@ -26,7 +26,6 @@
 ## tools/plot_horizon_score.py
 - runner.pyが保存した`stderr.log`から、rolling horizonごとのworkerのcurrent scoreと温度を可視化する
 - horizonの開始時刻、initial score、shared bestも同じグラフに表示する
-- matplotlibが必要
 
 ## 使い方
 
