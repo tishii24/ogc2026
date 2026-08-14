@@ -287,6 +287,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       <select id="speedSelect">
         <option value="1">1x</option><option value="2">2x</option>
         <option value="5" selected>5x</option><option value="10">10x</option><option value="20">20x</option>
+        <option value="50">50x</option><option value="100">100x</option>
       </select>
     </label>
     <label>Neighbor <select id="neighborSelect"></select></label>
@@ -362,7 +363,7 @@ precision highp float; in vec3 vNormal; uniform vec3 uColor; out vec4 outColor;
 void main() {
   vec3 light = normalize(vec3(0.5, 0.7, 1.0));
   float shade = 0.68 + 0.32 * abs(dot(normalize(vNormal), light));
-  outColor = vec4(uColor * shade, 1.0);
+  outColor = vec4(uColor * shade, 0.8);
 }`;
 const LINE_VERTEX_SHADER = `#version 300 es
 in vec3 aPosition; uniform mat4 uViewProjection; void main(){ gl_Position = uViewProjection * vec4(aPosition,1.0); }`;
@@ -423,7 +424,8 @@ function resize(view) {
 }
 function drawView(view) {
   const gl=view.gl,[width,height]=resize(view),vp=viewProjection(width,height); gl.viewport(0,0,width,height); gl.clearColor(1,1,1,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
-  gl.useProgram(view.lineProgram); gl.bindBuffer(gl.ARRAY_BUFFER,view.lineBuffer); const lp=gl.getAttribLocation(view.lineProgram,'aPosition'); gl.enableVertexAttribArray(lp); gl.vertexAttribPointer(lp,3,gl.FLOAT,false,0,0); gl.uniformMatrix4fv(gl.getUniformLocation(view.lineProgram,'uViewProjection'),false,vp); gl.drawArrays(gl.LINES,0,24);
+  gl.disable(gl.BLEND); gl.depthMask(true); gl.useProgram(view.lineProgram); gl.bindBuffer(gl.ARRAY_BUFFER,view.lineBuffer); const lp=gl.getAttribLocation(view.lineProgram,'aPosition'); gl.enableVertexAttribArray(lp); gl.vertexAttribPointer(lp,3,gl.FLOAT,false,0,0); gl.uniformMatrix4fv(gl.getUniformLocation(view.lineProgram,'uViewProjection'),false,vp); gl.drawArrays(gl.LINES,0,24);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
   const frame=frames[currentFrameIndex]||{},changed=new Set(frame.changed||[]),selected=new Set(frame.selected||[]); gl.useProgram(view.meshProgram); gl.uniformMatrix4fv(gl.getUniformLocation(view.meshProgram,'uViewProjection'),false,vp); gl.uniform3f(gl.getUniformLocation(view.meshProgram,'uNorm'),1/data.maxWidth,1/data.maxWidth,data.zScale/data.timeMax);
   for(const scheduled of currentState.values()) {
     const [blockId,bayId,orientId,x,y,entry,exit]=scheduled; if(bayId!==view.bayId) continue; const buffer=meshBuffer(view,blockId,orientId); if(!buffer.count) continue;
@@ -431,6 +433,7 @@ function drawView(view) {
     gl.bindBuffer(gl.ARRAY_BUFFER,buffer.normal); const an=gl.getAttribLocation(view.meshProgram,'aNormal'); gl.enableVertexAttribArray(an); gl.vertexAttribPointer(an,3,gl.FLOAT,false,0,0);
     gl.uniform3f(gl.getUniformLocation(view.meshProgram,'uOffset'),x,y,entry); gl.uniform1f(gl.getUniformLocation(view.meshProgram,'uHeight'),Math.max(0.001,exit-entry)); const color=selected.has(blockId)?selectedColor:(changed.has(blockId)?changedColor:colors[blockId]); gl.uniform3fv(gl.getUniformLocation(view.meshProgram,'uColor'),color); gl.drawArrays(gl.TRIANGLES,0,buffer.count);
   }
+  gl.depthMask(true); gl.disable(gl.BLEND);
 }
 function drawAll(){for(const view of views)drawView(view);}
 function applyFrame(state, frame) { if(frame.full){state.clear();for(const item of frame.full)state.set(item[0],item);} else {for(const id of frame.removed||[])state.delete(id);for(const item of frame.updates||[])state.set(item[0],item);} }
@@ -451,8 +454,7 @@ function updateInfo() {
 }
 function showVisible(index) { if(!visibleFrames.length)return; visibleIndex=Math.max(0,Math.min(index,visibleFrames.length-1)); frameSlider.value=String(visibleIndex); stateAt(visibleFrames[visibleIndex]); updateInfo(); drawAll(); }
 function rebuildFilter() { const neighbor=neighborSelect.value; visibleFrames=frames.map((f,i)=>({f,i})).filter(({f})=>(neighbor==='*'||f.neighbor===neighbor)&&(!improvedOnly.checked||f.improvedCurrent)).map(({i})=>i); frameSlider.max=String(Math.max(0,visibleFrames.length-1)); frameSlider.disabled=!visibleFrames.length; showVisible(0); }
-function animate(now) { if(!playing)return; const interval=1000/(5*Number(speedSelect.value)); if(now-lastPlay
-Time>=interval){lastPlayTime=now;if(visibleIndex+1>=visibleFrames.length){playing=false;playButton.textContent='Play';return;}showVisible(visibleIndex+1);}requestAnimationFrame(animate);}
+function animate(now) { if(!playing)return; const interval=1000/(5*Number(speedSelect.value)); if(now-lastPlayTime>=interval){lastPlayTime=now;if(visibleIndex+1>=visibleFrames.length){playing=false;playButton.textContent='Play';return;}showVisible(visibleIndex+1);}requestAnimationFrame(animate);}
 
 for(const [bayId,bay] of bays.entries()) { const card=document.createElement('div');card.className='bay-card';card.innerHTML=`<div class="bay-title">Bay ${bayId}<span>${bay.width} × ${bay.height}</span></div>`;const canvas=document.createElement('canvas');canvas.className='view';card.appendChild(canvas);baysRoot.appendChild(card);views.push(createView(canvas,bayId)); }
 const neighbors=[...new Set(frames.map(frame=>frame.neighbor))].sort(); neighborSelect.innerHTML='<option value="*">All</option>'+neighbors.map(value=>`<option value="${value}">${value}</option>`).join('');

@@ -97,7 +97,7 @@ zipinfo "$VERSION.zip"
 ## 焼きなまし過程の可視化
 
 ```bash
-PROB=in/preliminary_test/prob_5.json
+PROB=in/train-final/prob_40.json
 cargo run --bin ogc2026 --release --features anneal-visualizer -- \
   --input $PROB \
   --params params/default.yaml \
@@ -106,6 +106,11 @@ cargo run --bin ogc2026 --release --features anneal-visualizer -- \
 
 python3 tools/anneal_visualizer.py \
   $PROB \
-  tmp/anneal/global \
+  tmp/anneal/optimize \
+  --worker-id 0
+
+python tools/anneal_visualizer_3d.py \
+  $PROB \
+  tmp/anneal/optimize \
   --worker-id 0
 ```
