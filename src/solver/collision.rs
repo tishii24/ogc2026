@@ -22,6 +22,7 @@ struct ConvexScratch {
     hull: Vec<Pointf>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct PolyLayer {
     block_id: usize,
@@ -396,13 +397,13 @@ fn build_shape_geom(block_id: usize, orient_idx: usize, orientation: &Orientatio
         // Fallback occurs when the normalized layer is degenerate, ear clipping cannot
         // complete, a generated triangle is degenerate, or triangle coverage is incomplete.
         if parts.is_none() {
-            let method = if polygon.is_some() {
+            let _method = if polygon.is_some() {
                 "geo-intersection"
             } else {
                 "empty-area"
             };
             log!(
-                "[collision-fallback] block={block_id} orient={orient_idx} layer={layer_idx} reason=convex-decomposition-failed method={method}"
+                "[collision-fallback] block={block_id} orient={orient_idx} layer={layer_idx} reason=convex-decomposition-failed method={_method}"
             );
             if local_enabled() {
                 panic!("fallback has occurred at collision");
@@ -786,8 +787,8 @@ fn rasterize_convex_pair(
     a: &ConvexPart,
     b: &ConvexPart,
     scratch: &mut ConvexScratch,
-    a_layer: &PolyLayer,
-    b_layer: &PolyLayer,
+    _a_layer: &PolyLayer,
+    _b_layer: &PolyLayer,
 ) {
     let hull = minkowski_difference_hull(a, b, scratch);
     if hull.len() < 3 || signed_area(hull).abs() <= GEOMETRY_EPS {
@@ -795,12 +796,12 @@ fn rasterize_convex_pair(
         // parts can still produce a Minkowski hull without an interior.
         log!(
             "[collision-fallback] moving=({},{},{}) fixed=({},{},{}) reason=degenerate-minkowski-hull method=geo-intersection",
-            a_layer.block_id,
-            a_layer.orient_idx,
-            a_layer.layer_idx,
-            b_layer.block_id,
-            b_layer.orient_idx,
-            b_layer.layer_idx,
+            _a_layer.block_id,
+            _a_layer.orient_idx,
+            _a_layer.layer_idx,
+            _b_layer.block_id,
+            _b_layer.orient_idx,
+            _b_layer.layer_idx,
         );
         if local_enabled() {
             panic!("fallback has occurred at collision");

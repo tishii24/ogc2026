@@ -301,13 +301,13 @@ fn extend_schedule(
     }
 
     let mut best = None;
-    let mut trial_count = 0;
+    let mut _trial_count = 0;
 
     'trial: loop {
         if best.is_some() && timer.elapsed_seconds() >= deadline {
             break;
         }
-        trial_count += 1;
+        _trial_count += 1;
 
         let removed_ids = if base_schedule.is_empty() {
             Vec::with_capacity(added_block_ids.len())
@@ -331,7 +331,7 @@ fn extend_schedule(
                 removed_ids
             }
         };
-        let removed_count = removed_ids.len();
+        let _removed_count = removed_ids.len();
         let reconstruct_base = build_reconstruct_base(problem, pre, &base_schedule, &removed_ids);
         let mut schedule = reconstruct_base.schedule;
         let mut loads = reconstruct_base.loads;
@@ -387,8 +387,8 @@ fn extend_schedule(
             log!(
                 "[{:.4}] [expand] best: trial={}, removed={}, score={:.3}",
                 timer.elapsed_seconds(),
-                trial_count,
-                removed_count,
+                _trial_count,
+                _removed_count,
                 candidate.objective,
             );
             best = Some(candidate);
@@ -402,7 +402,7 @@ fn extend_schedule(
     log!(
         "[{:.4}] [expand] finish: trials={}, score={:.3}",
         timer.elapsed_seconds(),
-        trial_count,
+        _trial_count,
         best.objective,
     );
     best

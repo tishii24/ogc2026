@@ -387,13 +387,13 @@ fn build_initial_state(
         })
         .collect();
 
-    for (worker_id, (trials, completed)) in worker_trials.into_iter().enumerate() {
+    for (_worker_id, (_trials, _completed)) in worker_trials.into_iter().enumerate() {
         log!(
             "[{:.4}] [preopt-build worker={}] trials={}, completed={}",
             timer.elapsed_seconds(),
-            worker_id,
-            trials,
-            completed,
+            _worker_id,
+            _trials,
+            _completed,
         );
     }
 

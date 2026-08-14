@@ -70,14 +70,14 @@ impl CandidateEmitter {
         }
     }
 
-    pub(super) fn configure(&self, final_horizon_time: f64, timer: Timer) {
+    pub(super) fn configure(&self, final_horizon_time: f64, _timer: Timer) {
         let interval_seconds = self
             .min_interval_seconds
             .max(final_horizon_time / self.max_count as f64);
         self.state.lock().unwrap().interval_seconds = interval_seconds;
         log!(
             "[{:.4}] [candidate-emit] interval={:.3}s, final_horizon_time={:.3}s, max_count={}",
-            timer.elapsed_seconds(),
+            _timer.elapsed_seconds(),
             interval_seconds,
             final_horizon_time,
             self.max_count,
@@ -99,26 +99,26 @@ impl CandidateEmitter {
         };
         let output = match serde_json::to_string(&candidate) {
             Ok(output) => output,
-            Err(err) => {
+            Err(_err) => {
                 log!(
                     "[{:.4}] [candidate-emit] score={:.3}, force={}, status=serialize-failed, error={}, total={:.4}s",
                     timer.elapsed_seconds(),
                     state.objective,
                     force,
-                    err,
+                    _err,
                     timer.elapsed_seconds() - emit_started,
                 );
                 return;
             }
         };
-        let serialize_seconds = timer.elapsed_seconds() - serialize_started;
+        let _serialize_seconds = timer.elapsed_seconds() - serialize_started;
 
         let write_started = timer.elapsed_seconds();
         let stdout = io::stdout();
         let mut stdout = stdout.lock();
         let succeeded = writeln!(stdout, "{output}").is_ok() && stdout.flush().is_ok();
-        let write_seconds = timer.elapsed_seconds() - write_started;
-        let total_seconds = timer.elapsed_seconds() - emit_started;
+        let _write_seconds = timer.elapsed_seconds() - write_started;
+        let _total_seconds = timer.elapsed_seconds() - emit_started;
         if succeeded {
             emit_state.last_emitted = elapsed;
         }
@@ -129,9 +129,9 @@ impl CandidateEmitter {
             force,
             if succeeded { "ok" } else { "write-failed" },
             output.len(),
-            serialize_seconds,
-            write_seconds,
-            total_seconds,
+            _serialize_seconds,
+            _write_seconds,
+            _total_seconds,
         );
     }
 }

@@ -153,7 +153,7 @@ pub(crate) struct NeighborStats {
     pub(crate) time_sec: f64,
 }
 
-fn format_neighbor_stats(stats: &[NeighborStats], kinds: &[&str]) -> String {
+fn _format_neighbor_stats(stats: &[NeighborStats], kinds: &[&str]) -> String {
     fn ratio(num: usize, den: usize) -> f64 {
         if den == 0 {
             0.0
@@ -202,6 +202,7 @@ pub(crate) struct AnnealingResult<S, O> {
     pub(crate) worker_bests: Vec<S>,
 }
 
+#[allow(dead_code)]
 pub(crate) struct WorkerSummary {
     pub(crate) worker_id: usize,
     pub(crate) iterations: usize,
@@ -218,6 +219,7 @@ pub(crate) trait AnnealingDelegate: Sync {
     type State: AnnealingState;
     type Output;
 
+    #[allow(dead_code)]
     fn name(&self) -> &'static str;
 
     fn neighbor_kinds(&self) -> &'static [&'static str];
@@ -316,21 +318,21 @@ impl<D: AnnealingDelegate> Annealer<D> {
             .collect();
         let state = shared.into_inner();
         for worker in &worker_results {
-            let summary = &worker.summary;
+            let _summary = &worker.summary;
             log!(
                 "[{:.4}] [{:8} worker={}] iter={:8}, accepted={:8}, improved={:8}, best_imports={:5}, current={:.3}, local_best={:.3}, temperature={:.6}->{:.6}\nneighbor stats:\n{}",
                 timer.elapsed_seconds(),
                 self.delegate.name(),
-                summary.worker_id,
-                summary.iterations,
-                summary.accepted,
-                summary.improved,
-                summary.best_imports,
-                summary.current_score,
-                summary.local_best_score,
-                summary.temperature.0,
-                summary.temperature.1,
-                format_neighbor_stats(&summary.neighbor_stats, self.delegate.neighbor_kinds()),
+                _summary.worker_id,
+                _summary.iterations,
+                _summary.accepted,
+                _summary.improved,
+                _summary.best_imports,
+                _summary.current_score,
+                _summary.local_best_score,
+                _summary.temperature.0,
+                _summary.temperature.1,
+                _format_neighbor_stats(&_summary.neighbor_stats, self.delegate.neighbor_kinds()),
             );
         }
         log!(
