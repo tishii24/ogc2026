@@ -60,7 +60,7 @@ In particular,
 Z_1=\sum_i\max(0,q_i-D_i),\qquad
 Z_3=\sum_i(S_i^{\max}-S_{i,b_i}),
 \end{equation}
-so $Z_1$ and $Z_3$ decompose into block-wise contributions. Whether these values can be realized, however, depends on the placements and residence intervals of other blocks.
+so $Z_1$ and $Z_3$ decompose into block-wise contributions. For $Z_2$, each bay's total workload is normalized by the ratio of the mean bay area to that bay's area before taking the maximum difference between bays. Whether these values can be realized, however, depends on the placements and residence intervals of other blocks.
 
 The primary difficulty is the rigidity of the search space. Once a bay becomes densely packed, the space created by moving a single block is often insufficient to improve another block; changing the packing structure requires coordinated changes to several blocks. Furthermore, moving an early block changes its collision relationships and crane ordering with many later blocks. Search performance therefore depends strongly on the initial solution, especially the order in which blocks are admitted to the geometric schedule.
 
@@ -145,8 +145,7 @@ packed.
 The solver first precomputes geometric information and candidate relations,
 and then solves the area-capacity relaxation to obtain $(\hat b_i,\hat e_i)$
 for every block. Blocks are admitted in lexicographic order of
-$(\hat e_i,D_i,i)$, without splitting equal $\hat e_i$ at a horizon boundary.
-Each horizon greedily inserts its new blocks and improves all admitted blocks;
+$(\hat e_i,-V_i,i)$, where $V_i$ is the maximum footprint area times the processing time. Thus, among blocks with the same abstract entry time, larger blocks are admitted first. The order is evenly partitioned into $\lceil N/H\rceil$ horizons. At each horizon, every worker extends its own solution by repeatedly removing a small random number of admitted blocks, mixing them with the new blocks, and greedily reinserting them in random order; the best extension found within the construction-time budget is retained. All admitted blocks are then improved;
 the final horizon uses the complete objective containing $Z_1$, $Z_2$, and
 $Z_3$. Algorithm~\ref{alg:overall} summarizes this procedure, focusing on how
 the abstract schedule is converted into an exact geometric schedule. The
@@ -162,13 +161,13 @@ bound on the exact entry time.
 \Require problem instance, horizon size $H$, global deadline $\tau$
 \Ensure feasible geometric schedule $S$
 \State $\{(\hat b_i,\hat e_i)\}_i \gets \Call{AbstractPreoptimization}{}$
-\State $\pi \gets$ blocks sorted lexicographically by $(\hat e_i,D_i,i)$
-\State $\mathcal{H} \gets \Call{BuildHorizons}{\pi,H}$
-       \Comment{do not split equal $\hat e_i$}
-\State $S\gets\emptyset$
+\State $\pi \gets$ blocks sorted lexicographically by $(\hat e_i,-V_i,i)$
+\State $\mathcal{H} \gets \Call{EvenlyPartition}{\pi,\lceil N/H\rceil}$
+\State $\{S_r\}_r\gets\{\emptyset\}_r$ \Comment{one persistent solution per worker}
 \For{each horizon $h\in\mathcal{H}$}
-    \For{each newly admitted block $i$ in $h$}
-        \State $S\gets\Call{GreedyInsert}{S,i,\hat e_i}$
+    \For{each worker $r$ in parallel}
+        \State $S_r\gets\Call{ExtendSchedule}{S_r,h}$
+        \Comment{random remove, mix, and greedy reinsert trials}
     \EndFor
     \If{$h$ is the final horizon}
         \State $w'_2\gets w_2$
@@ -176,10 +175,10 @@ bound on the exact entry time.
         \State $w'_2\gets 0$
     \EndIf
     \State $\tau_h\gets\Call{AllocateRemainingTime}{h,\mathcal{H},\tau}$
-    \State $S\gets\Call{ParallelSA}{S,w_1,w'_2,w_3,\tau_h}$
-       \Comment{optimize all admitted blocks}
+    \State $\{S_r\}_r\gets\Call{ParallelSA}{\{S_r\}_r,w_1,w'_2,w_3,\tau_h}$
+       \Comment{share the global best; optimize all admitted blocks}
 \EndFor
-\State \Return $S$
+\State \Return the best $S_r$
 \end{algorithmic}
 \end{algorithm}
 
@@ -194,7 +193,7 @@ a_{ijo}=A^{\mathrm{union}}_{io}
 \end{equation}
 We define $a_{ij}$ as the minimum value over orientations that fit in bay $j$. The first term represents the actual occupied area, the second approximates unusable space around concave or elongated shapes, and the third compensates for packing difficulty caused by a complex boundary.
 
-Let $C_j$ be the effective capacity of bay $j$. The abstract schedule must satisfy
+Let $C_j$ be the effective capacity of bay $j$. It starts from $(W_j-0.5)(H_j-0.5)$ and is lower-bounded by the largest approximate occupancy of a block that must fit in bay $j$, avoiding an abstract capacity that excludes such a block by itself. The abstract schedule must satisfy
 \begin{equation}
 \sum_{i:\,\hat e_i\le t<\hat e_i+P_i,\,\hat b_i=j}a_{ij}\le C_j
 \end{equation}
@@ -203,7 +202,7 @@ at every time. An abstract state stores only $(\hat b_i,\hat e_i)$ for each bloc
 Initial states are built greedily from multiple randomized block orders. Each order combines workload, the product of area and processing time, the spread of bay preferences, the limit time defined as due date minus processing time, slack, and a random component. For each block, the earliest capacity-feasible time is found in every eligible bay, and the candidate minimizing the incremental $Z_1$, $Z_2$, $Z_3$, and congestion is selected. The state is then improved by simulated annealing using relocate, swap, and multi-block reconstruction neighborhoods.
 
 \subsubsection{Rolling-horizon geometric optimization.}
-Blocks are sorted by $(\hat e_i,D_i,i)$, and horizons are formed with a prescribed block count. Blocks with the same $\hat e_i$ at a horizon boundary are included in the same horizon. At each horizon, newly admitted blocks are first inserted using the abstract schedule as a reference. Simulated annealing is then applied not only to the new blocks but to all blocks admitted so far. Unlike a freezing-type rolling horizon, earlier decisions can therefore be revised in response to later admissions.
+Blocks are sorted by $(\hat e_i,-V_i,i)$, and the order is evenly divided into $\lceil N/H\rceil$ horizons. At each horizon, every worker carries its own solution forward. Schedule extension repeatedly removes $k$ existing blocks, combines them with the newly admitted blocks, and greedily reinserts the combined set in random order. Trials continue for 5\% of the horizon budget, capped at five seconds, and the best extension is retained. Simulated annealing is then applied not only to the new blocks but to all blocks admitted so far. Unlike a freezing-type rolling horizon, earlier decisions can therefore be revised in response to later admissions.
 This follows the general rolling-horizon principle of solving a sequence of restricted scheduling problems\cite{ouyang2021}, while retaining all previous blocks as movable variables in our geometric search.
 
 Because $Z_2$ is not meaningful until the bay assignments of all blocks are present, its weight is set to zero in intermediate horizons. The official $w_2$ is enabled only in the final horizon. Search time is allocated with weights proportional to a power of the number of admitted blocks, reserving more time for the larger late-stage problems.
@@ -229,7 +228,7 @@ Greedy insertion enumerates bays, orientations, and integer $y$ coordinates, whi
 \Delta F(s)=w_1T_i(s)+w_2\Delta Z_2(s)
 +w_3(S_i^{\max}-S_{i,b_i(s)}).
 \end{equation}
-Among candidates tied with the best objective value, an earlier entry time and placement near a bay corner are preferred. The default anchor is the bottom-left corner, but one of the other three corners is selected with a small probability to generate different packing structures.
+Among candidates tied with the best objective value, an earlier entry time and placement near a bay corner are preferred. Workers 0--3 use bottom-left, bottom-right, top-left, and top-right as their respective primary anchors. Each insertion switches to another corner with probability 0.2, providing parallel diversity. The feasible $y$ coordinates are shuffled; after the first feasible row is found, only ten additional rows are examined. Among candidates tied at the best objective value, at most the top four are retained and selected probabilistically, choosing from the front with probability 0.7.
 
 Algorithm~\ref{alg:greedy-insert} outlines the insertion procedure.  Rather
 than testing every $(x,e_i)$, the sweep updates collision states at
@@ -240,19 +239,21 @@ $x$-interval endpoints and converts them into forbidden entry-time intervals.
 \label{alg:greedy-insert}
 \begin{algorithmic}[1]
 \Require partial schedule $S$, block $i$, reference entry time $\hat e_i$
-\State $s^*\gets\mathrm{none}$ and $F^*\gets+\infty$
-\For{each eligible $(j,o,y)$ whose lower bound does not exceed $F^*$}
+\State $C\gets\emptyset$ and $F^*\gets+\infty$
+\For{each eligible bay $j$ whose lower bound does not exceed $F^*$}
+  \For{each orientation $o$ and shuffled feasible row $y$}
     \State $E\gets\Call{BuildXEvents}{S,i,j,o,y}$
     \For{each candidate $x$ in the event sweep over $E$}
         \State update directional collision states at $x$
         \State $\mathcal{I}\gets$ corresponding forbidden entry-time intervals
         \State $e\gets\Call{FirstFeasibleTime}{\mathcal{I},R_i}$
-        \If{$e$ exists and $s=(j,o,x,y,e,e+P_i)$ is better than $s^*$}
-            \State $s^*\gets s$ and $F^*\gets\Delta F(s)$
+        \If{$e$ exists}
+            \State update $F^*$ and the ordered set $C$ of up to four best tied candidates
         \EndIf
     \EndFor
+  \EndFor
 \EndFor
-\State \Return $s^*$
+\State \Return a probabilistic choice from $C$
 \end{algorithmic}
 \end{algorithm}
 
@@ -271,7 +272,7 @@ O\left(\sum_j O_iH_j(W_j+n_j^2)\right).
 \end{equation}
 
 \subsubsection{Simulated annealing and large reconstruction.}
-The local search is based on simulated annealing\cite{kirkpatrick1983} and uses five neighborhood types: Large Reconstruction, Shift, Move, Rotate, and Swap. Shift scans nearby $y$ coordinates while retaining the bay and orientation. Rotate changes to a geometrically similar orientation precomputed in advance. Move primarily selects a relatively small block and redetermines its bay, orientation, position, and time by greedy insertion. Swap exchanges the locations of two blocks with similar area and shape and reinserts both.
+The local search is based on simulated annealing\cite{kirkpatrick1983} and uses four neighborhood types: Large Reconstruction, Shift, Move, and Rotate. Shift samples a nearby displacement (default range $[-5,0]$, with its sign determined by the anchor) and then scans to redetermine $x$, $y$, and the entry time while retaining the bay and orientation. Rotate changes to a geometrically similar orientation precomputed by bounding-box IoU. Move selects a block uniformly at random and redetermines its bay, orientation, position, and entry time by greedy insertion, restricting the new entry time to be no later than its current value.
 
 Large reconstruction is a destroy-and-repair large neighborhood.
 It selects multiple seeds using three methods: badness, fluidity, and random
@@ -280,33 +281,32 @@ the bay with the heaviest workload. Fluidity favors blocks with large slack
 and a small spread of bay preferences, which are easier to move. Blocks in the
 same bay as each seed are ordered by
 \begin{equation}
-d(i,s)=\lambda_x(x_i-x_s)^2+\lambda_y(y_i-y_s)^2
-+\lambda_t(e_i-e_s)^2,
+d(i,s)=\lambda_x|x_i-x_s|^p+\lambda_y|y_i-y_s|^p
++\lambda_t|e_i-e_s|^p,\qquad p\sim U[2,4],
 \end{equation}
-and nearby blocks are removed together. Multiple seeds make it possible to change several local structures in one move. The reinsertion order is determined from a weighted combination of workload, volume, preference spread, limit time, slack, current penalty, and randomness. These weights are randomized for every attempt, allowing the search to revisit the trade-off between tardiness and packability without being restricted to a fixed size or due-date order. Large reconstruction in abstract preoptimization is simpler because the abstract state has no coordinates.
+where both the exponent and weights are sampled for each trial. After the first seed, seed candidates are biased toward entry times close to those of the existing seeds, grouping reconstruction by entry-time base. Nearby blocks are removed together. Multiple seeds make it possible to change several local structures in one move. The reinsertion order combines volume, preference spread, limit-time urgency, slack, current penalty, and randomness; workload is used only as a tie-breaker. The weights are randomized for every attempt, allowing the search to revisit the trade-off between tardiness and packability without being restricted to a fixed size or due-date order. Moreover, the current SA acceptance threshold is inverted into a per-block upper bound on admissible tardiness, pruning insertion candidates that cannot be accepted. Large reconstruction in abstract preoptimization is simpler because the abstract state has no coordinates.
 
-Simulated annealing is executed by multiple workers in parallel. Each worker updates a shared best state and periodically imports a sufficiently better shared solution. During stagnation, the worker returns to its best state and reheats by temporarily increasing its temperature. Distinct temperature ranges are used when positive tardiness remains and after tardiness reaches zero: the former handles larger changes in $Z_1$, while the latter focuses on finer improvements, primarily to $Z_3$. A tabu set of schedule hashes suppresses short-term revisits to identical states.
+Simulated annealing is executed by multiple workers in parallel. Each worker preserves its own state across horizons, updates a shared best state, and periodically imports a sufficiently better shared solution. At each horizon, the initial temperature is proportional to the initial score per admitted block, and the temperature follows an exponential schedule from $T_0$ to $T_1$; the default multipliers are 0.2 and 0.02, respectively. This schedule is reset for each horizon.
 
 \subsection{Key Ideas that Failed}
 
 Beam-search reconstruction attempted to reuse block-insertion results relative to the same base schedule across multiple search states, thereby exploring reinsertion orders at lower computational cost. However, exploring diverse placement states proved more important than reusing insertion results, and the method was discarded.
 
-Multi-stage optimization, which optimized tardiness, preference, and workload imbalance in separate stages, did not show a significant advantage over the standard search. We also tested adaptive annealing that derived its temperature from observed objective differences and a blocker-aware neighborhood that explicitly removed blocks obstructing crane operations. Both ideas appeared promising, but obtaining parameter settings that worked consistently across instances was difficult.
+Multi-stage optimization, which optimized tardiness, preference, and workload imbalance in separate stages, did not show a significant advantage over the standard search. Reheating by returning to a best state and applying a kick, hash-based tabu, gradual introduction of $w_2$, optimization of same-time operation order, and temporal changes based on exchanging exit times were also tested and discarded. We additionally tested adaptive annealing derived from observed objective differences and a blocker-aware neighborhood that explicitly removed crane blockers. These variants either added overhead or lacked consistent improvement across instances.
 
 \subsection{Further Improvement Plan}
 
-For abstract preoptimization, we plan to improve approximate occupancy and congestion so that the gap between abstract schedules and exact placements is reduced. For rolling-horizon optimization, horizon size and search-time allocation could be adapted to each instance. We also plan to include the ordering of ENTRY/EXIT operations at the same time and temporal-order changes produced by modifying exit times. For large reconstruction, blocker dependencies could be used more directly in selecting blocks for removal.
+For abstract preoptimization, we plan to improve approximate occupancy and congestion so that the gap between abstract schedules and exact placements is reduced. For rolling-horizon optimization, horizon size and search-time allocation could be adapted to each instance. For large reconstruction, blocker dependencies could be used more directly in selecting blocks for removal.
 
 For simulated annealing, in addition to revisiting adaptive temperature control based on objective differences and acceptance ratios, we plan to introduce a more systematic parallel scheme. Workers would specialize in different temperature ranges or neighborhood compositions and periodically exchange states, explicitly separating structural changes by high-temperature workers from local improvement by low-temperature workers.
 
 \section{Implementation Details}
 \label{sec:implementation}
 
-The solver is implemented in Rust. Convex decompositions, bounding boxes, feasible placement ranges in bays, orientation neighbors, and swap candidates are precomputed. Collision grids for block and orientation pairs are built on demand and shared throughout the subsequent search. The placement sweep processes only endpoints of forbidden $x$ intervals and uses counting sort and bitsets to maintain active time intervals.
+The solver is implemented in Rust. Convex decompositions, bounding boxes, feasible placement ranges in bays, orientation neighbors based on bounding-box IoU, preference-ordered bay lists, orientations ordered by bounding-box area, preference penalties and spreads, bay workload scales, and maximum footprint areas are precomputed. Collision grids for block and orientation pairs are built on demand and shared throughout the subsequent search. The placement sweep processes only endpoints of forbidden $x$ intervals and uses counting sort and bitsets to maintain active time intervals.
 
 The time limit is divided between abstract preoptimization and rolling horizon optimization. In the latter phase, the deadline of each horizon is computed from the sizes of the remaining horizons. The current shared best solution is emitted periodically during the search. EXIT operations are added to the output before ENTRY operations, ensuring that every EXIT precedes every ENTRY at the same time.
 
-% A Python wrapper surrounds the Rust solver. It deduplicates emitted candidates, checks them in objective-value order, and independently validates assignments, temporal constraints, bay containment, multilayer collisions, and crane operations using Shapely. If the best candidate is infeasible, the wrapper falls back to the next previously emitted feasible candidate. Time for validation and returning the result is reserved in advance from the solver time limit.
 
 \section{Computational Results}
 
