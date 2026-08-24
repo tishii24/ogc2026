@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import argparse
-import colorsys
+
 import json
 import math
 import sys
@@ -130,7 +130,10 @@ def add_triangle(
 
 
 def add_extruded_polygon(
-    positions: list[float], normals: list[float], polygon: Polygon
+    positions: list[float],
+    normals: list[float],
+    edges: list[float],
+    polygon: Polygon,
 ) -> None:
     for triangle in triangulate(polygon):
         if not polygon.covers(triangle):
@@ -146,6 +149,28 @@ def add_extruded_polygon(
         for start, end in zip(coordinates, coordinates[1:]):
             x0, y0 = start
             x1, y1 = end
+            edges.extend(
+                [
+                    x0,
+                    y0,
+                    0.0,
+                    x1,
+                    y1,
+                    0.0,
+                    x0,
+                    y0,
+                    1.0,
+                    x1,
+                    y1,
+                    1.0,
+                    x0,
+                    y0,
+                    0.0,
+                    x0,
+                    y0,
+                    1.0,
+                ]
+            )
             add_triangle(
                 positions,
                 normals,
@@ -165,9 +190,10 @@ def build_meshes(problem: dict[str, Any]) -> list[list[dict[str, list[float]]]]:
         for orientation in block.get("shape", []):
             positions: list[float] = []
             normals: list[float] = []
+            edges: list[float] = []
             for polygon in polygon_parts(orientation_union(orientation)):
-                add_extruded_polygon(positions, normals, polygon)
-            block_meshes.append({"p": positions, "n": normals})
+                add_extruded_polygon(positions, normals, edges, polygon)
+            block_meshes.append({"p": positions, "n": normals, "e": edges})
         meshes.append(block_meshes)
     return meshes
 
@@ -227,12 +253,14 @@ def build_frames(snapshots: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
 
 
 def block_colors(count: int) -> list[list[float]]:
-    colors = []
-    for block_id in range(count):
-        hue = (block_id * 0.618033988749895) % 1.0
-        red, green, blue = colorsys.hsv_to_rgb(hue, 0.42, 0.82)
-        colors.append([red, green, blue])
-    return colors
+    palette = [
+        [0.263, 0.537, 0.863],
+        [0.843, 0.514, 0.161],
+        [0.631, 0.365, 0.600],
+        [0.471, 0.569, 0.502],
+        [0.443, 0.435, 0.612],
+    ]
+    return [palette[block_id % len(palette)] for block_id in range(count)]
 
 
 def render_html(data: dict[str, Any]) -> str:
@@ -250,9 +278,9 @@ HTML_TEMPLATE = r"""<!doctype html>
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
-  body { margin: 0; padding: 16px; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f8fafc; color: #111827; }
+  body { margin: 0; padding: 8px; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f8fafc; color: #111827; }
   .panel, .bay-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
-  .panel { padding: 12px; margin-bottom: 12px; }
+  .panel { padding: 10px; margin-bottom: 8px; }
   .topbar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; }
   label { font-size: 13px; color: #374151; display: inline-flex; gap: 6px; align-items: center; }
   button, select { font: inherit; border: 1px solid #cbd5e1; background: #f8fafc; border-radius: 6px; padding: 5px 10px; }
@@ -261,11 +289,11 @@ HTML_TEMPLATE = r"""<!doctype html>
   #frameSlider { min-width: 320px; flex: 1; }
   #frameLabel, #summary, #blockInfo { font-family: Menlo, Consolas, monospace; font-size: 12px; }
   #summary { margin-top: 10px; line-height: 1.7; }
-  #bays { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 12px; margin-bottom: 12px; }
-  .bay-card { padding: 10px; min-width: 0; }
-  .bay-title { display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+  #bays { display: block; margin-bottom: 8px; }
+  .bay-card { padding: 2px; min-width: 0; }
+  .bay-title { display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 600; margin-bottom: 4px; }
   .bay-title span { color: #6b7280; font-size: 12px; font-weight: 400; }
-  canvas.view { width: 100%; height: 430px; display: block; background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; cursor: grab; }
+  canvas.view { width: 100%; height: 500px; display: block; background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; cursor: grab; }
   canvas.view:active { cursor: grabbing; }
   .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 12px; color: #4b5563; }
   .chip { display: inline-flex; gap: 5px; align-items: center; }
@@ -276,7 +304,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   table { width: 100%; border-collapse: collapse; font-family: Menlo, Consolas, monospace; font-size: 12px; }
   th, td { padding: 5px 8px; border-bottom: 1px solid #e5e7eb; text-align: right; }
   th:first-child, td:first-child, th:nth-child(3), td:nth-child(3) { text-align: left; }
-  @media (max-width: 600px) { #bays { grid-template-columns: 1fr; } canvas.view { height: 340px; } }
+  @media (max-width: 600px) { canvas.view { height: 360px; } }
 </style>
 </head>
 <body>
@@ -298,8 +326,8 @@ HTML_TEMPLATE = r"""<!doctype html>
   <div class="topbar" style="margin-top:10px"><input id="frameSlider" type="range" min="0" max="0" step="1" value="0"></div>
   <div id="summary"></div>
   <div class="legend">
-    <span class="chip"><span class="swatch" style="background:#567d91"></span>changed</span>
-    <span class="chip"><span class="swatch" style="background:#766b8f"></span>selected</span>
+    <span class="chip"><span class="swatch" style="background:#4389dc"></span>changed outline</span>
+    <span class="chip"><span class="swatch" style="background:#716f9c"></span>selected outline</span>
     <span class="muted">Drag: rotate · Wheel: zoom</span>
   </div>
 </div>
@@ -314,6 +342,17 @@ const frames = data.frames;
 const bays = data.bays;
 const meshes = data.meshes;
 const colors = data.colors;
+const bayGap = data.maxWidth * 0.08;
+const bayOffsets = [];
+let totalBayWidth = 0;
+for (const bay of bays) {
+  bayOffsets.push(totalBayWidth);
+  totalBayWidth += Number(bay.width) + bayGap;
+}
+totalBayWidth -= bayGap;
+const sceneWidth = totalBayWidth / data.maxWidth;
+const sceneHeight = Math.max(...bays.map(bay => Number(bay.height))) / data.maxWidth;
+const defaultCameraDistance = Math.max(1.9, sceneWidth * 0.72);
 const frameSlider = document.getElementById('frameSlider');
 const playButton = document.getElementById('playButton');
 const speedSelect = document.getElementById('speedSelect');
@@ -324,15 +363,16 @@ const summary = document.getElementById('summary');
 const blockInfo = document.getElementById('blockInfo');
 const improvements = document.getElementById('improvements');
 const baysRoot = document.getElementById('bays');
-const changedColor = [0.337, 0.49, 0.569];
-const selectedColor = [0.463, 0.42, 0.561];
+const normalOutline = [0.0, 0.0, 0.0, 0.25];
+const changedOutline = [0.263, 0.537, 0.863, 0.0];
+const selectedOutline = [0.443, 0.435, 0.612, 0.0];
 let visibleFrames = frames.map((_, index) => index);
 let visibleIndex = 0;
 let playing = false;
 let lastPlayTime = 0;
 let currentState = new Map();
 let currentFrameIndex = -1;
-let camera = { yaw: 0.72, pitch: 0.48, distance: 2.55 };
+let camera = { yaw: 0.72, pitch: 0.48, distance: defaultCameraDistance };
 const views = [];
 
 function compile(gl, type, source) {
@@ -363,12 +403,21 @@ precision highp float; in vec3 vNormal; uniform vec3 uColor; out vec4 outColor;
 void main() {
   vec3 light = normalize(vec3(0.5, 0.7, 1.0));
   float shade = 0.68 + 0.32 * abs(dot(normalize(vNormal), light));
-  outColor = vec4(uColor * shade, 0.8);
+  outColor = vec4(uColor * shade, 1.0);
 }`;
 const LINE_VERTEX_SHADER = `#version 300 es
 in vec3 aPosition; uniform mat4 uViewProjection; void main(){ gl_Position = uViewProjection * vec4(aPosition,1.0); }`;
 const LINE_FRAGMENT_SHADER = `#version 300 es
-precision highp float; out vec4 outColor; void main(){ outColor=vec4(0.55,0.58,0.63,1.0); }`;
+precision highp float; out vec4 outColor; void main(){ outColor=vec4(0.28,0.28,0.28,1.0); }`;
+const OUTLINE_VERTEX_SHADER = `#version 300 es
+in vec3 aPosition;
+uniform mat4 uViewProjection; uniform vec3 uOffset; uniform vec3 uNorm; uniform float uHeight;
+void main() {
+  vec3 world = vec3((aPosition.xy + uOffset.xy) * uNorm.xy, (uOffset.z + aPosition.z * uHeight) * uNorm.z);
+  gl_Position = uViewProjection * vec4(world, 1.0);
+}`;
+const OUTLINE_FRAGMENT_SHADER = `#version 300 es
+precision highp float; uniform vec4 uColor; out vec4 outColor; void main(){ outColor=uColor; }`;
 
 function mat4Multiply(a, b) {
   const out = new Float32Array(16);
@@ -389,34 +438,38 @@ function lookAt(eye, center, up) {
   out[12]=-x.reduce((s,v,i)=>s+v*eye[i],0);out[13]=-y.reduce((s,v,i)=>s+v*eye[i],0);out[14]=-z.reduce((s,v,i)=>s+v*eye[i],0); return out;
 }
 function viewProjection(width, height) {
-  const cp=Math.cos(camera.pitch), target=[0.5,0.35,0.55];
+  const cp=Math.cos(camera.pitch), target=[sceneWidth/2,sceneHeight/2,data.zScale/2];
   const eye=[target[0]+camera.distance*cp*Math.cos(camera.yaw),target[1]+camera.distance*cp*Math.sin(camera.yaw),target[2]+camera.distance*Math.sin(camera.pitch)];
   return mat4Multiply(perspective(Math.PI/4, width/Math.max(1,height), 0.05, 20), lookAt(eye,target,[0,0,1]));
 }
-function boxLines(bay) {
-  const x=Number(bay.width)/data.maxWidth, y=Number(bay.height)/data.maxWidth, z=data.zScale;
-  const p=[[0,0,0],[x,0,0],[x,y,0],[0,y,0],[0,0,z],[x,0,z],[x,y,z],[0,y,z]];
-  const edges=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
-  return new Float32Array(edges.flatMap(([a,b])=>[...p[a],...p[b]]));
+function boxLines() {
+  const z=data.zScale, edges=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]], lines=[];
+  for(const [bayId,bay] of bays.entries()) {
+    const x0=bayOffsets[bayId]/data.maxWidth, x1=(bayOffsets[bayId]+Number(bay.width))/data.maxWidth, y=Number(bay.height)/data.maxWidth;
+    const p=[[x0,0,0],[x1,0,0],[x1,y,0],[x0,y,0],[x0,0,z],[x1,0,z],[x1,y,z],[x0,y,z]];
+    lines.push(...edges.flatMap(([a,b])=>[...p[a],...p[b]]));
+  }
+  return new Float32Array(lines);
 }
-function createView(canvas, bayId) {
+function createView(canvas) {
   const gl=canvas.getContext('webgl2',{antialias:true}); if(!gl) throw new Error('WebGL2 is not supported');
-  const meshProgram=program(gl,VERTEX_SHADER,FRAGMENT_SHADER), lineProgram=program(gl,LINE_VERTEX_SHADER,LINE_FRAGMENT_SHADER);
-  const lineBuffer=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,lineBuffer); gl.bufferData(gl.ARRAY_BUFFER,boxLines(bays[bayId]),gl.STATIC_DRAW);
-  const view={canvas,gl,bayId,meshProgram,lineProgram,lineBuffer,buffers:new Map()};
+  const meshProgram=program(gl,VERTEX_SHADER,FRAGMENT_SHADER), lineProgram=program(gl,LINE_VERTEX_SHADER,LINE_FRAGMENT_SHADER), outlineProgram=program(gl,OUTLINE_VERTEX_SHADER,OUTLINE_FRAGMENT_SHADER);
+  const lineData=boxLines(), lineBuffer=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,lineBuffer); gl.bufferData(gl.ARRAY_BUFFER,lineData,gl.STATIC_DRAW);
+  const view={canvas,gl,meshProgram,lineProgram,outlineProgram,lineBuffer,lineCount:lineData.length/3,buffers:new Map()};
   let dragging=false,lastX=0,lastY=0;
   canvas.addEventListener('pointerdown',e=>{dragging=true;lastX=e.clientX;lastY=e.clientY;canvas.setPointerCapture(e.pointerId);});
   canvas.addEventListener('pointermove',e=>{if(!dragging)return;camera.yaw-=(e.clientX-lastX)*0.008;camera.pitch=Math.max(-0.05,Math.min(1.35,camera.pitch+(e.clientY-lastY)*0.008));lastX=e.clientX;lastY=e.clientY;drawAll();});
   canvas.addEventListener('pointerup',()=>dragging=false);
-  canvas.addEventListener('wheel',e=>{e.preventDefault();camera.distance=Math.max(1.1,Math.min(6,camera.distance*Math.exp(e.deltaY*0.001)));drawAll();},{passive:false});
+  canvas.addEventListener('wheel',e=>{e.preventDefault();camera.distance=Math.max(0.8,Math.min(6,camera.distance*Math.exp(e.deltaY*0.001)));drawAll();},{passive:false});
   return view;
 }
 function meshBuffer(view, blockId, orientId) {
   const key=`${blockId}:${orientId}`; if(view.buffers.has(key)) return view.buffers.get(key);
-  const source=meshes[blockId]?.[orientId] || {p:[],n:[]}, gl=view.gl;
+  const source=meshes[blockId]?.[orientId] || {p:[],n:[],e:[]}, gl=view.gl;
   const position=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,position); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(source.p),gl.STATIC_DRAW);
   const normal=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,normal); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(source.n),gl.STATIC_DRAW);
-  const result={position,normal,count:source.p.length/3}; view.buffers.set(key,result); return result;
+  const edge=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,edge); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(source.e),gl.STATIC_DRAW);
+  const result={position,normal,edge,count:source.p.length/3,edgeCount:source.e.length/3}; view.buffers.set(key,result); return result;
 }
 function resize(view) {
   const dpr=window.devicePixelRatio||1, rect=view.canvas.getBoundingClientRect(), w=Math.max(1,Math.round(rect.width*dpr)), h=Math.max(1,Math.round(rect.height*dpr));
@@ -424,14 +477,20 @@ function resize(view) {
 }
 function drawView(view) {
   const gl=view.gl,[width,height]=resize(view),vp=viewProjection(width,height); gl.viewport(0,0,width,height); gl.clearColor(1,1,1,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
-  gl.disable(gl.BLEND); gl.depthMask(true); gl.useProgram(view.lineProgram); gl.bindBuffer(gl.ARRAY_BUFFER,view.lineBuffer); const lp=gl.getAttribLocation(view.lineProgram,'aPosition'); gl.enableVertexAttribArray(lp); gl.vertexAttribPointer(lp,3,gl.FLOAT,false,0,0); gl.uniformMatrix4fv(gl.getUniformLocation(view.lineProgram,'uViewProjection'),false,vp); gl.drawArrays(gl.LINES,0,24);
+  gl.disable(gl.BLEND); gl.depthMask(true); gl.useProgram(view.lineProgram); gl.bindBuffer(gl.ARRAY_BUFFER,view.lineBuffer); const lp=gl.getAttribLocation(view.lineProgram,'aPosition'); gl.enableVertexAttribArray(lp); gl.vertexAttribPointer(lp,3,gl.FLOAT,false,0,0); gl.uniformMatrix4fv(gl.getUniformLocation(view.lineProgram,'uViewProjection'),false,vp); gl.drawArrays(gl.LINES,0,view.lineCount);
   gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
   const frame=frames[currentFrameIndex]||{},changed=new Set(frame.changed||[]),selected=new Set(frame.selected||[]); gl.useProgram(view.meshProgram); gl.uniformMatrix4fv(gl.getUniformLocation(view.meshProgram,'uViewProjection'),false,vp); gl.uniform3f(gl.getUniformLocation(view.meshProgram,'uNorm'),1/data.maxWidth,1/data.maxWidth,data.zScale/data.timeMax);
   for(const scheduled of currentState.values()) {
-    const [blockId,bayId,orientId,x,y,entry,exit]=scheduled; if(bayId!==view.bayId) continue; const buffer=meshBuffer(view,blockId,orientId); if(!buffer.count) continue;
+    const [blockId,bayId,orientId,x,y,entry,exit]=scheduled; const buffer=meshBuffer(view,blockId,orientId); if(!buffer.count) continue;
     gl.bindBuffer(gl.ARRAY_BUFFER,buffer.position); const ap=gl.getAttribLocation(view.meshProgram,'aPosition'); gl.enableVertexAttribArray(ap); gl.vertexAttribPointer(ap,3,gl.FLOAT,false,0,0);
     gl.bindBuffer(gl.ARRAY_BUFFER,buffer.normal); const an=gl.getAttribLocation(view.meshProgram,'aNormal'); gl.enableVertexAttribArray(an); gl.vertexAttribPointer(an,3,gl.FLOAT,false,0,0);
-    gl.uniform3f(gl.getUniformLocation(view.meshProgram,'uOffset'),x,y,entry); gl.uniform1f(gl.getUniformLocation(view.meshProgram,'uHeight'),Math.max(0.001,exit-entry)); const color=selected.has(blockId)?selectedColor:(changed.has(blockId)?changedColor:colors[blockId]); gl.uniform3fv(gl.getUniformLocation(view.meshProgram,'uColor'),color); gl.drawArrays(gl.TRIANGLES,0,buffer.count);
+    gl.uniform3f(gl.getUniformLocation(view.meshProgram,'uOffset'),x+bayOffsets[bayId],y,entry); gl.uniform1f(gl.getUniformLocation(view.meshProgram,'uHeight'),Math.max(0.001,exit-entry)); gl.uniform3fv(gl.getUniformLocation(view.meshProgram,'uColor'),colors[blockId]); gl.drawArrays(gl.TRIANGLES,0,buffer.count);
+  }
+  gl.useProgram(view.outlineProgram); gl.uniformMatrix4fv(gl.getUniformLocation(view.outlineProgram,'uViewProjection'),false,vp); gl.uniform3f(gl.getUniformLocation(view.outlineProgram,'uNorm'),1/data.maxWidth,1/data.maxWidth,data.zScale/data.timeMax);
+  for(const scheduled of currentState.values()) {
+    const [blockId,bayId,orientId,x,y,entry,exit]=scheduled; const buffer=meshBuffer(view,blockId,orientId); if(!buffer.edgeCount) continue;
+    gl.bindBuffer(gl.ARRAY_BUFFER,buffer.edge); const ap=gl.getAttribLocation(view.outlineProgram,'aPosition'); gl.enableVertexAttribArray(ap); gl.vertexAttribPointer(ap,3,gl.FLOAT,false,0,0);
+    gl.uniform3f(gl.getUniformLocation(view.outlineProgram,'uOffset'),x+bayOffsets[bayId],y,entry); gl.uniform1f(gl.getUniformLocation(view.outlineProgram,'uHeight'),Math.max(0.001,exit-entry)); const outline=selected.has(blockId)?selectedOutline:(changed.has(blockId)?changedOutline:normalOutline); gl.uniform4fv(gl.getUniformLocation(view.outlineProgram,'uColor'),outline); gl.drawArrays(gl.LINES,0,buffer.edgeCount);
   }
   gl.depthMask(true); gl.disable(gl.BLEND);
 }
@@ -456,11 +515,11 @@ function showVisible(index) { if(!visibleFrames.length)return; visibleIndex=Math
 function rebuildFilter() { const neighbor=neighborSelect.value; visibleFrames=frames.map((f,i)=>({f,i})).filter(({f})=>(neighbor==='*'||f.neighbor===neighbor)&&(!improvedOnly.checked||f.improvedCurrent)).map(({i})=>i); frameSlider.max=String(Math.max(0,visibleFrames.length-1)); frameSlider.disabled=!visibleFrames.length; showVisible(0); }
 function animate(now) { if(!playing)return; const interval=1000/(5*Number(speedSelect.value)); if(now-lastPlayTime>=interval){lastPlayTime=now;if(visibleIndex+1>=visibleFrames.length){playing=false;playButton.textContent='Play';return;}showVisible(visibleIndex+1);}requestAnimationFrame(animate);}
 
-for(const [bayId,bay] of bays.entries()) { const card=document.createElement('div');card.className='bay-card';card.innerHTML=`<div class="bay-title">Bay ${bayId}<span>${bay.width} × ${bay.height}</span></div>`;const canvas=document.createElement('canvas');canvas.className='view';card.appendChild(canvas);baysRoot.appendChild(card);views.push(createView(canvas,bayId)); }
+const card=document.createElement('div'); card.className='bay-card'; card.innerHTML=`<div class="bay-title">All Bays<span>${bays.map((bay,bayId)=>`Bay ${bayId}: ${bay.width} × ${bay.height}`).join(' · ')}</span></div>`; const canvas=document.createElement('canvas'); canvas.className='view'; card.appendChild(canvas); baysRoot.appendChild(card); views.push(createView(canvas));
 const neighbors=[...new Set(frames.map(frame=>frame.neighbor))].sort(); neighborSelect.innerHTML='<option value="*">All</option>'+neighbors.map(value=>`<option value="${value}">${value}</option>`).join('');
 frameSlider.max=String(Math.max(0,frames.length-1)); frameSlider.addEventListener('input',()=>showVisible(Number(frameSlider.value))); neighborSelect.addEventListener('change',rebuildFilter); improvedOnly.addEventListener('change',rebuildFilter);
 playButton.addEventListener('click',()=>{playing=!playing;playButton.textContent=playing?'Pause':'Play';lastPlayTime=0;if(playing)requestAnimationFrame(animate);});
-document.getElementById('resetCamera').addEventListener('click',()=>{camera={yaw:0.72,pitch:0.48,distance:2.55};drawAll();}); window.addEventListener('resize',drawAll);
+document.getElementById('resetCamera').addEventListener('click',()=>{camera={yaw:0.72,pitch:0.48,distance:defaultCameraDistance};drawAll();}); window.addEventListener('resize',drawAll);
 showVisible(0);
 </script>
 </body>

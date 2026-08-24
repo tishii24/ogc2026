@@ -163,11 +163,10 @@ bound on the exact entry time.
 \State $\{(\hat b_i,\hat e_i)\}_i \gets \Call{AbstractPreoptimization}{}$
 \State $\pi \gets$ blocks sorted lexicographically by $(\hat e_i,-V_i,i)$
 \State $\mathcal{H} \gets \Call{EvenlyPartition}{\pi,\lceil N/H\rceil}$
-\State $\{S_r\}_r\gets\{\emptyset\}_r$ \Comment{one persistent solution per worker}
+\State $\{S_r\}_r\gets\{\emptyset\}_r$
 \For{each horizon $h\in\mathcal{H}$}
     \For{each worker $r$ in parallel}
         \State $S_r\gets\Call{ExtendSchedule}{S_r,h}$
-        \Comment{random remove, mix, and greedy reinsert trials}
     \EndFor
     \If{$h$ is the final horizon}
         \State $w'_2\gets w_2$
@@ -176,7 +175,6 @@ bound on the exact entry time.
     \EndIf
     \State $\tau_h\gets\Call{AllocateRemainingTime}{h,\mathcal{H},\tau}$
     \State $\{S_r\}_r\gets\Call{ParallelSA}{\{S_r\}_r,w_1,w'_2,w_3,\tau_h}$
-       \Comment{share the global best; optimize all admitted blocks}
 \EndFor
 \State \Return the best $S_r$
 \end{algorithmic}
