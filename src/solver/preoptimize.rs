@@ -135,6 +135,8 @@ struct PreoptimizeAnnealingState {
     z1: f64,
     z2: f64,
     z3: f64,
+    official_objective: f64,
+    congestion: f64,
     objective: f64,
 }
 
@@ -244,7 +246,7 @@ fn try_build_initial_state(
         .try_into()
         .ok()?;
     let mut used_area: Vec<Vec<f64>> = vec![vec![0.0; time_count]; problem.bays.len()];
-
+    let mut congestion = 0.0;
     let mut loads: Vec<f64> = vec![0.0; problem.bays.len()];
     let mut schedule = vec![None; problem.blocks.len()];
 
@@ -270,10 +272,18 @@ fn try_build_initial_state(
             let mut next_loads = loads.clone();
             next_loads[bay_id] += block.workload as f64;
             let tardiness = (entry_time + block.processing_time - block.due_date).max(0);
+            let bay_capacity = context.bay_capacities[bay_id];
+            let ratio = occupied_area / bay_capacity;
+            let congestion_delta = (entry_time..entry_time + block.processing_time)
+                .map(|time| {
+                    ratio * used_area[bay_id][(time - context.pre.min_time) as usize] / bay_capacity
+                })
+                .sum::<f64>();
             let score = problem.weights.w1 * tardiness as f64
                 + problem.weights.w2
                     * (score_z2(&next_loads, &context.pre.bay_load_scale) - current_imbalance)
-                + problem.weights.w3 * context.pre.pref_penalty[block_id][bay_id] as f64;
+                + problem.weights.w3 * context.pre.pref_penalty[block_id][bay_id] as f64
+                + problem.weights.w1 * context.params.congestion_weight * congestion_delta;
             let candidate = (score, entry_time, bay_id);
             if best.as_ref().is_none_or(|best| {
                 candidate
@@ -289,7 +299,15 @@ fn try_build_initial_state(
 
         let (_, entry_time, bay_id) = best?;
         let selected = PreoptimizedBlock { bay_id, entry_time };
-        add_used_area(problem, context, &mut used_area, block_id, selected, 1.0);
+        add_used_area(
+            problem,
+            context,
+            &mut used_area,
+            &mut congestion,
+            block_id,
+            selected,
+            1.0,
+        );
         loads[bay_id] += block.workload as f64;
         schedule[block_id] = Some(selected);
     }
@@ -308,7 +326,9 @@ fn try_build_initial_state(
         z1,
         z2,
         z3,
-        objective,
+        official_objective: objective,
+        congestion,
+        objective: objective + problem.weights.w1 * context.params.congestion_weight * congestion,
     })
 }
 
@@ -352,11 +372,12 @@ fn build_initial_state(
                     .is_none_or(|best| candidate.objective < best.objective)
                 {
                     log!(
-                        "[{:.4}] [preopt-build] best: worker={}, trial={}, score={:.3}, tardiness={:.0}",
+                        "[{:.4}] [preopt-build] best: worker={}, trial={}, score={:.3}, official={:.3}, tardiness={:.0}",
                         timer.elapsed_seconds(),
                         worker_id,
                         trials,
                         candidate.objective,
+                        candidate.official_objective,
                         candidate.z1,
                     );
                     *best = Some(candidate);
@@ -399,9 +420,10 @@ fn build_initial_state(
         row.truncate(time_count);
     }
     log!(
-        "[{:.4}] [preopt-build] result: score={:.3}, tardiness={:.0}",
+        "[{:.4}] [preopt-build] result: score={:.3}, official={:.3}, tardiness={:.0}",
         timer.elapsed_seconds(),
         best.objective,
+        best.official_objective,
         best.z1,
     );
     Ok(best)
@@ -420,16 +442,23 @@ fn add_used_area(
     problem: &Problem,
     context: &PreoptimizeContext<'_>,
     used_area: &mut [Vec<f64>],
-
+    congestion: &mut f64,
     block_id: usize,
     selected: PreoptimizedBlock,
     sign: f64,
 ) {
     let area = context.occupancy[block_id][selected.bay_id].unwrap();
-
+    let bay_capacity = context.bay_capacities[selected.bay_id];
+    let ratio = area / bay_capacity;
     let block = &problem.blocks[block_id];
     for time in selected.entry_time..selected.entry_time + block.processing_time {
         let used = &mut used_area[selected.bay_id][(time - context.pre.min_time) as usize];
+        let used_ratio = *used / bay_capacity;
+        if sign > 0.0 {
+            *congestion += ratio * used_ratio;
+        } else {
+            *congestion -= ratio * (used_ratio - ratio);
+        }
         *used += sign * area;
     }
 }
@@ -456,26 +485,50 @@ fn can_place(
     })
 }
 
-fn select_block(problem: &Problem, rng: &mut impl Random) -> usize {
-    rng.gen_index(problem.blocks.len())
+fn select_block(
+    problem: &Problem,
+    context: &PreoptimizeContext<'_>,
+    state: &PreoptimizeAnnealingState,
+    rng: &mut impl Random,
+) -> usize {
+    if rng.next_f64() >= context.params.neighbor.bad_block_select_probability {
+        return rng.gen_index(problem.blocks.len());
+    }
+    let mut best = rng.gen_index(problem.blocks.len());
+    let mut best_cost = f64::NEG_INFINITY;
+    for _ in 0..context.params.neighbor.bad_block_sample_count {
+        let block_id = rng.gen_index(problem.blocks.len());
+        let selected = state.schedule[block_id];
+        let cost = problem.weights.w1 * block_z1(problem, block_id, selected)
+            + problem.weights.w3 * block_z3(context, block_id, selected);
+        if cost > best_cost {
+            best = block_id;
+            best_cost = cost;
+        }
+    }
+    best
 }
 
-fn entry_time_candidates(
+fn sample_entry_time(
     problem: &Problem,
     context: &PreoptimizeContext<'_>,
     block_id: usize,
+    current: i64,
     rng: &mut impl Random,
-) -> Vec<i64> {
+) -> i64 {
     let block = &problem.blocks[block_id];
     let min_time = block.release_time;
     let max_time = context.max_time - block.processing_time;
-    let mut candidates = vec![
-        min_time,
-        (block.due_date - block.processing_time).clamp(min_time, max_time),
-        min_time + rng.gen_range(0, (max_time - min_time + 1) as usize) as i64,
-    ];
-    rng.shuffle(&mut candidates);
-    candidates
+    match rng.gen_range(0, 4) {
+        0 => min_time,
+        1 => (block.due_date - block.processing_time).clamp(min_time, max_time),
+        2 => {
+            let max_shift = context.params.neighbor.max_time_shift;
+            let delta = rng.gen_range(0, (2 * max_shift + 1) as usize) as i64 - max_shift;
+            current.saturating_add(delta).clamp(min_time, max_time)
+        }
+        _ => min_time + rng.gen_range(0, (max_time - min_time + 1) as usize) as i64,
+    }
 }
 
 fn try_relocate(
@@ -484,22 +537,26 @@ fn try_relocate(
     state: &mut PreoptimizeAnnealingState,
     rng: &mut impl Random,
 ) -> bool {
-    let block_id = select_block(problem, rng);
+    let block_id = select_block(problem, context, state, rng);
     let old = state.schedule[block_id];
-    add_used_area(problem, context, &mut state.used_area, block_id, old, -1.0);
+    add_used_area(
+        problem,
+        context,
+        &mut state.used_area,
+        &mut state.congestion,
+        block_id,
+        old,
+        -1.0,
+    );
 
-    let mut bay_ids: Vec<_> = (0..problem.bays.len()).collect();
-    rng.shuffle(&mut bay_ids);
-    let entry_times = entry_time_candidates(problem, context, block_id, rng);
     let mut candidate = None;
-    'candidate: for bay_id in bay_ids {
-        for &entry_time in &entry_times {
-            let selected = PreoptimizedBlock { bay_id, entry_time };
-            if selected != old && can_place(problem, context, &state.used_area, block_id, selected)
-            {
-                candidate = Some(selected);
-                break 'candidate;
-            }
+    for _ in 0..context.params.neighbor.max_relocate_attempts {
+        let bay_id = rng.gen_index(problem.bays.len());
+        let entry_time = sample_entry_time(problem, context, block_id, old.entry_time, rng);
+        let selected = PreoptimizedBlock { bay_id, entry_time };
+        if selected != old && can_place(problem, context, &state.used_area, block_id, selected) {
+            candidate = Some(selected);
+            break;
         }
     }
     let Some(selected) = candidate else {
@@ -523,6 +580,7 @@ fn try_relocate(
         problem,
         context,
         &mut state.used_area,
+        &mut state.congestion,
         block_id,
         selected,
         1.0,
@@ -532,7 +590,9 @@ fn try_relocate(
     state.z1 += new_z1 - old_z1;
     state.z2 = new_z2;
     state.z3 += new_z3 - old_z3;
-    state.objective += raw_delta;
+    state.official_objective += raw_delta;
+    state.objective = state.official_objective
+        + problem.weights.w1 * context.params.congestion_weight * state.congestion;
     true
 }
 
@@ -545,7 +605,7 @@ fn try_swap(
     if problem.blocks.len() < 2 {
         return false;
     }
-    let a = select_block(problem, rng);
+    let a = select_block(problem, context, state, rng);
     let mut b = rng.gen_index(problem.blocks.len() - 1);
     if b >= a {
         b += 1;
@@ -569,16 +629,48 @@ fn try_swap(
         return false;
     }
 
-    add_used_area(problem, context, &mut state.used_area, a, old_a, -1.0);
-    add_used_area(problem, context, &mut state.used_area, b, old_b, -1.0);
+    add_used_area(
+        problem,
+        context,
+        &mut state.used_area,
+        &mut state.congestion,
+        a,
+        old_a,
+        -1.0,
+    );
+    add_used_area(
+        problem,
+        context,
+        &mut state.used_area,
+        &mut state.congestion,
+        b,
+        old_b,
+        -1.0,
+    );
     if !can_place(problem, context, &state.used_area, a, new_a) {
         return false;
     }
-    add_used_area(problem, context, &mut state.used_area, a, new_a, 1.0);
+    add_used_area(
+        problem,
+        context,
+        &mut state.used_area,
+        &mut state.congestion,
+        a,
+        new_a,
+        1.0,
+    );
     if !can_place(problem, context, &state.used_area, b, new_b) {
         return false;
     }
-    add_used_area(problem, context, &mut state.used_area, b, new_b, 1.0);
+    add_used_area(
+        problem,
+        context,
+        &mut state.used_area,
+        &mut state.congestion,
+        b,
+        new_b,
+        1.0,
+    );
 
     let old_z1 = block_z1(problem, a, old_a) + block_z1(problem, b, old_b);
     let new_z1 = block_z1(problem, a, new_a) + block_z1(problem, b, new_b);
@@ -600,11 +692,123 @@ fn try_swap(
     state.z1 += new_z1 - old_z1;
     state.z2 = new_z2;
     state.z3 += new_z3 - old_z3;
-    state.objective += raw_delta;
+    state.official_objective += raw_delta;
+    state.objective = state.official_objective
+        + problem.weights.w1 * context.params.congestion_weight * state.congestion;
     true
 }
 
-const PREOPTIMIZE_NEIGHBOR_KINDS: &[&str] = &["Relocate", "Swap"];
+fn sample_large_reconstruct_count(
+    context: &PreoptimizeContext<'_>,
+    rng: &mut impl Random,
+) -> usize {
+    context.params.neighbor.remove_count.sample(rng)
+}
+
+fn choose_large_reconstruct_blocks(
+    problem: &Problem,
+    context: &PreoptimizeContext<'_>,
+    state: &PreoptimizeAnnealingState,
+    k: usize,
+    rng: &mut impl Random,
+) -> Vec<usize> {
+    if k == 0 {
+        return Vec::new();
+    }
+    let seed = select_block(problem, context, state, rng);
+    let mut remaining: Vec<_> = (0..problem.blocks.len())
+        .filter(|&block_id| block_id != seed)
+        .collect();
+    rng.shuffle(&mut remaining);
+    let mut selected = Vec::with_capacity(k);
+    selected.push(seed);
+    selected.extend(remaining.into_iter().take(k - 1));
+    selected
+}
+
+fn try_large_reconstruct(
+    problem: &Problem,
+    context: &PreoptimizeContext<'_>,
+    state: &mut PreoptimizeAnnealingState,
+    rng: &mut impl Random,
+) -> bool {
+    let k = sample_large_reconstruct_count(context, rng).min(problem.blocks.len());
+    if k < 2 {
+        return false;
+    }
+    let mut removed_ids = choose_large_reconstruct_blocks(problem, context, state, k, rng);
+    for &block_id in &removed_ids {
+        let selected = state.schedule[block_id];
+        add_used_area(
+            problem,
+            context,
+            &mut state.used_area,
+            &mut state.congestion,
+            block_id,
+            selected,
+            -1.0,
+        );
+        state.loads[selected.bay_id] -= problem.blocks[block_id].workload as f64;
+    }
+
+    sort_default_reconstruct_order(
+        problem,
+        &context.block_areas,
+        &context.pre.pref_spread,
+        &mut removed_ids,
+        rng,
+        context.reconstruct_order_params,
+    );
+    let mut changed = false;
+    for block_id in removed_ids {
+        let old = state.schedule[block_id];
+        let mut candidate = None;
+        for _ in 0..context.params.neighbor.max_relocate_attempts {
+            let selected = PreoptimizedBlock {
+                bay_id: rng.gen_index(problem.bays.len()),
+                entry_time: sample_entry_time(problem, context, block_id, old.entry_time, rng),
+            };
+            if can_place(problem, context, &state.used_area, block_id, selected) {
+                candidate = Some(selected);
+                break;
+            }
+        }
+        let Some(selected) = candidate else {
+            return false;
+        };
+        add_used_area(
+            problem,
+            context,
+            &mut state.used_area,
+            &mut state.congestion,
+            block_id,
+            selected,
+            1.0,
+        );
+        state.loads[selected.bay_id] += problem.blocks[block_id].workload as f64;
+        state.schedule[block_id] = selected;
+        changed |= selected != old;
+    }
+    if !changed {
+        return false;
+    }
+
+    let (objective, z1, z2, z3) = evaluate_schedule(
+        problem,
+        &context.pre.pref_penalty,
+        &context.pre.bay_load_scale,
+        &state.schedule,
+    );
+    state.official_objective = objective;
+    state.objective =
+        objective + problem.weights.w1 * context.params.congestion_weight * state.congestion;
+    state.z1 = z1;
+    state.z2 = z2;
+    state.z3 = z3;
+    true
+}
+
+const PREOPTIMIZE_NEIGHBOR_KINDS: &[&str] = &["Relocate", "Swap", "LargeReconstruct"];
 
 struct PreoptimizeAnnealingDelegate<'a> {
     problem: &'a Problem,
@@ -632,8 +836,14 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
     ) -> AnnealingAttempt<Self::State> {
         let mut candidate = current.clone();
         let probabilities = &self.context.params.neighbor_probabilities;
-        let total = probabilities.relocate + probabilities.swap;
-        let (neighbor_kind, succeeded) = if rng.next_f64() * total < probabilities.swap {
+        let total = probabilities.relocate + probabilities.swap + probabilities.large_reconstruct;
+        let x = rng.next_f64() * total;
+        let (neighbor_kind, succeeded) = if x < probabilities.large_reconstruct {
+            (
+                2,
+                try_large_reconstruct(self.problem, &self.context, &mut candidate, rng),
+            )
+        } else if x < probabilities.large_reconstruct + probabilities.swap {
             (
                 1,
                 try_swap(self.problem, &self.context, &mut candidate, rng),
@@ -660,7 +870,11 @@ impl AnnealingDelegate for PreoptimizeAnnealingDelegate<'_> {
             &state.schedule,
         )
         .0;
-        log!("[preopt] objective: {score:.3}");
+        log!(
+            "[preopt] objective: official={score:.3}, congestion={:.3}, search={:.3}",
+            state.congestion,
+            state.objective,
+        );
         PreoptimizeState {
             score,
             blocks: state.schedule,
@@ -684,11 +898,12 @@ pub fn preoptimize(
         .iter()
         .enumerate()
         .map(|(bay_id, bay)| {
-            let bay_area = bay.width as f64 * bay.height as f64;
+            let padded_capacity =
+                (bay.width as f64 - params.bay_padding) * (bay.height as f64 - params.bay_padding);
             occupancy
                 .iter()
                 .filter_map(|areas| areas[bay_id])
-                .fold(bay_area, f64::max)
+                .fold(padded_capacity, f64::max)
         })
         .collect();
     let block_areas = occupancy

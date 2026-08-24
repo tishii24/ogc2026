@@ -90,8 +90,11 @@ impl InsertParams {
 pub struct PreoptimizeSolverParams {
     pub alpha: f64,
     pub beta: f64,
+    pub bay_padding: f64,
+    pub congestion_weight: f64,
     pub initial_build: LimitedPhaseParams,
     pub neighbor_probabilities: PreoptimizeNeighborProbabilities,
+    pub neighbor: PreoptimizeNeighborParams,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -99,6 +102,17 @@ pub struct PreoptimizeSolverParams {
 pub struct PreoptimizeNeighborProbabilities {
     pub relocate: f64,
     pub swap: f64,
+    pub large_reconstruct: f64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreoptimizeNeighborParams {
+    pub remove_count: UsizeRangeDistribution,
+    pub bad_block_sample_count: usize,
+    pub bad_block_select_probability: f64,
+    pub max_relocate_attempts: usize,
+    pub max_time_shift: i64,
 }
 
 #[derive(Clone, Debug, Deserialize)]

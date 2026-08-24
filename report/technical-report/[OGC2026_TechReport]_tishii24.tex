@@ -191,17 +191,13 @@ a_{ijo}=A^{\mathrm{union}}_{io}
 \end{equation}
 We define $a_{ij}$ as the minimum value over orientations that fit in bay $j$. The first term represents the actual occupied area, the second approximates unusable space around concave or elongated shapes, and the third compensates for packing difficulty caused by a complex boundary.
 
-Let $C_j$ be the effective capacity of bay $j$:
-\begin{equation}
-C_j=\max\left\{W_jH_j,\max_{i:\,a_{ij}\text{ is defined}}a_{ij}\right\}.
-\end{equation}
-The lower bound by the largest approximate occupancy avoids an abstract capacity that excludes a fitting block by itself. The abstract schedule must satisfy
+Let $C_j$ be the effective capacity of bay $j$. It starts from $(W_j-0.5)(H_j-0.5)$ and is lower-bounded by the largest approximate occupancy of a block that must fit in bay $j$, avoiding an abstract capacity that excludes such a block by itself. The abstract schedule must satisfy
 \begin{equation}
 \sum_{i:\,\hat e_i\le t<\hat e_i+P_i,\,\hat b_i=j}a_{ij}\le C_j
 \end{equation}
-at every time. An abstract state stores only $(\hat b_i,\hat e_i)$ for each block and does not store its exact orientation or coordinates. Its objective consists of $Z_1$, $Z_2$, and $Z_3$ evaluated on the abstract schedule.
+at every time. An abstract state stores only $(\hat b_i,\hat e_i)$ for each block and does not store its exact orientation or coordinates. Its objective consists of $Z_1$, $Z_2$, and $Z_3$ evaluated on the abstract schedule, plus a congestion penalty. The implementation sums products of the occupancy ratios of simultaneously resident block pairs over time. This discourages highly congested abstract schedules that satisfy the area capacity but are difficult to convert into exact placements.
 
-Initial states are built greedily from multiple randomized block orders. Each order combines workload, the product of area and processing time, the spread of bay preferences, the limit time defined as due date minus processing time, slack, and a random component. For each block, the earliest capacity-feasible time is found in every eligible bay, and the candidate minimizing the incremental $Z_1$, $Z_2$, and $Z_3$ is selected. The state is then improved by simulated annealing using Relocate and Swap. Relocate selects a block uniformly, visits bays in random order, and tests its release time, its limit time, and a random entry time. Swap exchanges the bay assignments of two blocks and either retains or exchanges their entry times.
+Initial states are built greedily from multiple randomized block orders. Each order combines workload, the product of area and processing time, the spread of bay preferences, the limit time defined as due date minus processing time, slack, and a random component. For each block, the earliest capacity-feasible time is found in every eligible bay, and the candidate minimizing the incremental $Z_1$, $Z_2$, $Z_3$, and congestion is selected. The state is then improved by simulated annealing using relocate, swap, and multi-block reconstruction neighborhoods.
 
 \subsubsection{Rolling-horizon geometric optimization.}
 Blocks are sorted by $(\hat e_i,-V_i,i)$, and the order is evenly divided into $\lceil N/H\rceil$ horizons. At each horizon, every worker carries its own solution forward. Schedule extension repeatedly removes $k$ existing blocks, combines them with the newly admitted blocks, and greedily reinserts the combined set in random order. Trials continue for 5\% of the horizon budget, capped at five seconds, and the best extension is retained. Simulated annealing is then applied not only to the new blocks but to all blocks admitted so far. Unlike a freezing-type rolling horizon, earlier decisions can therefore be revised in response to later admissions.
@@ -286,7 +282,7 @@ same bay as each seed are ordered by
 d(i,s)=\lambda_x|x_i-x_s|^p+\lambda_y|y_i-y_s|^p
 +\lambda_t|e_i-e_s|^p,\qquad p\sim U[2,4],
 \end{equation}
-where both the exponent and weights are sampled for each trial. After the first seed, seed candidates are biased toward entry times close to those of the existing seeds, grouping reconstruction by entry-time base. Nearby blocks are removed together. Multiple seeds make it possible to change several local structures in one move. The reinsertion order combines volume, preference spread, limit-time urgency, slack, current penalty, and randomness; workload is used only as a tie-breaker. The weights are randomized for every attempt, allowing the search to revisit the trade-off between tardiness and packability without being restricted to a fixed size or due-date order. Moreover, the current SA acceptance threshold is inverted into a per-block upper bound on admissible tardiness, pruning insertion candidates that cannot be accepted.
+where both the exponent and weights are sampled for each trial. After the first seed, seed candidates are biased toward entry times close to those of the existing seeds, grouping reconstruction by entry-time base. Nearby blocks are removed together. Multiple seeds make it possible to change several local structures in one move. The reinsertion order combines volume, preference spread, limit-time urgency, slack, current penalty, and randomness; workload is used only as a tie-breaker. The weights are randomized for every attempt, allowing the search to revisit the trade-off between tardiness and packability without being restricted to a fixed size or due-date order. Moreover, the current SA acceptance threshold is inverted into a per-block upper bound on admissible tardiness, pruning insertion candidates that cannot be accepted. Large reconstruction in abstract preoptimization is simpler because the abstract state has no coordinates.
 
 Simulated annealing is executed by multiple workers in parallel. Each worker preserves its own state across horizons, updates a shared best state, and periodically imports a sufficiently better shared solution. At each horizon, the initial temperature is proportional to the initial score per admitted block, and the temperature follows an exponential schedule from $T_0$ to $T_1$; the default multipliers are 0.2 and 0.02, respectively. This schedule is reset for each horizon.
 
@@ -298,7 +294,7 @@ Multi-stage optimization, which optimized tardiness, preference, and workload im
 
 \subsection{Further Improvement Plan}
 
-For abstract preoptimization, we plan to improve the approximate occupancy model so that the gap between abstract schedules and exact placements is reduced. For rolling-horizon optimization, horizon size and search-time allocation could be adapted to each instance. For large reconstruction, blocker dependencies could be used more directly in selecting blocks for removal.
+For abstract preoptimization, we plan to improve approximate occupancy and congestion so that the gap between abstract schedules and exact placements is reduced. For rolling-horizon optimization, horizon size and search-time allocation could be adapted to each instance. For large reconstruction, blocker dependencies could be used more directly in selecting blocks for removal.
 
 For simulated annealing, in addition to revisiting adaptive temperature control based on objective differences and acceptance ratios, we plan to introduce a more systematic parallel scheme. Workers would specialize in different temperature ranges or neighborhood compositions and periodically exchange states, explicitly separating structural changes by high-temperature workers from local improvement by low-temperature workers.
 
