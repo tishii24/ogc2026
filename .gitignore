@@ -1,7 +1,7 @@
 /target
 /solutions
 /log
-/cloud/config.local.yaml
+/tools/cloud/config.local.yaml
 __pycache__
 
 *.pdf

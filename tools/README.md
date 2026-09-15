@@ -27,7 +27,7 @@
 - `setup` で必要なGoogle Cloudリソースを作成・更新し、`update` で既存Jobの設定を更新する
 - `run` で実行データをCloud Storageへ送り、完了後にスコアとログをローカルの `log/` へ統合する
 - `logs` で指定した実行、または最新の実行のログを表示する
-- 設定は `cloud/config.yaml` と、必要に応じて `cloud/config.local.yaml` から読み込む
+- 設定は `tools/cloud/config.yaml` と、必要に応じて `tools/cloud/config.local.yaml` から読み込む
 
 ## `tune_params.py`
 

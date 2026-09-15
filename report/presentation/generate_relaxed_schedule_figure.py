@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -163,16 +164,6 @@ def draw_horizons(axis: plt.Axes, data: ScheduleData) -> None:
     blocks_per_horizon = BLOCK_COUNT // HORIZON_COUNT
     for horizon in range(HORIZON_COUNT):
         y0 = 3 - horizon + 0.1
-        axis.add_patch(
-            Rectangle(
-                (0.02, y0),
-                2.9,
-                0.8,
-                facecolor="#FFFFFF",
-                edgecolor="#C7CBD1",
-                linewidth=1.0,
-            )
-        )
         axis.text(
             0.12,
             y0 + 0.43,
@@ -202,22 +193,7 @@ def draw_horizons(axis: plt.Axes, data: ScheduleData) -> None:
             axis.text(x + 0.12, y0 + 0.2, f"B{block_id + 1}", ha="center", va="top", fontsize=6.5)
 
 
-def main() -> None:
-    output = Path(__file__).resolve().parent / "figures/relaxed-schedule.png"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    data = generate_schedule()
-    time_max = len(data.utilization) - 1
-
-    plt.rcParams.update(
-        {
-            "font.family": "sans-serif",
-            "font.sans-serif": ["Arial", "DejaVu Sans"],
-            "text.color": INK,
-            "axes.labelcolor": INK,
-            "xtick.color": INK,
-            "ytick.color": INK,
-        }
-    )
+def save_combined_figure(output: Path, data: ScheduleData, time_max: int) -> None:
     figure = plt.figure(figsize=(15.5, 5.4), dpi=240)
     outer = GridSpec(1, 2, figure=figure, width_ratios=[2.15, 1.0], wspace=0.16)
     left = GridSpecFromSubplotSpec(2, 1, subplot_spec=outer[0], height_ratios=[1.65, 1.0], hspace=0.22)
@@ -232,7 +208,66 @@ def main() -> None:
     figure.subplots_adjust(left=0.055, right=0.975, bottom=0.12, top=0.94)
     figure.savefig(output, dpi=240, transparent=True)
     plt.close(figure)
-    print(output)
+
+
+def save_left_figure(output: Path, data: ScheduleData, time_max: int) -> None:
+    figure = plt.figure(figsize=(7.2, 9.2), dpi=240)
+    layout = GridSpec(2, 1, figure=figure, height_ratios=[2.25, 1.0], hspace=0.18)
+    gantt = figure.add_subplot(layout[0])
+    utilization = figure.add_subplot(layout[1])
+
+    draw_gantt(gantt, data, time_max)
+    draw_utilization(utilization, data, time_max)
+
+    figure.subplots_adjust(left=0.11, right=0.97, bottom=0.07, top=0.98)
+    figure.savefig(output, dpi=240, transparent=True)
+    plt.close(figure)
+
+
+def save_right_figure(output: Path, data: ScheduleData) -> None:
+    figure, horizons = plt.subplots(figsize=(6.4, 5.4), dpi=240)
+    draw_horizons(horizons, data)
+
+    figure.subplots_adjust(left=0.04, right=0.98, bottom=0.04, top=0.98)
+    figure.savefig(output, dpi=240, transparent=True)
+    plt.close(figure)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--layout", choices=("combined", "split", "all"), default="combined")
+    args = parser.parse_args()
+
+    output_dir = Path(__file__).resolve().parent / "figures"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    data = generate_schedule()
+    time_max = len(data.utilization) - 1
+
+    plt.rcParams.update(
+        {
+            "font.family": "sans-serif",
+            "font.sans-serif": ["Arial", "DejaVu Sans"],
+            "text.color": INK,
+            "axes.labelcolor": INK,
+            "xtick.color": INK,
+            "ytick.color": INK,
+        }
+    )
+
+    outputs = []
+    if args.layout in ("combined", "all"):
+        output = output_dir / "relaxed-schedule.png"
+        save_combined_figure(output, data, time_max)
+        outputs.append(output)
+    if args.layout in ("split", "all"):
+        left_output = output_dir / "relaxed-schedule-left.png"
+        right_output = output_dir / "relaxed-schedule-right.png"
+        save_left_figure(left_output, data, time_max)
+        save_right_figure(right_output, data)
+        outputs.extend((left_output, right_output))
+
+    for output in outputs:
+        print(output)
 
 
 if __name__ == "__main__":

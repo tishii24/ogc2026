@@ -9,7 +9,7 @@ Cloud Run Jobsを4 task並列で実行し、各taskでsolverの4 workerを使用
 - `config.yaml`: 共通設定
 - `config.local.yaml`: `setup`が生成するproject・bucket設定（Git管理外）
 - `task_runner.py`: suiteをtaskごとに分割して`tools/runner.py`を実行する
-- `../tools/cloud_runner.py`: setup、実行、ログ取得を行うローカルCLI
+- `../cloud_runner.py`: setup、実行、ログ取得を行うローカルCLI
 
 ## 前提
 
@@ -37,7 +37,7 @@ python tools/cloud_runner.py setup
 - Cloud Storage bucketの作成
 - Cloud Run Job用service accountの作成とbucket権限の設定
 - base imageのbuildとArtifact Registryへのpush
-- `cloud/config.yaml`に基づくCloud Run Jobの作成
+- `tools/cloud/config.yaml`に基づくCloud Run Jobの作成
 - DockerのArtifact Registry認証設定
 
 project、bucket、regionは引数で指定できる。
@@ -50,9 +50,9 @@ python tools/cloud_runner.py setup \
 ```
 
 `--bucket`未指定時は`PROJECT_ID-ogc2026-runs`を使用する。
-確定した設定は`cloud/config.local.yaml`に保存される。
-`cloud/Dockerfile`やイメージ自体を変更した場合は、もう一度`setup`を実行する。
-`cloud/config.yaml`のtask数、parallelism、CPU、メモリ、timeoutだけを変更した場合は、次のコマンドでDocker buildなしに反映できる。
+確定した設定は`tools/cloud/config.local.yaml`に保存される。
+`tools/cloud/Dockerfile`やイメージ自体を変更した場合は、もう一度`setup`を実行する。
+`tools/cloud/config.yaml`のtask数、parallelism、CPU、メモリ、timeoutだけを変更した場合は、次のコマンドでDocker buildなしに反映できる。
 
 ```bash
 python tools/cloud_runner.py update
@@ -73,7 +73,7 @@ python tools/cloud_runner.py run $VERSION \
 
 処理の流れは以下の通り。
 
-1. `cloud/config.yaml`のJob設定を既存Jobへ同期する
+1. `tools/cloud/config.yaml`のJob設定を既存Jobへ同期する
 2. base imageをローカルDockerで実行し、Linux版`solutions/{version}`を作成する
 3. solution、checker、対象caseをbundleにしてCloud Storageへ送る
 4. Cloud Run Jobsを設定されたtask数・parallelismで実行する
@@ -112,7 +112,7 @@ python tools/cloud_runner.py logs EXECUTION_NAME
 
 ## 設定変更
 
-task数、CPU、memory、timeoutは`cloud/config.yaml`で変更し、`setup`を再実行する。
+task数、CPU、memory、timeoutは`tools/cloud/config.yaml`で変更し、`setup`を再実行する。
 
 ```yaml
 tasks: 4

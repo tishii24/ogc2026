@@ -163,7 +163,7 @@ def load_myalgorithm(myalgorithm_path: Path):
 
 
 def load_checker(root: Path):
-    sys.path.insert(0, str(root / "ogc2026" / "alg_tester"))
+    sys.path.insert(0, str(root / "tools" / "alg_tester"))
     from utils import check_feasibility
 
     return check_feasibility

@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     setup.add_argument("--region", help="Google Cloud region.")
 
     subparsers.add_parser(
-        "update", help="Update an existing Cloud Run Job from cloud/config.yaml."
+        "update", help="Update an existing Cloud Run Job from tools/cloud/config.yaml."
     )
 
     run = subparsers.add_parser("run", help="Run a suite on Cloud Run Jobs.")
@@ -93,18 +93,18 @@ def command_succeeds(command: list[str], *, cwd: Path) -> bool:
 
 
 def load_config(root: Path) -> dict[str, Any]:
-    config_path = root / "cloud" / "config.yaml"
+    config_path = root / "tools" / "cloud" / "config.yaml"
     with config_path.open(encoding="utf-8") as f:
         config = yaml.safe_load(f)
     if not isinstance(config, dict):
-        raise ValueError("cloud/config.yaml must be a mapping")# noqa
+        raise ValueError("tools/cloud/config.yaml must be a mapping")# noqa
 
-    local_path = root / "cloud" / "config.local.yaml"
+    local_path = root / "tools" / "cloud" / "config.local.yaml"
     if local_path.is_file():
         with local_path.open(encoding="utf-8") as f:
             local = yaml.safe_load(f)
         if not isinstance(local, dict):
-            raise ValueError("cloud/config.local.yaml must be a mapping")
+            raise ValueError("tools/cloud/config.local.yaml must be a mapping")
         config.update(local)
     return config
 
@@ -131,7 +131,7 @@ def image_url(config: dict[str, Any]) -> str:
 
 
 def save_local_config(root: Path, project: str, bucket: str, region: str) -> None:
-    path = root / "cloud" / "config.local.yaml"
+    path = root / "tools" / "cloud" / "config.local.yaml"
     path.write_text(
         yaml.safe_dump(
             {"project": project, "bucket": bucket, "region": region},
@@ -273,7 +273,7 @@ def setup_cloud(root: Path, args: argparse.Namespace) -> int:
             "gcloud",
             "builds",
             "submit",
-            "cloud",
+            "tools/cloud",
             "--tag",
             image,
             "--project",
@@ -330,7 +330,7 @@ def setup_cloud(root: Path, args: argparse.Namespace) -> int:
         ],
         cwd=root,
     )
-    print(f"config: {root / 'cloud' / 'config.local.yaml'}")
+    print(f"config: {root / 'tools' / 'cloud' / 'config.local.yaml'}")
     print(f"image: {image}")
     return 0
 
@@ -484,7 +484,7 @@ def create_bundle(
     with tarfile.open(bundle_path, "w:gz") as archive:
         archive.add(solution_dir, arcname=solution_dir.relative_to(root))
         archive.add(root / "tools" / "runner.py", arcname="tools/runner.py")
-        checker_dir = root / "ogc2026" / "alg_tester"
+        checker_dir = root / "tools" / "alg_tester"
         archive.add(checker_dir, arcname=checker_dir.relative_to(root))
         for case in cases:
             archive.add(case, arcname=case.relative_to(root))
